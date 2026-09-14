@@ -35,9 +35,9 @@ ENV/
 env.bak/
 venv.bak/
 
-# Environment files - NEVER commit real credentials
-.env
-!.env.example
+# Environment files - NEVER commit any env files
+.env*
+*.env
 
 # IDEs
 .idea/
