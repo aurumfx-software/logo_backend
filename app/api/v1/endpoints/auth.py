@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import os
+import shutil
+import uuid
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
@@ -7,6 +10,7 @@ from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
+    AvatarUploadResponse,
     ForgotPasswordRequest,
     GenericMessageResponse,
     RefreshTokenRequest,
@@ -17,6 +21,7 @@ from app.schemas.auth import (
     SendOTPResponse,
     TokenResponse,
     UserLoginRequest,
+    UserProfileUpdateRequest,
     UserRegisterRequest,
     VerifyOTPRequest,
     VerifyOTPResponse,
@@ -101,6 +106,61 @@ def get_me(
     current_user: User = Depends(get_current_user),
 ) -> SafeUserResponse:
     return SafeUserResponse.model_validate(current_user)
+
+
+@router.put(
+    "/profile",
+    response_model=SafeUserResponse,
+    summary="Update current user profile",
+    description="Updates name, phone, address, and profile picture for the authenticated user.",
+)
+def update_profile(
+    update_data: UserProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SafeUserResponse:
+    updated_user = AuthService.update_user_profile(
+        db=db, user=current_user, update_data=update_data
+    )
+    return SafeUserResponse.model_validate(updated_user)
+
+
+@router.post(
+    "/upload-avatar",
+    response_model=AvatarUploadResponse,
+    summary="Upload user avatar image",
+    description="Uploads a profile picture (JPEG, PNG, WEBP), saves it securely, and updates the user profile.",
+)
+def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AvatarUploadResponse:
+    ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.",
+        )
+
+    upload_dir = os.path.join("uploads", "avatars")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+    file_path = os.path.join(upload_dir, unique_filename)
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    avatar_url = f"/static/avatars/{unique_filename}"
+    current_user.profile_picture = avatar_url
+    db.commit()
+
+    return AvatarUploadResponse(
+        message="Profile picture uploaded successfully.",
+        profile_picture_url=avatar_url,
+    )
 
 
 @router.post(

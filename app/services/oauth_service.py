@@ -122,6 +122,7 @@ class GoogleOAuthService:
                 phone=None,
                 password_hash=None,  # OAuth users have no password hash
                 role=UserRole.PUBLIC_USER,
+                profile_picture=user_info.get("picture"),
                 is_active=True,
                 is_verified=True,  # Verified by Google
             )

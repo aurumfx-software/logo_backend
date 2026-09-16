@@ -23,6 +23,8 @@ class User(Base):
         default=UserRole.PUBLIC_USER,
         nullable=False,
     )
+    address = Column(String(500), nullable=True)
+    profile_picture = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(

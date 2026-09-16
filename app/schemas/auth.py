@@ -24,6 +24,8 @@ class UserRegisterRequest(UserBase):
     name: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Test User"})
     phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
     password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "TestPassword123"})
+    address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "123 MG Road, Kochi, Kerala"})
+    profile_picture: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "https://example.com/avatar.jpg"})
 
     @field_validator("phone")
     @classmethod
@@ -53,9 +55,23 @@ class SafeUserResponse(BaseModel):
     email: str
     phone: Optional[str] = None
     role: UserRole
+    address: Optional[str] = None
+    profile_picture: Optional[str] = None
     is_verified: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserProfileUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=100, json_schema_extra={"example": "Updated Name"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "Updated Address"})
+    profile_picture: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "https://example.com/new_avatar.jpg"})
+
+
+class AvatarUploadResponse(BaseModel):
+    message: str
+    profile_picture_url: str
 
 
 class RegisterResponse(BaseModel):

@@ -17,6 +17,7 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     TokenResponse,
     UserLoginRequest,
+    UserProfileUpdateRequest,
     UserRegisterRequest,
 )
 from app.services.otp_service import OTPService
@@ -54,6 +55,8 @@ class AuthService:
             phone=user_data.phone,
             password_hash=hashed_pwd,
             role=UserRole.PUBLIC_USER,  # Default registration role
+            address=user_data.address,
+            profile_picture=user_data.profile_picture,
             is_active=True,
             is_verified=False,
         )
@@ -61,6 +64,32 @@ class AuthService:
         db.commit()
         db.refresh(new_user)
         return new_user
+
+    @staticmethod
+    def update_user_profile(
+        db: Session, user: User, update_data: UserProfileUpdateRequest
+    ) -> User:
+        if update_data.name is not None:
+            user.name = update_data.name.strip()
+        if update_data.phone is not None:
+            if update_data.phone != user.phone:
+                existing_phone = (
+                    db.query(User).filter(User.phone == update_data.phone).first()
+                )
+                if existing_phone:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A user with this phone number already exists.",
+                    )
+                user.phone = update_data.phone
+        if update_data.address is not None:
+            user.address = update_data.address
+        if update_data.profile_picture is not None:
+            user.profile_picture = update_data.profile_picture
+
+        db.commit()
+        db.refresh(user)
+        return user
 
     @staticmethod
     def authenticate_user(db: Session, login_data: UserLoginRequest) -> User:
