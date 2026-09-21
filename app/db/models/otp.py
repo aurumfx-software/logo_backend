@@ -7,6 +7,7 @@ from app.db.database import Base
 class OTPPurpose(str, enum.Enum):
     ACCOUNT_VERIFICATION = "ACCOUNT_VERIFICATION"
     PASSWORD_RESET = "PASSWORD_RESET"
+    MERCHANT_LOGIN = "MERCHANT_LOGIN"
 
 
 class OTPVerification(Base):

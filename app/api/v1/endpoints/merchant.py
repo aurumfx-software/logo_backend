@@ -6,15 +6,29 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_role
+from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
-from app.schemas.auth import SafeUserResponse
+from app.schemas.auth import SafeUserResponse, TokenResponse
 from app.schemas.merchant import (
+    LocationCountItem,
+    MerchantDiscoveryMetaResponse,
+    MerchantLoginOTPRequest,
+    MerchantLoginOTPResponse,
     MerchantPhotosUploadResponse,
     MerchantProfileResponse,
     MerchantRegisterRequest,
     MerchantRegisterResponse,
+    MerchantStatsResponse,
     MerchantUpdateRequest,
+    MerchantVerifyOTPLoginRequest,
+    ServiceCountItem,
+)
+from app.schemas.response import (
+    StandardListResponse,
+    StandardResponse,
+    list_response,
+    success_response,
 )
 from app.services.merchant_service import MerchantService
 
@@ -143,3 +157,215 @@ def list_merchants(
         db=db, category=category, location=location, skip=skip, limit=limit
     )
     return [MerchantProfileResponse.model_validate(m) for m in merchants]
+
+
+@router.get(
+    "/search",
+    response_model=StandardListResponse[MerchantProfileResponse],
+    summary="Search merchants by location, service, and keywords",
+    description="Unified search across location, services, categories, and business name with standardized response.",
+)
+def search_merchants(
+    q: Optional[str] = Query(None, description="General search keyword (name, service, category, location)"),
+    location: Optional[str] = Query(None, description="Search by location / city / area"),
+    service: Optional[str] = Query(None, description="Search by specific service offered (e.g. Haircut, Facial)"),
+    category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Spa)"),
+    is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[MerchantProfileResponse]:
+    results, total = MerchantService.search_merchants(
+        db=db,
+        query=q,
+        location=location,
+        service=service,
+        category=category,
+        is_verified=is_verified,
+        skip=skip,
+        limit=limit,
+        public_only=True,
+    )
+    page = (skip // limit) + 1
+    return list_response(
+        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        total_items=total,
+        page=page,
+        page_size=limit,
+        message=f"Found {total} merchant(s) matching search criteria",
+    )
+
+
+@router.get(
+    "/search/location",
+    response_model=StandardListResponse[MerchantProfileResponse],
+    summary="Search merchants by location",
+    description="Dedicated location search finding merchants by city, area, or address.",
+)
+def search_merchants_by_location(
+    location: str = Query(..., min_length=2, description="City, area, or locality name to search"),
+    category: Optional[str] = Query(None, description="Optional category filter"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[MerchantProfileResponse]:
+    results, total = MerchantService.search_merchants(
+        db=db,
+        location=location,
+        category=category,
+        skip=skip,
+        limit=limit,
+        public_only=True,
+    )
+    page = (skip // limit) + 1
+    return list_response(
+        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        total_items=total,
+        page=page,
+        page_size=limit,
+        message=f"Found {total} merchant(s) in '{location}'",
+    )
+
+
+@router.get(
+    "/search/service",
+    response_model=StandardListResponse[MerchantProfileResponse],
+    summary="Search merchants by service",
+    description="Dedicated service search finding merchants offering a specific service (e.g. Haircut, Spa, Car Wash).",
+)
+def search_merchants_by_service(
+    service: str = Query(..., min_length=2, description="Service name to search (e.g. Haircut, Oil Change)"),
+    location: Optional[str] = Query(None, description="Optional location filter"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[MerchantProfileResponse]:
+    results, total = MerchantService.search_merchants(
+        db=db,
+        service=service,
+        location=location,
+        skip=skip,
+        limit=limit,
+        public_only=True,
+    )
+    page = (skip // limit) + 1
+    return list_response(
+        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        total_items=total,
+        page=page,
+        page_size=limit,
+        message=f"Found {total} merchant(s) offering service '{service}'",
+    )
+
+
+@router.get(
+    "/stats",
+    response_model=StandardResponse[MerchantStatsResponse],
+    summary="Get active and inactive merchant statistics",
+    description="Aggregates platform merchant statistics including active, inactive, pending, approved, rejected, and verified counts.",
+)
+def get_merchant_statistics(
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantStatsResponse]:
+    stats = MerchantService.get_merchant_stats(db=db)
+    return success_response(
+        data=MerchantStatsResponse(**stats),
+        message="Merchant statistics retrieved successfully",
+    )
+
+
+@router.get(
+    "/locations",
+    response_model=StandardResponse[List[LocationCountItem]],
+    summary="Get merchant locations",
+    description="Returns available merchant locations with active merchant counts and optional search filter.",
+)
+def get_merchant_locations(
+    query: Optional[str] = Query(None, description="Filter locations by name"),
+    db: Session = Depends(get_db),
+) -> StandardResponse[List[LocationCountItem]]:
+    locations = MerchantService.get_locations_with_counts(db=db, query=query)
+    return success_response(
+        data=[LocationCountItem(**loc) for loc in locations],
+        message="Locations retrieved successfully",
+    )
+
+
+@router.get(
+    "/services",
+    response_model=StandardResponse[List[ServiceCountItem]],
+    summary="Get merchant services",
+    description="Returns available merchant services with active merchant counts and optional search filter.",
+)
+def get_merchant_services(
+    query: Optional[str] = Query(None, description="Filter services by name"),
+    db: Session = Depends(get_db),
+) -> StandardResponse[List[ServiceCountItem]]:
+    services = MerchantService.get_services_with_counts(db=db, query=query)
+    return success_response(
+        data=[ServiceCountItem(**svc) for svc in services],
+        message="Services retrieved successfully",
+    )
+
+
+@router.get(
+    "/discovery-meta",
+    response_model=StandardResponse[MerchantDiscoveryMetaResponse],
+    summary="Get discovery metadata (locations & services)",
+    description="Returns distinct locations, services, and categories for search suggestions and dropdowns.",
+)
+@router.get(
+    "/meta/discovery",
+    response_model=StandardResponse[MerchantDiscoveryMetaResponse],
+    include_in_schema=False,
+)
+def get_discovery_metadata(
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantDiscoveryMetaResponse]:
+    meta = MerchantService.get_discovery_metadata(db=db)
+    return success_response(
+        data=MerchantDiscoveryMetaResponse(**meta),
+        message="Discovery metadata retrieved successfully",
+    )
+
+
+# ── OTP Login Flow ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/login/send-otp",
+    response_model=MerchantLoginOTPResponse,
+    summary="Step 1 — Request merchant OTP login code",
+    description=(
+        "Sends a 6-digit OTP to the registered merchant's email. "
+        "The OTP expires in a few minutes and is single-use. "
+        "Only works for accounts with MERCHANT role that are active."
+    ),
+)
+def merchant_login_send_otp(
+    req: MerchantLoginOTPRequest,
+    db: Session = Depends(get_db),
+) -> MerchantLoginOTPResponse:
+    plain_otp = MerchantService.send_login_otp(db=db, email=req.email)
+    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    return MerchantLoginOTPResponse(
+        message=f"OTP sent to {req.email}. Please check your inbox.",
+        expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
+        dev_otp=dev_otp,
+    )
+
+
+@router.post(
+    "/login/verify-otp",
+    response_model=TokenResponse,
+    summary="Step 2 — Verify OTP and receive JWT tokens",
+    description=(
+        "Verifies the 6-digit OTP sent to the merchant's email. "
+        "On success, returns a JWT access token and refresh token pair "
+        "to authenticate subsequent requests."
+    ),
+)
+def merchant_login_verify_otp(
+    req: MerchantVerifyOTPLoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    return MerchantService.verify_login_otp(db=db, email=req.email, otp=req.otp)

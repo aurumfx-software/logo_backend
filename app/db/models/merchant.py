@@ -20,6 +20,12 @@ class MerchantProfile(Base):
     address = Column(String(500), nullable=False)
 
     is_verified = Column(Boolean, default=False, nullable=False)
+    approval_status = Column(String(50), default="PENDING", nullable=False, index=True)  # PENDING, APPROVED, REJECTED
+    rejection_reason = Column(String(500), nullable=True)
+    approved_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -32,4 +38,5 @@ class MerchantProfile(Base):
         nullable=False,
     )
 
-    user = relationship("User", backref="merchant_profile")
+    user = relationship("User", foreign_keys=[user_id], backref="merchant_profile")
+    approved_by = relationship("User", foreign_keys=[approved_by_id])

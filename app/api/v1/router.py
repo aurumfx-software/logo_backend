@@ -1,9 +1,22 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, health, merchant
+from app.api.v1.endpoints import (
+    admin,
+    auth,
+    category,
+    favorite,
+    health,
+    logo,
+    merchant,
+    notification,
+)
 
 api_router = APIRouter()
 
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(merchant.router)
-
+api_router.include_router(category.router)
+api_router.include_router(logo.router)
+api_router.include_router(favorite.router)
+api_router.include_router(notification.router)
+api_router.include_router(admin.router)

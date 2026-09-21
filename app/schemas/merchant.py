@@ -39,6 +39,9 @@ class MerchantRegisterRequest(BaseModel):
         return cleaned
 
 
+from datetime import datetime
+
+
 class MerchantProfileResponse(BaseModel):
     id: int
     user_id: int
@@ -51,8 +54,58 @@ class MerchantProfileResponse(BaseModel):
     contact_number: str
     address: str
     is_verified: bool
+    approval_status: str = "PENDING"
+    rejection_reason: Optional[str] = None
+    approved_by_id: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MerchantRejectRequest(BaseModel):
+    rejection_reason: str = Field(
+        ...,
+        min_length=3,
+        max_length=500,
+        json_schema_extra={"example": "Invalid business license or contact details not reachable."},
+    )
+
+
+class LocationCountItem(BaseModel):
+    location: str
+    count: int
+
+
+class CategoryCountItem(BaseModel):
+    category: str
+    count: int
+
+
+class ServiceCountItem(BaseModel):
+    service: str
+    count: int
+
+
+class MerchantStatsResponse(BaseModel):
+    total_merchants: int
+    active_merchants: int
+    inactive_merchants: int
+    pending_merchants: int
+    approved_merchants: int
+    rejected_merchants: int
+    verified_merchants: int
+    unverified_merchants: int
+    top_locations: List[LocationCountItem] = []
+    top_categories: List[CategoryCountItem] = []
+    recent_registrations_7d: int = 0
+    recent_registrations_30d: int = 0
+
+
+class MerchantDiscoveryMetaResponse(BaseModel):
+    locations: List[str]
+    services: List[str]
+    categories: List[str]
 
 
 class MerchantRegisterResponse(BaseModel):
@@ -76,3 +129,40 @@ class MerchantPhotosUploadResponse(BaseModel):
     message: str
     uploaded_photo_urls: List[str]
     total_photos: List[str]
+
+
+# ── Merchant OTP Login ──────────────────────────────────────────────────────
+
+class MerchantLoginOTPRequest(BaseModel):
+    """Step 1: Merchant requests an OTP to log in."""
+    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+
+class MerchantLoginOTPResponse(BaseModel):
+    """Response after a successful OTP dispatch."""
+    message: str
+    expires_in_minutes: int
+    dev_otp: Optional[str] = None  # Only populated in development environment
+
+
+class MerchantVerifyOTPLoginRequest(BaseModel):
+    """Step 2: Merchant submits OTP to complete login and receive JWT tokens."""
+    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+    otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+

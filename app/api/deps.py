@@ -10,6 +10,7 @@ from app.db.models.user import User, UserRole
 
 # HTTP Bearer scheme with automatic Swagger UI integration
 security_scheme = HTTPBearer(auto_error=True)
+optional_security_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
@@ -65,6 +66,28 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Extract authenticated User if Bearer token is provided; otherwise returns None."""
+    if not credentials or not credentials.credentials:
+        return None
+    try:
+        payload = decode_token(credentials.credentials)
+        if payload.get("type") != "access":
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = db.query(User).filter(User.id == int(user_id)).first()
+        if user and user.is_active:
+            return user
+    except Exception:
+        return None
+    return None
+
+
 def require_role(*allowed_roles: UserRole) -> Callable[[User], User]:
     """Dependency factory enforcing role-based access control."""
     def role_checker(current_user: User = Depends(get_current_user)) -> User:
@@ -76,3 +99,10 @@ def require_role(*allowed_roles: UserRole) -> Callable[[User], User]:
         return current_user
 
     return role_checker
+
+
+# Convenient pre-configured role dependencies
+require_admin = require_role(UserRole.ADMIN)
+require_merchant = require_role(UserRole.MERCHANT)
+require_merchant_or_admin = require_role(UserRole.MERCHANT, UserRole.ADMIN)
+
