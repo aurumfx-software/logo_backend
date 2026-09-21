@@ -23,6 +23,13 @@ class Settings(BaseSettings):
             self.DATABASE_URL = (
                 f"postgresql+psycopg://{self.DB_USER}{pwd_part}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
             )
+        else:
+            url = self.DATABASE_URL.strip()
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+psycopg://", 1)
+            elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
+                url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            self.DATABASE_URL = url
         return self
 
     # JWT
