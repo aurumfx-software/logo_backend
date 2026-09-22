@@ -57,6 +57,7 @@ class SafeUserResponse(BaseModel):
     role: UserRole
     address: Optional[str] = None
     profile_picture: Optional[str] = None
+    is_active: bool = True
     is_verified: bool
 
     model_config = ConfigDict(from_attributes=True)
