@@ -5,6 +5,7 @@ from app.db.database import Base
 
 
 class UserRole(str, enum.Enum):
+    SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
     MERCHANT = "MERCHANT"
     PUBLIC_USER = "PUBLIC_USER"

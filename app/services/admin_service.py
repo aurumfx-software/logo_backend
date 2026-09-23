@@ -30,7 +30,10 @@ class AdminService:
             db.query(func.count(User.id)).filter(User.role == UserRole.PUBLIC_USER).scalar() or 0
         )
         total_admins = (
-            db.query(func.count(User.id)).filter(User.role == UserRole.ADMIN).scalar() or 0
+            db.query(func.count(User.id))
+            .filter(User.role.in_([UserRole.ADMIN, UserRole.SUPER_ADMIN]))
+            .scalar()
+            or 0
         )
         active_users = (
             db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar() or 0
@@ -226,7 +229,7 @@ class AdminService:
         cls, db: Session, user_id: int, new_role: UserRole, current_admin: User
     ) -> AdminUserDetailResponse:
         """Change a user's role, preventing self-demotion."""
-        if user_id == current_admin.id and new_role != UserRole.ADMIN:
+        if user_id == current_admin.id and new_role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="You cannot demote your own administrator account.",

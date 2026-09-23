@@ -102,7 +102,11 @@ def require_role(*allowed_roles: UserRole) -> Callable[[User], User]:
 
 
 # Convenient pre-configured role dependencies
-require_admin = require_role(UserRole.ADMIN)
+require_super_admin = require_role(UserRole.SUPER_ADMIN)
+require_admin = require_role(UserRole.SUPER_ADMIN, UserRole.ADMIN)
 require_merchant = require_role(UserRole.MERCHANT)
-require_merchant_or_admin = require_role(UserRole.MERCHANT, UserRole.ADMIN)
+require_merchant_or_admin = require_role(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MERCHANT)
+require_any_authenticated = require_role(
+    UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MERCHANT, UserRole.PUBLIC_USER
+)
 

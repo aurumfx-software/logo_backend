@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user_optional
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
 from app.schemas.auth import SafeUserResponse
@@ -20,15 +21,16 @@ router = APIRouter(prefix="/users", tags=["Users"])
     "",
     response_model=StandardListResponse[SafeUserResponse],
     summary="List users",
-    description="Returns a paginated list of users with optional filtering by role, status, verification, or keyword search.",
+    description="Returns a paginated list of users with optional filtering by role, status, verification, or keyword search. Accessible to Super Admin, Admin, and Users.",
 )
 def list_users(
     search: Optional[str] = Query(None, description="Search keyword in user name, email, or phone"),
-    role: Optional[UserRole] = Query(None, description="Filter by user role: ADMIN, MERCHANT, PUBLIC_USER"),
+    role: Optional[UserRole] = Query(None, description="Filter by user role: SUPER_ADMIN, ADMIN, MERCHANT, PUBLIC_USER"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_verified: Optional[bool] = Query(None, description="Filter by email verification status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[SafeUserResponse]:
     query = db.query(User)
@@ -69,10 +71,11 @@ def list_users(
     "/{user_id}",
     response_model=StandardResponse[SafeUserResponse],
     summary="Get user details by ID",
-    description="Returns safe profile details of a specific user by their ID.",
+    description="Returns safe profile details of a specific user by their ID. Accessible to Super Admin, Admin, and Users.",
 )
 def get_user_by_id(
     user_id: int,
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardResponse[SafeUserResponse]:
     user = db.query(User).filter(User.id == user_id).first()

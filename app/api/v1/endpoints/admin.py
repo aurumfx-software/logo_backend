@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
+from app.api.deps import require_admin, require_any_authenticated
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.admin import (
@@ -109,15 +109,15 @@ def reject_logo(
     "/users",
     response_model=AdminUserListResponse,
     summary="List all users with filters",
-    description="Search, filter by role or status, and paginate all registered users in the platform.",
+    description="Search, filter by role or status, and paginate all registered users in the platform. Accessible to Super Admin, Admin, and Users.",
 )
 def list_users(
-    role: Optional[str] = Query(None, description="Filter by role: ADMIN, MERCHANT, PUBLIC_USER"),
+    role: Optional[str] = Query(None, description="Filter by role: SUPER_ADMIN, ADMIN, MERCHANT, PUBLIC_USER"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     search: Optional[str] = Query(None, description="Search by name, email, or phone"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    current_admin: User = Depends(require_admin),
+    current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserListResponse:
     return AdminService.list_users(
@@ -134,11 +134,11 @@ def list_users(
     "/users/{user_id}",
     response_model=AdminUserDetailResponse,
     summary="Get user details",
-    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user.",
+    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user. Accessible to Super Admin, Admin, and Users.",
 )
 def get_user_details(
     user_id: int,
-    current_admin: User = Depends(require_admin),
+    current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
     return AdminService.get_user_details(db=db, user_id=user_id)

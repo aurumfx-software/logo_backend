@@ -82,7 +82,7 @@ class LogoService:
         query = db.query(Logo)
 
         # 1. RBAC on status:
-        is_admin = current_user is not None and current_user.role == UserRole.ADMIN
+        is_admin = current_user is not None and current_user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
         if is_admin:
             if logo_status:
                 try:
@@ -185,7 +185,7 @@ class LogoService:
             )
 
         # RBAC visibility check:
-        is_admin = current_user is not None and current_user.role == UserRole.ADMIN
+        is_admin = current_user is not None and current_user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
         is_owner = current_user is not None and current_user.id == logo.submitted_by_id
 
         if logo.status != LogoStatus.APPROVED and not is_admin and not is_owner:
@@ -261,7 +261,7 @@ class LogoService:
                 detail=f"Logo with ID {logo_id} not found.",
             )
 
-        is_admin = current_user.role == UserRole.ADMIN
+        is_admin = current_user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
         is_owner = current_user.id == logo.submitted_by_id
 
         if not is_admin and not is_owner:
@@ -312,7 +312,7 @@ class LogoService:
                 detail=f"Logo with ID {logo_id} not found.",
             )
 
-        is_admin = current_user.role == UserRole.ADMIN
+        is_admin = current_user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
         is_owner = current_user.id == logo.submitted_by_id
 
         if not is_admin and not is_owner:

@@ -2,9 +2,70 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password
+from app.core.security import hash_password, create_access_token
 from app.db.models.user import User, UserRole
 from app.db.models.merchant import MerchantProfile
+
+
+def test_super_admin_and_role_access(client: TestClient, db_session: Session):
+    # Create super admin, admin, and regular user
+    sa = User(
+        name="Chief SuperAdmin",
+        email="superadmin@example.com",
+        phone="9990001111",
+        password_hash=hash_password("SuperSecret123!"),
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+        is_verified=True,
+    )
+    adm = User(
+        name="System Admin",
+        email="sysadmin@example.com",
+        phone="9990002222",
+        password_hash=hash_password("AdminPass123!"),
+        role=UserRole.ADMIN,
+        is_active=True,
+        is_verified=True,
+    )
+    usr = User(
+        name="Normal User",
+        email="normaluser@example.com",
+        phone="9990003333",
+        password_hash=hash_password("UserPass123!"),
+        role=UserRole.PUBLIC_USER,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add_all([sa, adm, usr])
+    db_session.commit()
+
+    sa_token = create_access_token(user_id=sa.id, role=sa.role.value)
+    adm_token = create_access_token(user_id=adm.id, role=adm.role.value)
+    usr_token = create_access_token(user_id=usr.id, role=usr.role.value)
+
+    # 1. Super Admin, Admin, and User can all call /api/v1/users
+    for token in [sa_token, adm_token, usr_token]:
+        res = client.get("/api/v1/users", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 200
+        assert res.json()["success"] is True
+
+    # 2. Super Admin, Admin, and User can all call /api/v1/admin/users
+    for token in [sa_token, adm_token, usr_token]:
+        res = client.get("/api/v1/admin/users", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 200
+        assert "items" in res.json()
+
+    # 3. Filter by role=SUPER_ADMIN on /api/v1/users
+    res_sa = client.get("/api/v1/users?role=SUPER_ADMIN")
+    assert res_sa.status_code == 200
+    assert any(u["email"] == "superadmin@example.com" for u in res_sa.json()["data"])
+    assert all(u["role"] == "SUPER_ADMIN" for u in res_sa.json()["data"])
+
+    # 4. Super Admin can access admin dashboard
+    res_dash = client.get("/api/v1/admin/dashboard/stats", headers={"Authorization": f"Bearer {sa_token}"})
+    assert res_dash.status_code == 200
+    assert res_dash.json()["total_admins"] >= 2  # Includes both SUPER_ADMIN and ADMIN
+
 
 
 def test_user_listing_api(client: TestClient, db_session: Session):

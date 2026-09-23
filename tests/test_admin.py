@@ -60,9 +60,17 @@ def test_user_management_by_admin(client: TestClient, db_session: Session):
     admin, admin_token, member_token = setup_admin_and_users(client, db_session)
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # 1. Non-admin forbidden
+    # 1. Non-admin can list users (SUPER_ADMIN, ADMIN, USER allowed)
     member_headers = {"Authorization": f"Bearer {member_token}"}
-    forbidden_res = client.get("/api/v1/admin/users", headers=member_headers)
+    member_list_res = client.get("/api/v1/admin/users", headers=member_headers)
+    assert member_list_res.status_code == 200
+
+    # 1b. Non-admin forbidden from role modification
+    forbidden_res = client.patch(
+        f"/api/v1/admin/users/{admin.id}/role",
+        json={"role": "ADMIN"},
+        headers=member_headers,
+    )
     assert forbidden_res.status_code == 403
 
     # 2. Admin lists users
