@@ -25,7 +25,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 )
 def list_users(
     search: Optional[str] = Query(None, description="Search keyword in user name, email, or phone"),
-    role: Optional[UserRole] = Query(None, description="Filter by user role: SUPER_ADMIN, ADMIN, FIELD_STAFF"),
+    role: Optional[UserRole] = Query(None, description="Filter by user role: SUPER_ADMIN, ADMIN, MERCHANT, PUBLIC_USER"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_verified: Optional[bool] = Query(None, description="Filter by email verification status"),
     page: int = Query(1, ge=1, description="Page number"),

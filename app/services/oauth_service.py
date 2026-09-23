@@ -115,13 +115,13 @@ class GoogleOAuthService:
         # Check if user already exists
         user = db.query(User).filter(User.email == clean_email).first()
         if not user:
-            # Create new user with FIELD_STAFF role
+            # Create new user with PUBLIC_USER role
             user = User(
                 name=name,
                 email=clean_email,
                 phone=None,
                 password_hash=None,  # OAuth users have no password hash
-                role=UserRole.FIELD_STAFF,
+                role=UserRole.PUBLIC_USER,
                 profile_picture=user_info.get("picture"),
                 is_active=True,
                 is_verified=True,  # Verified by Google

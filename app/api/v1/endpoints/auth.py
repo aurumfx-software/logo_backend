@@ -4,7 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role, require_admin
+from app.api.deps import get_current_user, require_role
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
@@ -38,7 +38,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register new user",
-    description="Registers a new user account with the specified role (SUPER_ADMIN, ADMIN, or FIELD_STAFF). If role is omitted, defaults to FIELD_STAFF.",
+    description="Registers a new user account with the specified role (SUPER_ADMIN, ADMIN, MERCHANT, or PUBLIC_USER). If role is omitted, defaults to PUBLIC_USER.",
 )
 def register(
     user_data: UserRegisterRequest,
@@ -282,7 +282,7 @@ async def google_callback(
     description="Protected endpoint accessible only by users with the ADMIN role.",
 )
 def admin_only_test(
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_role(UserRole.ADMIN)),
 ) -> GenericMessageResponse:
     return GenericMessageResponse(
         message=f"Welcome, Administrator {admin_user.name}. You have verified admin access."

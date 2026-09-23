@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role, require_any_authenticated
+from app.api.deps import get_current_user, require_role
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
@@ -43,7 +43,7 @@ ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
     status_code=status.HTTP_201_CREATED,
     summary="Register a new merchant",
     description=(
-        "Registers a merchant account with role FIELD_STAFF, business name, categories, "
+        "Registers a merchant account with role MERCHANT, business name, categories, "
         "location, services, service timing, photos, contact number, and address."
     ),
 )
@@ -66,7 +66,7 @@ def register_merchant(
     description="Returns the business profile for the currently authenticated merchant.",
 )
 def get_my_merchant_profile(
-    current_user: User = Depends(require_any_authenticated),
+    current_user: User = Depends(require_role(UserRole.MERCHANT)),
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_user_id(
@@ -83,7 +83,7 @@ def get_my_merchant_profile(
 )
 def update_my_merchant_profile(
     update_data: MerchantUpdateRequest,
-    current_user: User = Depends(require_any_authenticated),
+    current_user: User = Depends(require_role(UserRole.MERCHANT)),
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_user_id(
@@ -103,7 +103,7 @@ def update_my_merchant_profile(
 )
 def upload_merchant_photos(
     photos: List[UploadFile] = File(...),
-    current_user: User = Depends(require_any_authenticated),
+    current_user: User = Depends(require_role(UserRole.MERCHANT)),
     db: Session = Depends(get_db),
 ) -> MerchantPhotosUploadResponse:
     merchant = MerchantService.get_merchant_by_user_id(

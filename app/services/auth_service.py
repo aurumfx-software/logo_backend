@@ -47,9 +47,9 @@ class AuthService:
                     detail="A user with this phone number already exists.",
                 )
 
-        # Hash password and assign requested role (or default to FIELD_STAFF)
+        # Hash password and assign requested role (or default to PUBLIC_USER)
         hashed_pwd = hash_password(user_data.password)
-        assigned_role = user_data.role if user_data.role is not None else UserRole.FIELD_STAFF
+        assigned_role = user_data.role if user_data.role is not None else UserRole.PUBLIC_USER
         new_user = User(
             name=user_data.name.strip(),
             email=clean_email,

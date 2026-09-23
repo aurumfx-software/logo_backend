@@ -32,7 +32,7 @@ def test_super_admin_and_role_access(client: TestClient, db_session: Session):
         email="normaluser@example.com",
         phone="9990003333",
         password_hash=hash_password("UserPass123!"),
-        role=UserRole.FIELD_STAFF,
+        role=UserRole.PUBLIC_USER,
         is_active=True,
         is_verified=True,
     )
@@ -74,7 +74,7 @@ def test_user_listing_api(client: TestClient, db_session: Session):
         name="Alice Walker",
         email="alice@example.com",
         phone="9876541111",
-        role=UserRole.FIELD_STAFF,
+        role=UserRole.PUBLIC_USER,
         is_active=True,
         is_verified=True,
     )
@@ -82,7 +82,7 @@ def test_user_listing_api(client: TestClient, db_session: Session):
         name="Bob Builder",
         email="bob@example.com",
         phone="9876542222",
-        role=UserRole.FIELD_STAFF,
+        role=UserRole.MERCHANT,
         is_active=True,
         is_verified=False,
     )
@@ -114,10 +114,10 @@ def test_user_listing_api(client: TestClient, db_session: Session):
     assert ids_desc == sorted(ids_desc, reverse=True)
 
     # 2. Filter by role
-    res_role = client.get("/api/v1/users?role=FIELD_STAFF")
+    res_role = client.get("/api/v1/users?role=MERCHANT")
     assert res_role.status_code == 200
-    assert any(u["email"] == "alice@example.com" for u in res_role.json()["data"])
-    assert not any(u["email"] == "charlie@example.com" for u in res_role.json()["data"])
+    assert any(u["email"] == "bob@example.com" for u in res_role.json()["data"])
+    assert not any(u["email"] == "alice@example.com" for u in res_role.json()["data"])
 
     # 3. Search keyword
     res_search = client.get("/api/v1/users?search=Alice")
@@ -148,7 +148,7 @@ def test_merchant_listing_api(client: TestClient, db_session: Session):
         name="Shop Owner",
         email="shop.owner@example.com",
         phone="9876544444",
-        role=UserRole.FIELD_STAFF,
+        role=UserRole.MERCHANT,
         is_active=True,
         is_verified=True,
     )
