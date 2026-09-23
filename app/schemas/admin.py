@@ -17,7 +17,7 @@ class AdminCategoryDistributionItem(BaseModel):
 class AdminDashboardStats(BaseModel):
     total_users: int
     total_merchants: int
-    total_public_users: int
+    total_field_staff: int
     total_admins: int
     active_users: int
 

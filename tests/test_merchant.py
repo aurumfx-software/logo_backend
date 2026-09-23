@@ -23,7 +23,7 @@ def test_merchant_registration_success(client: TestClient):
     data = response.json()
     assert data["message"] == "Merchant registered successfully"
     assert data["user"]["email"] == "rajesh.merchant@example.com"
-    assert data["user"]["role"] == "MERCHANT"
+    assert data["user"]["role"] == "FIELD_STAFF"
     assert data["user"]["phone"] == "9876543999"
     assert data["user"]["address"] == "Door No 14/204, Toll Junction, Edappally, Kochi - 682024"
 
@@ -106,22 +106,22 @@ def test_merchant_update_profile(client: TestClient):
     assert updated_data["service_timing"] == "06:00 AM - 11:00 PM"
 
 
-def test_public_user_cannot_access_merchant_me(client: TestClient):
-    # Register regular public user
+def test_user_without_merchant_profile_gets_404_on_me(client: TestClient):
+    # Register regular staff user
     client.post("/api/v1/auth/register", json={
-        "name": "Normal Public User",
-        "email": "normal.public@example.com",
-        "password": "PublicPassword123",
+        "name": "Normal Staff User",
+        "email": "normal.staff@example.com",
+        "password": "StaffPassword123",
     })
     login_res = client.post("/api/v1/auth/login", json={
-        "email": "normal.public@example.com",
-        "password": "PublicPassword123",
+        "email": "normal.staff@example.com",
+        "password": "StaffPassword123",
     })
     token = login_res.json()["access_token"]
 
-    # Regular public user accessing merchant/me -> 403 Forbidden
+    # User without merchant profile accessing merchant/me -> 404 Not Found
     res = client.get("/api/v1/merchants/me", headers={"Authorization": f"Bearer {token}"})
-    assert res.status_code == 403
+    assert res.status_code == 404
 
 
 def test_list_and_filter_merchants(client: TestClient):

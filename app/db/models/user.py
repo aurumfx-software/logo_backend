@@ -7,8 +7,7 @@ from app.db.database import Base
 class UserRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
-    MERCHANT = "MERCHANT"
-    PUBLIC_USER = "PUBLIC_USER"
+    FIELD_STAFF = "FIELD_STAFF"
 
 
 class User(Base):
@@ -21,7 +20,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)  # nullable for OAuth users
     role = Column(
         Enum(UserRole, name="user_role", native_enum=False),
-        default=UserRole.PUBLIC_USER,
+        default=UserRole.FIELD_STAFF,
         nullable=False,
     )
     address = Column(String(500), nullable=True)

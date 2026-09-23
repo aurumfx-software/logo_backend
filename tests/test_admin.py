@@ -85,14 +85,14 @@ def test_user_management_by_admin(client: TestClient, db_session: Session):
     assert detail_res.status_code == 200
     assert detail_res.json()["email"] == "member@example.com"
 
-    # 4. Update user role to MERCHANT
+    # 4. Update user role to FIELD_STAFF
     role_res = client.patch(
         f"/api/v1/admin/users/{member_id}/role",
-        json={"role": "MERCHANT"},
+        json={"role": "FIELD_STAFF"},
         headers=admin_headers,
     )
     assert role_res.status_code == 200
-    assert role_res.json()["role"] == "MERCHANT"
+    assert role_res.json()["role"] == "FIELD_STAFF"
 
     # 5. Ban / deactivate user
     status_res = client.patch(
@@ -114,7 +114,7 @@ def test_user_management_by_admin(client: TestClient, db_session: Session):
 
     self_demote_res = client.patch(
         f"/api/v1/admin/users/{admin.id}/role",
-        json={"role": "PUBLIC_USER"},
+        json={"role": "FIELD_STAFF"},
         headers=admin_headers,
     )
     assert self_demote_res.status_code == 400

@@ -22,7 +22,7 @@ def test_registration_success(client: TestClient):
     data = response.json()
     assert data["message"] == "User registered successfully"
     assert data["user"]["email"] == "test@example.com"
-    assert data["user"]["role"] == "PUBLIC_USER"
+    assert data["user"]["role"] == "FIELD_STAFF"
     assert data["user"]["is_verified"] is False
     assert "password" not in data["user"]
     assert "password_hash" not in data["user"]
@@ -50,15 +50,15 @@ def test_registration_with_custom_role(client: TestClient):
     assert res_sa.status_code == 201
     assert res_sa.json()["user"]["role"] == "SUPER_ADMIN"
 
-    # Register as MERCHANT with lowercase role
-    res_merch = client.post("/api/v1/auth/register", json={
-        "name": "Merchant Tester",
-        "email": "merch.tester@example.com",
+    # Register as FIELD_STAFF with lowercase role
+    res_staff = client.post("/api/v1/auth/register", json={
+        "name": "Staff Tester",
+        "email": "staff.tester@example.com",
         "password": "Password123!",
-        "role": "merchant",
+        "role": "field_staff",
     })
-    assert res_merch.status_code == 201
-    assert res_merch.json()["user"]["role"] == "MERCHANT"
+    assert res_staff.status_code == 201
+    assert res_staff.json()["user"]["role"] == "FIELD_STAFF"
 
     # Invalid role rejection
     res_invalid = client.post("/api/v1/auth/register", json={
@@ -149,7 +149,7 @@ def test_get_current_user_me(client: TestClient):
     assert data["name"] == "Profile User"
     assert data["email"] == "me@example.com"
     assert data["phone"] == "9998887776"
-    assert data["role"] == "PUBLIC_USER"
+    assert data["role"] == "FIELD_STAFF"
     assert "password_hash" not in data
 
 
@@ -168,7 +168,7 @@ def test_expired_jwt_rejected(client: TestClient, db_session: Session):
         name="Expired User",
         email="expired@example.com",
         password_hash=hash_password("Password123"),
-        role=UserRole.PUBLIC_USER,
+        role=UserRole.FIELD_STAFF,
     )
     db_session.add(user)
     db_session.commit()
@@ -359,24 +359,24 @@ def test_password_reset_flow(client: TestClient):
 
 # 14. Role-based authorization
 def test_role_based_authorization(client: TestClient, db_session: Session):
-    # 1. Normal user (PUBLIC_USER)
+    # 1. Normal field staff (FIELD_STAFF)
     client.post("/api/v1/auth/register", json={
-        "name": "Public User",
-        "email": "public@example.com",
+        "name": "Staff User",
+        "email": "staff@example.com",
         "password": "Password123",
     })
-    public_login = client.post("/api/v1/auth/login", json={
-        "email": "public@example.com",
+    staff_login = client.post("/api/v1/auth/login", json={
+        "email": "staff@example.com",
         "password": "Password123",
     })
-    public_token = public_login.json()["access_token"]
+    staff_token = staff_login.json()["access_token"]
 
-    # Accessing admin test endpoint with PUBLIC_USER -> 403 Forbidden
-    res_public = client.get(
+    # Accessing admin test endpoint with FIELD_STAFF -> 403 Forbidden
+    res_staff = client.get(
         "/api/v1/auth/admin-test",
-        headers={"Authorization": f"Bearer {public_token}"},
+        headers={"Authorization": f"Bearer {staff_token}"},
     )
-    assert res_public.status_code == 403
+    assert res_staff.status_code == 403
 
     # 2. Admin user (created directly in DB for testing admin access)
     admin_user = User(
