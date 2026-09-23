@@ -42,7 +42,7 @@ class MerchantService:
             email=clean_email,
             phone=data.contact_number,
             password_hash=hash_password(data.password),
-            role=UserRole.MERCHANT,
+            role=UserRole.FIELD_STAFF,
             address=data.address,
             profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
             is_active=True,
@@ -450,10 +450,11 @@ class MerchantService:
                 detail="No account found with this email address.",
             )
 
-        if user.role != UserRole.MERCHANT:
+        merchant = db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
+        if not merchant:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This email is not registered as a merchant account.",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="This account does not have an associated merchant profile.",
             )
 
         if not user.is_active:

@@ -23,11 +23,9 @@ class AdminService:
         """Aggregate platform metrics, user counts, logo statuses, and recent activities."""
         # 1. User counts
         total_users = db.query(func.count(User.id)).scalar() or 0
-        total_merchants = (
-            db.query(func.count(User.id)).filter(User.role == UserRole.MERCHANT).scalar() or 0
-        )
-        total_public_users = (
-            db.query(func.count(User.id)).filter(User.role == UserRole.PUBLIC_USER).scalar() or 0
+        total_merchants = db.query(func.count(MerchantProfile.id)).scalar() or 0
+        total_field_staff = (
+            db.query(func.count(User.id)).filter(User.role == UserRole.FIELD_STAFF).scalar() or 0
         )
         total_admins = (
             db.query(func.count(User.id))
@@ -102,7 +100,7 @@ class AdminService:
         return AdminDashboardStats(
             total_users=total_users,
             total_merchants=total_merchants,
-            total_public_users=total_public_users,
+            total_field_staff=total_field_staff,
             total_admins=total_admins,
             active_users=active_users,
             total_logos=total_logos,

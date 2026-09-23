@@ -112,7 +112,7 @@ def reject_logo(
     description="Search, filter by role or status, and paginate all registered users in the platform. Accessible to Super Admin, Admin, and Users.",
 )
 def list_users(
-    role: Optional[str] = Query(None, description="Filter by role: SUPER_ADMIN, ADMIN, MERCHANT, PUBLIC_USER"),
+    role: Optional[str] = Query(None, description="Filter by role: SUPER_ADMIN, ADMIN, FIELD_STAFF"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     search: Optional[str] = Query(None, description="Search by name, email, or phone"),
     skip: int = Query(0, ge=0),
@@ -150,7 +150,7 @@ def get_user_details(
     "/users/{user_id}/role",
     response_model=AdminUserDetailResponse,
     summary="Update user role",
-    description="Modifies a user's role (ADMIN, MERCHANT, PUBLIC_USER). Admins cannot demote their own account.",
+    description="Modifies a user's role (SUPER_ADMIN, ADMIN, FIELD_STAFF). Admins cannot demote their own account.",
 )
 def update_user_role(
     user_id: int,
