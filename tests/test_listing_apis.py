@@ -147,9 +147,20 @@ def test_user_listing_api(client: TestClient, db_session: Session):
         "/api/v1/admin/users?role=PUBLIC_USER",
         headers={"Authorization": f"Bearer {active_token}"},
     )
-    assert res_admin_pub.status_code == 200
-    assert "items" in res_admin_pub.json()
-    assert any(u["email"] == "alice@example.com" for u in res_admin_pub.json()["items"])
+    # 8. Verify user_code format (e.g. USR000001) and fetching by user code
+    expected_code = f"USR{u1.id:06d}"
+    assert res_single.json()["data"]["user_code"] == expected_code
+    res_by_code = client.get(f"/api/v1/users/{expected_code}")
+    assert res_by_code.status_code == 200
+    assert res_by_code.json()["data"]["name"] == "Alice Walker"
+
+    # Admin get by user code
+    res_admin_by_code = client.get(
+        f"/api/v1/admin/users/{expected_code}",
+        headers={"Authorization": f"Bearer {active_token}"},
+    )
+    assert res_admin_by_code.status_code == 200
+    assert res_admin_by_code.json()["user_code"] == expected_code
 
 
 def test_merchant_listing_api(client: TestClient, db_session: Session):

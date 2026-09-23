@@ -148,14 +148,25 @@ class AdminService:
             query = query.filter(User.is_active == is_active)
 
         if search and search.strip():
-            pat = f"%{search.strip()}%"
-            query = query.filter(
-                or_(
-                    User.name.ilike(pat),
-                    User.email.ilike(pat),
-                    User.phone.ilike(pat),
-                )
-            )
+            term = search.strip()
+            extracted_id = None
+            if term.upper().startswith("USR"):
+                num_str = term.upper().replace("USR", "").replace("-", "").strip()
+                if num_str.isdigit():
+                    extracted_id = int(num_str)
+            elif term.isdigit():
+                extracted_id = int(term)
+
+            pat = f"%{term}%"
+            search_filters = [
+                User.name.ilike(pat),
+                User.email.ilike(pat),
+                User.phone.ilike(pat),
+            ]
+            if extracted_id is not None:
+                search_filters.append(User.id == extracted_id)
+
+            query = query.filter(or_(*search_filters))
 
         total = query.count()
         order_clause = User.id.desc() if sort and sort.lower() == "desc" else User.id.asc()
@@ -168,6 +179,7 @@ class AdminService:
             items.append(
                 AdminUserListItem(
                     id=u.id,
+                    user_code=u.user_code,
                     name=u.name,
                     email=u.email,
                     phone=u.phone,
@@ -213,6 +225,7 @@ class AdminService:
 
         return AdminUserDetailResponse(
             id=user.id,
+            user_code=user.user_code,
             name=user.name,
             email=user.email,
             phone=user.phone,

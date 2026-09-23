@@ -50,3 +50,8 @@ class User(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+
+    @property
+    def user_code(self) -> str:
+        """Returns standard formatted user code, e.g. USR000001."""
+        return f"USR{self.id:06d}" if self.id is not None else ""

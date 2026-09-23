@@ -1,5 +1,5 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, Query, status
+from typing import Optional, Union
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin, require_any_authenticated
@@ -132,18 +132,31 @@ def list_users(
     )
 
 
+def _parse_user_id(uid: Union[str, int]) -> int:
+    val = str(uid).strip().upper()
+    if val.startswith("USR"):
+        val = val.replace("USR", "").replace("-", "").strip()
+    if not val.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid user ID format: '{uid}'.",
+        )
+    return int(val)
+
+
 @router.get(
     "/users/{user_id}",
     response_model=AdminUserDetailResponse,
     summary="Get user details",
-    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user. Accessible to Super Admin, Admin, and Users.",
+    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user by ID or code (e.g. 1 or USR000001). Accessible to Super Admin, Admin, and Users.",
 )
 def get_user_details(
-    user_id: int,
+    user_id: str,
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
-    return AdminService.get_user_details(db=db, user_id=user_id)
+    numeric_id = _parse_user_id(user_id)
+    return AdminService.get_user_details(db=db, user_id=numeric_id)
 
 
 @router.patch(
@@ -153,14 +166,15 @@ def get_user_details(
     description="Modifies a user's role (SUPER_ADMIN, ADMIN, FIELD_STAFF). Admins cannot demote their own account.",
 )
 def update_user_role(
-    user_id: int,
+    user_id: str,
     data: AdminUserRoleUpdateRequest,
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
+    numeric_id = _parse_user_id(user_id)
     return AdminService.update_user_role(
         db=db,
-        user_id=user_id,
+        user_id=numeric_id,
         new_role=data.role,
         current_admin=current_admin,
     )
@@ -173,14 +187,15 @@ def update_user_role(
     description="Sets the active state of a user. Inactive users cannot log in. Admins cannot ban their own account.",
 )
 def update_user_status(
-    user_id: int,
+    user_id: str,
     data: AdminUserStatusUpdateRequest,
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
+    numeric_id = _parse_user_id(user_id)
     return AdminService.update_user_status(
         db=db,
-        user_id=user_id,
+        user_id=numeric_id,
         is_active=data.is_active,
         current_admin=current_admin,
     )
@@ -193,11 +208,12 @@ def update_user_status(
     description="Permanently deletes a user account and cascading data. Admins cannot delete their own account.",
 )
 def delete_user(
-    user_id: int,
+    user_id: str,
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> GenericMessageResponse:
-    AdminService.delete_user(db=db, user_id=user_id, current_admin=current_admin)
+    numeric_id = _parse_user_id(user_id)
+    AdminService.delete_user(db=db, user_id=numeric_id, current_admin=current_admin)
     return GenericMessageResponse(message=f"User {user_id} successfully deleted.")
 
 

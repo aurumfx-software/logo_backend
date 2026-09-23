@@ -72,6 +72,7 @@ class UserLoginRequest(UserBase):
 
 class SafeUserResponse(BaseModel):
     id: int
+    user_code: str = Field("", description="Formatted user code, e.g. USR000001", json_schema_extra={"example": "USR000001"})
     name: str
     email: str
     phone: Optional[str] = None
