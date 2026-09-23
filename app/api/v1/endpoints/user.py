@@ -30,6 +30,7 @@ def list_users(
     is_verified: Optional[bool] = Query(None, description="Filter by email verification status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    sort: str = Query("asc", description="Sort order by user ID: 'asc' (1, 2, 3...) or 'desc' (7, 6, 5...)"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[SafeUserResponse]:
@@ -56,7 +57,8 @@ def list_users(
 
     total = query.count()
     skip = (page - 1) * page_size
-    users = query.order_by(User.created_at.desc()).offset(skip).limit(page_size).all()
+    order_clause = User.id.desc() if sort and sort.lower() == "desc" else User.id.asc()
+    users = query.order_by(order_clause).offset(skip).limit(page_size).all()
 
     return list_response(
         data=[SafeUserResponse.model_validate(u) for u in users],

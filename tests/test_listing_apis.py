@@ -97,13 +97,21 @@ def test_user_listing_api(client: TestClient, db_session: Session):
     db_session.add_all([u1, u2, u3])
     db_session.commit()
 
-    # 1. List all users
+    # 1. List all users (default sorted by ID ascending: 1, 2, 3...)
     res = client.get("/api/v1/users")
     assert res.status_code == 200
     data = res.json()
     assert data["success"] is True
     assert data["meta"]["total_items"] >= 3
     assert len(data["data"]) >= 3
+    ids = [u["id"] for u in data["data"]]
+    assert ids == sorted(ids)  # Verified ascending order
+
+    # 1b. Test sort=desc
+    res_desc = client.get("/api/v1/users?sort=desc")
+    assert res_desc.status_code == 200
+    ids_desc = [u["id"] for u in res_desc.json()["data"]]
+    assert ids_desc == sorted(ids_desc, reverse=True)
 
     # 2. Filter by role
     res_role = client.get("/api/v1/users?role=MERCHANT")

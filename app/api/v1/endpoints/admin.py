@@ -117,6 +117,7 @@ def list_users(
     search: Optional[str] = Query(None, description="Search by name, email, or phone"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    sort: str = Query("asc", description="Sort order by user ID: 'asc' (1, 2, 3...) or 'desc' (7, 6, 5...)"),
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserListResponse:
@@ -127,6 +128,7 @@ def list_users(
         search=search,
         skip=skip,
         limit=limit,
+        sort=sort,
     )
 
 

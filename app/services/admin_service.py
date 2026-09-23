@@ -127,6 +127,7 @@ class AdminService:
         search: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
+        sort: Optional[str] = "asc",
     ) -> AdminUserListResponse:
         """Search and paginate users with submitted logos and favorite counts."""
         query = db.query(User)
@@ -155,7 +156,8 @@ class AdminService:
             )
 
         total = query.count()
-        users = query.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
+        order_clause = User.id.desc() if sort and sort.lower() == "desc" else User.id.asc()
+        users = query.order_by(order_clause).offset(skip).limit(limit).all()
 
         items = []
         for u in users:
