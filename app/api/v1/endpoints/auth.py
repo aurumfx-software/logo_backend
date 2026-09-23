@@ -38,7 +38,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     response_model=RegisterResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register new user",
-    description="Registers a new user account with default role PUBLIC_USER. Passwords are encrypted with bcrypt.",
+    description="Registers a new user account with the specified role (SUPER_ADMIN, ADMIN, MERCHANT, or PUBLIC_USER). If role is omitted, defaults to PUBLIC_USER.",
 )
 def register(
     user_data: UserRegisterRequest,

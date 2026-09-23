@@ -24,8 +24,27 @@ class UserRegisterRequest(UserBase):
     name: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Test User"})
     phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
     password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "TestPassword123"})
+    role: Optional[UserRole] = Field(
+        None,
+        description="User role: SUPER_ADMIN, ADMIN, MERCHANT, or PUBLIC_USER (defaults to PUBLIC_USER if omitted)",
+        json_schema_extra={"example": "ADMIN"},
+    )
     address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "123 MG Road, Kochi, Kerala"})
     profile_picture: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "https://example.com/avatar.jpg"})
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_role(cls, v: Optional[str | UserRole]) -> Optional[UserRole]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_clean = v.strip().upper()
+            try:
+                return UserRole(v_clean)
+            except ValueError:
+                valid_roles = [r.value for r in UserRole]
+                raise ValueError(f"Invalid role '{v}'. Allowed roles: {valid_roles}")
+        return v
 
     @field_validator("phone")
     @classmethod

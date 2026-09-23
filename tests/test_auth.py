@@ -28,6 +28,48 @@ def test_registration_success(client: TestClient):
     assert "password_hash" not in data["user"]
 
 
+# 1b. Registration with explicit custom role
+def test_registration_with_custom_role(client: TestClient):
+    # Register as ADMIN
+    res_admin = client.post("/api/v1/auth/register", json={
+        "name": "Admin Tester",
+        "email": "adm.tester@example.com",
+        "password": "Password123!",
+        "role": "ADMIN",
+    })
+    assert res_admin.status_code == 201
+    assert res_admin.json()["user"]["role"] == "ADMIN"
+
+    # Register as SUPER_ADMIN
+    res_sa = client.post("/api/v1/auth/register", json={
+        "name": "Super Admin Tester",
+        "email": "sa.tester@example.com",
+        "password": "Password123!",
+        "role": "SUPER_ADMIN",
+    })
+    assert res_sa.status_code == 201
+    assert res_sa.json()["user"]["role"] == "SUPER_ADMIN"
+
+    # Register as MERCHANT with lowercase role
+    res_merch = client.post("/api/v1/auth/register", json={
+        "name": "Merchant Tester",
+        "email": "merch.tester@example.com",
+        "password": "Password123!",
+        "role": "merchant",
+    })
+    assert res_merch.status_code == 201
+    assert res_merch.json()["user"]["role"] == "MERCHANT"
+
+    # Invalid role rejection
+    res_invalid = client.post("/api/v1/auth/register", json={
+        "name": "Invalid Tester",
+        "email": "invalid.tester@example.com",
+        "password": "Password123!",
+        "role": "NON_EXISTENT_ROLE",
+    })
+    assert res_invalid.status_code == 422
+
+
 # 2. Duplicate email
 def test_duplicate_email_rejection(client: TestClient):
     payload = {

@@ -47,14 +47,15 @@ class AuthService:
                     detail="A user with this phone number already exists.",
                 )
 
-        # Hash password and create PUBLIC_USER
+        # Hash password and assign requested role (or default to PUBLIC_USER)
         hashed_pwd = hash_password(user_data.password)
+        assigned_role = user_data.role if user_data.role is not None else UserRole.PUBLIC_USER
         new_user = User(
             name=user_data.name.strip(),
             email=clean_email,
             phone=user_data.phone,
             password_hash=hashed_pwd,
-            role=UserRole.PUBLIC_USER,  # Default registration role
+            role=assigned_role,
             address=user_data.address,
             profile_picture=user_data.profile_picture,
             is_active=True,
