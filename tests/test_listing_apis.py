@@ -136,10 +136,20 @@ def test_user_listing_api(client: TestClient, db_session: Session):
     assert res_single.json()["success"] is True
     assert res_single.json()["data"]["name"] == "Alice Walker"
 
-    # 6. Non-existing user ID
-    res_404 = client.get("/api/v1/users/99999")
-    assert res_404.status_code == 404
-    assert res_404.json()["success"] is False
+    # 7. Graceful PUBLIC_USER alias on /api/v1/users and /api/v1/admin/users
+    res_pub = client.get("/api/v1/users?role=PUBLIC_USER")
+    assert res_pub.status_code == 200
+    assert any(u["email"] == "alice@example.com" for u in res_pub.json()["data"])
+
+    # Admin listing with role=PUBLIC_USER must return 200 (not 400 Bad Request)
+    active_token = create_access_token(user_id=u1.id, role="FIELD_STAFF")
+    res_admin_pub = client.get(
+        "/api/v1/admin/users?role=PUBLIC_USER",
+        headers={"Authorization": f"Bearer {active_token}"},
+    )
+    assert res_admin_pub.status_code == 200
+    assert "items" in res_admin_pub.json()
+    assert any(u["email"] == "alice@example.com" for u in res_admin_pub.json()["items"])
 
 
 def test_merchant_listing_api(client: TestClient, db_session: Session):

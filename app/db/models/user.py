@@ -9,6 +9,18 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
     FIELD_STAFF = "FIELD_STAFF"
 
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            norm = value.strip().upper().replace(" ", "_").replace("-", "_")
+            if norm in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
+                return cls.FIELD_STAFF
+            if norm in ("SUPERADMIN", "SUPER_ADMIN"):
+                return cls.SUPER_ADMIN
+            if norm in ("ADMIN", "ADMINISTRATOR"):
+                return cls.ADMIN
+        return None
+
 
 class User(Base):
     __tablename__ = "users"

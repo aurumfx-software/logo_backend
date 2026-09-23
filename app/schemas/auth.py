@@ -38,7 +38,9 @@ class UserRegisterRequest(UserBase):
         if v is None:
             return None
         if isinstance(v, str):
-            v_clean = v.strip().upper()
+            v_clean = v.strip().upper().replace(" ", "_").replace("-", "_")
+            if v_clean in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
+                return UserRole.FIELD_STAFF
             try:
                 return UserRole(v_clean)
             except ValueError:

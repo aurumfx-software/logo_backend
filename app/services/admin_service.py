@@ -131,14 +131,18 @@ class AdminService:
         query = db.query(User)
 
         if role:
-            try:
-                role_enum = UserRole(role.upper())
-                query = query.filter(User.role == role_enum)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid user role: '{role}'.",
-                )
+            role_clean = role.strip().upper().replace(" ", "_").replace("-", "_")
+            if role_clean in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
+                query = query.filter(or_(User.role == UserRole.FIELD_STAFF, User.role == "PUBLIC_USER"))
+            else:
+                try:
+                    role_enum = UserRole(role_clean)
+                    query = query.filter(User.role == role_enum)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid user role: '{role}'. Allowed roles are: SUPER_ADMIN, ADMIN, FIELD_STAFF.",
+                    )
 
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
