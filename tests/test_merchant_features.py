@@ -405,6 +405,7 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert res1.status_code == 201
     m1 = res1.json()["merchant"]
     assert m1["user_id"] == staff.id
+    assert m1["user_code"] == staff.user_code
     assert m1["creator"] is not None
     assert m1["creator"]["id"] == staff.id
     assert m1["creator"]["name"] == "Staff User One"
@@ -426,6 +427,7 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert res2.status_code == 201
     m2 = res2.json()["merchant"]
     assert m2["user_id"] == staff.id
+    assert m2["user_code"] == staff.user_code
     assert m2["creator"]["id"] == staff.id
     assert m2["creator"]["user_code"] is not None
 
@@ -434,6 +436,7 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert get_res.status_code == 200
     fetched = get_res.json()
     assert fetched["id"] == m1["id"]
+    assert fetched["user_code"] == staff.user_code
     assert fetched["creator"]["id"] == staff.id
     assert fetched["creator"]["name"] == "Staff User One"
 

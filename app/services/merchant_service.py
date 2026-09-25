@@ -35,6 +35,8 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
+        if not resp.user_code and creator_summary:
+            resp.user_code = creator_summary.user_code
         resp.creator = creator_summary
         resp.created_by = creator_summary
         return resp
@@ -80,6 +82,7 @@ class MerchantService:
         # 2. Create Merchant Profile
         merchant = MerchantProfile(
             user_id=user.id,
+            user_code=user.user_code,
             business_name=data.business_name.strip(),
             categories=data.categories,
             location=data.location.strip(),
@@ -183,9 +186,11 @@ class MerchantService:
         # 6. Create Merchant Profile
         # user_id is the creator user (Field Staff/Admin), with fallback to user.id
         effective_user_id = creator_user_id if creator_user_id else user.id
+        effective_user_code = creator_user.user_code if creator_user else user.user_code
 
         merchant = MerchantProfile(
             user_id=effective_user_id,
+            user_code=effective_user_code,
             business_name=data.business_name.strip(),
             owner_name=data.owner_name.strip(),
             categories=categories,

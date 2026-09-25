@@ -9,6 +9,7 @@ class MerchantProfile(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=False, nullable=False, index=True)
+    user_code = Column(String(50), nullable=True, index=True)
 
     business_name = Column(String(255), nullable=False, index=True)
     owner_name = Column(String(255), nullable=True)

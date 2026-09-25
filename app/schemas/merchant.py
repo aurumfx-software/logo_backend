@@ -56,6 +56,7 @@ class MerchantCreatorSummary(BaseModel):
 class MerchantProfileResponse(BaseModel):
     id: int
     user_id: int
+    user_code: Optional[str] = None
     business_name: str
     owner_name: Optional[str] = None
     categories: List[str]
