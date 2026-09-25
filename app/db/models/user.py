@@ -51,7 +51,69 @@ class User(Base):
         nullable=False,
     )
 
-    @property
-    def user_code(self) -> str:
-        """Returns standard formatted user code, e.g. USR000001."""
-        return f"USR{self.id:06d}" if self.id is not None else ""
+    user_code = Column(String(50), unique=True, index=True, nullable=True)
+
+
+def get_role_prefix(role) -> str:
+    if not role:
+        return "FLS_"
+    r_str = str(role.value if isinstance(role, UserRole) else role).upper()
+    if "SUPER" in r_str or r_str == "SUPER_ADMIN":
+        return "SAD_"
+    elif "ADMIN" in r_str:
+        return "ADM_"
+    else:
+        return "FLS_"
+
+
+from sqlalchemy import event, inspect, text
+from sqlalchemy.orm import Session
+
+
+@event.listens_for(Session, "before_flush")
+def assign_user_codes_before_flush(session, flush_context, instances):
+    new_users = [obj for obj in session.new if isinstance(obj, User)]
+    for user in new_users:
+        if not user.user_code:
+            prefix = get_role_prefix(user.role)
+            try:
+                res = session.execute(
+                    text(f"SELECT user_code FROM users WHERE user_code LIKE '{prefix}%'")
+                ).fetchall()
+                max_num = 0
+                for row in res:
+                    code = row[0]
+                    if code and code.startswith(prefix):
+                        num_str = code[len(prefix):]
+                        if num_str.isdigit():
+                            max_num = max(max_num, int(num_str))
+                for other in new_users:
+                    if other is not user and other.user_code and other.user_code.startswith(prefix):
+                        num_str = other.user_code[len(prefix):]
+                        if num_str.isdigit():
+                            max_num = max(max_num, int(num_str))
+                user.user_code = f"{prefix}{max_num + 1}"
+            except Exception:
+                user.user_code = f"{prefix}1"
+
+    for obj in session.dirty:
+        if isinstance(obj, User):
+            try:
+                state = inspect(obj)
+                history = state.get_history("role", True)
+                if history.has_changes():
+                    prefix = get_role_prefix(obj.role)
+                    uid = obj.id or 0
+                    res = session.execute(
+                        text(f"SELECT user_code FROM users WHERE user_code LIKE '{prefix}%' AND id != {uid}")
+                    ).fetchall()
+                    max_num = 0
+                    for row in res:
+                        code = row[0]
+                        if code and code.startswith(prefix):
+                            num_str = code[len(prefix):]
+                            if num_str.isdigit():
+                                max_num = max(max_num, int(num_str))
+                    obj.user_code = f"{prefix}{max_num + 1}"
+            except Exception:
+                pass

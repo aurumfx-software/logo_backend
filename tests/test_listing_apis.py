@@ -147,20 +147,25 @@ def test_user_listing_api(client: TestClient, db_session: Session):
         "/api/v1/admin/users?role=PUBLIC_USER",
         headers={"Authorization": f"Bearer {active_token}"},
     )
-    # 8. Verify user_code format (e.g. USR000001) and fetching by user code
-    expected_code = f"USR{u1.id:06d}"
-    assert res_single.json()["data"]["user_code"] == expected_code
-    res_by_code = client.get(f"/api/v1/users/{expected_code}")
+    # 8. Verify user_code format (FLS_1 for field staff, ADM_1 for admin) and fetching by user code
+    assert res_single.json()["data"]["user_code"] == "FLS_1"
+    res_by_code = client.get("/api/v1/users/FLS_1")
     assert res_by_code.status_code == 200
     assert res_by_code.json()["data"]["name"] == "Alice Walker"
 
     # Admin get by user code
     res_admin_by_code = client.get(
-        f"/api/v1/admin/users/{expected_code}",
+        "/api/v1/admin/users/FLS_1",
         headers={"Authorization": f"Bearer {active_token}"},
     )
     assert res_admin_by_code.status_code == 200
-    assert res_admin_by_code.json()["user_code"] == expected_code
+    assert res_admin_by_code.json()["user_code"] == "FLS_1"
+
+    # 9. Verify role change auto-updates user_code (promote u1 from FIELD_STAFF to ADMIN)
+    u1.role = UserRole.ADMIN
+    db_session.commit()
+    db_session.refresh(u1)
+    assert u1.user_code.startswith("ADM_")
 
 
 def test_merchant_listing_api(client: TestClient, db_session: Session):

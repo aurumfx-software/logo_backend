@@ -47,22 +47,15 @@ def list_users(
 
     if search and search.strip():
         term = search.strip()
-        extracted_id = None
-        if term.upper().startswith("USR"):
-            num_str = term.upper().replace("USR", "").replace("-", "").strip()
-            if num_str.isdigit():
-                extracted_id = int(num_str)
-        elif term.isdigit():
-            extracted_id = int(term)
-
         search_pat = f"%{term}%"
         search_filters = [
             User.name.ilike(search_pat),
             User.email.ilike(search_pat),
             User.phone.ilike(search_pat),
+            User.user_code.ilike(search_pat),
         ]
-        if extracted_id is not None:
-            search_filters.append(User.id == extracted_id)
+        if term.isdigit():
+            search_filters.append(User.id == int(term))
 
         query = query.filter(or_(*search_filters))
 
@@ -83,28 +76,24 @@ def list_users(
 @router.get(
     "/{user_id}",
     response_model=StandardResponse[SafeUserResponse],
-    summary="Get user details by ID",
-    description="Returns safe profile details of a specific user by their ID or code (e.g. 1 or USR000001). Accessible to Super Admin, Admin, and Users.",
+    summary="Get user details by ID or user code",
+    description="Returns safe profile details of a specific user by their ID or user code (e.g. 1, ADM_1, FLS_1, SAD_1). Accessible to Super Admin, Admin, and Users.",
 )
 def get_user_by_id(
     user_id: str,
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardResponse[SafeUserResponse]:
-    clean_id = user_id.strip().upper()
-    if clean_id.startswith("USR"):
-        clean_id = clean_id.replace("USR", "").replace("-", "").strip()
-    if not clean_id.isdigit():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found.",
-        )
-    numeric_id = int(clean_id)
-    user = db.query(User).filter(User.id == numeric_id).first()
+    clean_id = user_id.strip()
+    query_filters = [User.user_code.ilike(clean_id)]
+    if clean_id.isdigit():
+        query_filters.append(User.id == int(clean_id))
+
+    user = db.query(User).filter(or_(*query_filters)).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found.",
+            detail=f"User with ID or code '{user_id}' not found.",
         )
 
     return success_response(

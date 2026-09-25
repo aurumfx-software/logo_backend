@@ -149,22 +149,15 @@ class AdminService:
 
         if search and search.strip():
             term = search.strip()
-            extracted_id = None
-            if term.upper().startswith("USR"):
-                num_str = term.upper().replace("USR", "").replace("-", "").strip()
-                if num_str.isdigit():
-                    extracted_id = int(num_str)
-            elif term.isdigit():
-                extracted_id = int(term)
-
             pat = f"%{term}%"
             search_filters = [
                 User.name.ilike(pat),
                 User.email.ilike(pat),
                 User.phone.ilike(pat),
+                User.user_code.ilike(pat),
             ]
-            if extracted_id is not None:
-                search_filters.append(User.id == extracted_id)
+            if term.isdigit():
+                search_filters.append(User.id == int(term))
 
             query = query.filter(or_(*search_filters))
 

@@ -132,30 +132,31 @@ def list_users(
     )
 
 
-def _parse_user_id(uid: Union[str, int]) -> int:
-    val = str(uid).strip().upper()
-    if val.startswith("USR"):
-        val = val.replace("USR", "").replace("-", "").strip()
-    if not val.isdigit():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid user ID format: '{uid}'.",
-        )
-    return int(val)
+def _parse_user_id(db: Session, uid: Union[str, int]) -> int:
+    val = str(uid).strip()
+    if val.isdigit():
+        return int(val)
+    user = db.query(User).filter(User.user_code.ilike(val)).first()
+    if user:
+        return user.id
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"User with ID or code '{uid}' not found.",
+    )
 
 
 @router.get(
     "/users/{user_id}",
     response_model=AdminUserDetailResponse,
     summary="Get user details",
-    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user by ID or code (e.g. 1 or USR000001). Accessible to Super Admin, Admin, and Users.",
+    description="Returns detailed profile, merchant details, submission count, and favorites count for a specific user by ID or code (e.g. 1 or ADM_1). Accessible to Super Admin, Admin, and Users.",
 )
 def get_user_details(
     user_id: str,
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
-    numeric_id = _parse_user_id(user_id)
+    numeric_id = _parse_user_id(db, user_id)
     return AdminService.get_user_details(db=db, user_id=numeric_id)
 
 
@@ -171,7 +172,7 @@ def update_user_role(
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
-    numeric_id = _parse_user_id(user_id)
+    numeric_id = _parse_user_id(db, user_id)
     return AdminService.update_user_role(
         db=db,
         user_id=numeric_id,
@@ -192,7 +193,7 @@ def update_user_status(
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminUserDetailResponse:
-    numeric_id = _parse_user_id(user_id)
+    numeric_id = _parse_user_id(db, user_id)
     return AdminService.update_user_status(
         db=db,
         user_id=numeric_id,
@@ -212,7 +213,7 @@ def delete_user(
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> GenericMessageResponse:
-    numeric_id = _parse_user_id(user_id)
+    numeric_id = _parse_user_id(db, user_id)
     AdminService.delete_user(db=db, user_id=numeric_id, current_admin=current_admin)
     return GenericMessageResponse(message=f"User {user_id} successfully deleted.")
 

@@ -38,7 +38,7 @@ class AdminDashboardStats(BaseModel):
 
 class AdminUserListItem(BaseModel):
     id: int
-    user_code: str = Field("", description="Formatted user code, e.g. USR000001", json_schema_extra={"example": "USR000001"})
+    user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "ADM_1"})
     name: str
     email: str
     phone: Optional[str] = None
@@ -63,7 +63,7 @@ class AdminUserListResponse(BaseModel):
 
 class AdminUserDetailResponse(BaseModel):
     id: int
-    user_code: str = Field("", description="Formatted user code, e.g. USR000001", json_schema_extra={"example": "USR000001"})
+    user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "ADM_1"})
     name: str
     email: str
     phone: Optional[str] = None
