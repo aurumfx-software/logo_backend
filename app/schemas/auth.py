@@ -106,6 +106,9 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "FLS_1"})
+    role: Optional[str] = Field(None, description="User role: SUPER_ADMIN, ADMIN, FIELD_STAFF", json_schema_extra={"example": "FIELD_STAFF"})
+    user: Optional[SafeUserResponse] = None
 
 
 class RefreshTokenRequest(BaseModel):

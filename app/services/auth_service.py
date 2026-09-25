@@ -15,6 +15,7 @@ from app.db.models.user import User, UserRole
 from app.schemas.auth import (
     RefreshTokenRequest,
     ResetPasswordRequest,
+    SafeUserResponse,
     TokenResponse,
     UserLoginRequest,
     UserProfileUpdateRequest,
@@ -121,12 +122,16 @@ class AuthService:
 
     @staticmethod
     def generate_token_pair(user: User) -> TokenResponse:
-        access_token = create_access_token(user_id=user.id, role=user.role.value)
-        refresh_token = create_refresh_token(user_id=user.id, role=user.role.value)
+        role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+        access_token = create_access_token(user_id=user.id, role=role_val)
+        refresh_token = create_refresh_token(user_id=user.id, role=role_val)
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
+            user_code=user.user_code,
+            role=role_val,
+            user=SafeUserResponse.model_validate(user),
         )
 
     @staticmethod

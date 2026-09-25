@@ -104,6 +104,10 @@ def test_login_success(client: TestClient):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
+    assert data["user_code"] is not None
+    assert data["user_code"].startswith("FLS_")
+    assert data["user"] is not None
+    assert data["user"]["user_code"] == data["user_code"]
 
 
 # 4. Wrong password
