@@ -77,6 +77,7 @@ os.makedirs(os.path.join("uploads", "logos"), exist_ok=True)
 os.makedirs(os.path.join("uploads", "merchants", "photos"), exist_ok=True)
 os.makedirs(os.path.join("uploads", "merchants", "videos"), exist_ok=True)
 os.makedirs(os.path.join("uploads", "merchants", "documents"), exist_ok=True)
+os.makedirs(os.path.join("uploads", "categories", "icons"), exist_ok=True)
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
 # Include v1 API router

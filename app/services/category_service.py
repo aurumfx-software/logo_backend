@@ -50,10 +50,13 @@ class CategoryService:
         return CategoryResponse(
             id=category.id,
             name=category.name,
+            category_name=category.name,
             slug=category.slug,
             description=category.description,
+            icon=category.icon_url,
             icon_url=category.icon_url,
             is_active=category.is_active,
+            status="Active" if category.is_active else "Inactive",
             logo_count=logo_count,
             created_at=category.created_at,
             updated_at=category.updated_at,
