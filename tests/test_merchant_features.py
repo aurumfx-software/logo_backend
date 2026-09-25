@@ -371,3 +371,226 @@ def test_merchant_regions_api(client: TestClient):
     assert len(regions["districts"]) > 0
     assert "Bangalore Urban" in regions["districts"]
     assert "Kochi" in regions["cities"]
+
+
+def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClient, db_session: Session):
+    # 1. Create a field staff user
+    staff = User(
+        name="Staff User One",
+        email="staff.one@example.com",
+        phone="9876543210",
+        password_hash=hash_password("StaffPass123!"),
+        role=UserRole.FIELD_STAFF,
+        is_active=True,
+    )
+    db_session.add(staff)
+    db_session.commit()
+    db_session.refresh(staff)
+
+    staff_token = get_token(client, "staff.one@example.com", "StaffPass123!")
+    staff_headers = {"Authorization": f"Bearer {staff_token}"}
+
+    # 2. Onboard merchant 1 with staff token
+    payload_m1 = {
+        "business_name": "Staff 1 Shop Alpha",
+        "category": "Salon & Spa",
+        "owner_name": "Alpha Owner",
+        "phone_number": "9811111111",
+        "district": "Ernakulam",
+        "city": "Kochi",
+        "location": "Edappally",
+        "address": "Edappally Toll",
+    }
+    res1 = client.post("/api/v1/merchants/onboard", json=payload_m1, headers=staff_headers)
+    assert res1.status_code == 201
+    m1 = res1.json()["merchant"]
+    assert m1["user_id"] == staff.id
+    assert m1["creator"] is not None
+    assert m1["creator"]["id"] == staff.id
+    assert m1["creator"]["name"] == "Staff User One"
+    assert m1["creator"]["role"] == "FIELD_STAFF"
+    assert m1["created_by"]["id"] == staff.id
+
+    # 3. Onboard merchant 2 with SAME staff token (validating multiple merchants per user_id)
+    payload_m2 = {
+        "business_name": "Staff 1 Shop Beta",
+        "category": "Restaurant",
+        "owner_name": "Beta Owner",
+        "phone_number": "9822222222",
+        "district": "Ernakulam",
+        "city": "Kochi",
+        "location": "Kaloor",
+        "address": "Stadium Road",
+    }
+    res2 = client.post("/api/v1/merchants/onboard", json=payload_m2, headers=staff_headers)
+    assert res2.status_code == 201
+    m2 = res2.json()["merchant"]
+    assert m2["user_id"] == staff.id
+    assert m2["creator"]["id"] == staff.id
+    assert m2["creator"]["user_code"] is not None
+
+    # 4. Fetch merchant by ID (GET /api/v1/merchants/{merchant_id})
+    get_res = client.get(f"/api/v1/merchants/{m1['id']}")
+    assert get_res.status_code == 200
+    fetched = get_res.json()
+    assert fetched["id"] == m1["id"]
+    assert fetched["creator"]["id"] == staff.id
+    assert fetched["creator"]["name"] == "Staff User One"
+
+
+def test_field_staff_merchant_scoping(client: TestClient, db_session: Session):
+    admin_token = create_admin(client, db_session)
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Staff A
+    staff_a = User(
+        name="Staff A",
+        email="staff.a@example.com",
+        phone="9800000001",
+        password_hash=hash_password("Pass123!"),
+        role=UserRole.FIELD_STAFF,
+        is_active=True,
+    )
+    # Staff B
+    staff_b = User(
+        name="Staff B",
+        email="staff.b@example.com",
+        phone="9800000002",
+        password_hash=hash_password("Pass123!"),
+        role=UserRole.FIELD_STAFF,
+        is_active=True,
+    )
+    db_session.add_all([staff_a, staff_b])
+    db_session.commit()
+
+    token_a = get_token(client, "staff.a@example.com", "Pass123!")
+    token_b = get_token(client, "staff.b@example.com", "Pass123!")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # Staff A creates Merchant A
+    res_a = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Merchant of Staff A",
+            "category": "Retail",
+            "owner_name": "Owner A",
+            "phone_number": "9100000001",
+            "address": "Street A",
+        },
+        headers=headers_a,
+    )
+    assert res_a.status_code == 201
+    m_a_id = res_a.json()["merchant"]["id"]
+
+    # Staff B creates Merchant B
+    res_b = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Merchant of Staff B",
+            "category": "Retail",
+            "owner_name": "Owner B",
+            "phone_number": "9100000002",
+            "address": "Street B",
+        },
+        headers=headers_b,
+    )
+    assert res_b.status_code == 201
+    m_b_id = res_b.json()["merchant"]["id"]
+
+    # Staff A lists merchants -> sees only Merchant A
+    my_a = client.get("/api/v1/merchants/my-merchants", headers=headers_a)
+    assert my_a.status_code == 200
+    my_a_ids = [m["id"] for m in my_a.json()]
+    assert m_a_id in my_a_ids
+    assert m_b_id not in my_a_ids
+
+    list_a = client.get("/api/v1/merchants", headers=headers_a)
+    assert list_a.status_code == 200
+    list_a_ids = [m["id"] for m in list_a.json()]
+    assert m_a_id in list_a_ids
+    assert m_b_id not in list_a_ids
+
+    # Staff B lists merchants -> sees only Merchant B
+    my_b = client.get("/api/v1/merchants/my-merchants", headers=headers_b)
+    assert my_b.status_code == 200
+    my_b_ids = [m["id"] for m in my_b.json()]
+    assert m_b_id in my_b_ids
+    assert m_a_id not in my_b_ids
+
+    # Admin view -> sees both
+    admin_list = client.get("/api/v1/admin/merchants", headers=admin_headers)
+    assert admin_list.status_code == 200
+    admin_ids = [m["id"] for m in admin_list.json()["data"]]
+    assert m_a_id in admin_ids
+    assert m_b_id in admin_ids
+
+
+def test_direct_merchant_approve_and_reject_apis(client: TestClient, db_session: Session):
+    admin_token = create_admin(client, db_session)
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Create staff and merchant
+    staff = User(
+        name="Staff Approvals",
+        email="staff.appr@example.com",
+        phone="9833333333",
+        password_hash=hash_password("Pass123!"),
+        role=UserRole.FIELD_STAFF,
+        is_active=True,
+    )
+    db_session.add(staff)
+    db_session.commit()
+    staff_token = get_token(client, "staff.appr@example.com", "Pass123!")
+    staff_headers = {"Authorization": f"Bearer {staff_token}"}
+
+    # Onboard merchant 1
+    res1 = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Approve Me Shop",
+            "category": "Services",
+            "owner_name": "Owner One",
+            "phone_number": "9844444441",
+            "address": "Kochi",
+        },
+        headers=staff_headers,
+    )
+    m1_id = res1.json()["merchant"]["id"]
+
+    # Onboard merchant 2
+    res2 = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Reject Me Shop",
+            "category": "Services",
+            "owner_name": "Owner Two",
+            "phone_number": "9844444442",
+            "address": "Kochi",
+        },
+        headers=staff_headers,
+    )
+    m2_id = res2.json()["merchant"]["id"]
+
+    # 1. Staff cannot approve (Forbidden 403)
+    staff_try = client.post(f"/api/v1/merchants/{m1_id}/approve", headers=staff_headers)
+    assert staff_try.status_code == 403
+
+    # 2. Admin approves via POST /api/v1/merchants/{m1_id}/approve
+    appr_res = client.post(f"/api/v1/merchants/{m1_id}/approve", headers=admin_headers)
+    assert appr_res.status_code == 200
+    assert appr_res.json()["success"] is True
+    assert appr_res.json()["data"]["approval_status"] == "APPROVED"
+    assert appr_res.json()["data"]["is_verified"] is True
+    assert appr_res.json()["data"]["creator"]["id"] == staff.id
+
+    # 3. Admin rejects via POST /api/v1/merchants/{m2_id}/reject
+    rej_res = client.post(
+        f"/api/v1/merchants/{m2_id}/reject",
+        json={"rejection_reason": "Incomplete documentation submitted"},
+        headers=admin_headers,
+    )
+    assert rej_res.status_code == 200
+    assert rej_res.json()["success"] is True
+    assert rej_res.json()["data"]["approval_status"] == "REJECTED"
+    assert rej_res.json()["data"]["rejection_reason"] == "Incomplete documentation submitted"

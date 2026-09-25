@@ -8,7 +8,7 @@ class MerchantProfile(Base):
     __tablename__ = "merchant_profiles"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=False, nullable=False, index=True)
 
     business_name = Column(String(255), nullable=False, index=True)
     owner_name = Column(String(255), nullable=True)
@@ -46,6 +46,6 @@ class MerchantProfile(Base):
         nullable=False,
     )
 
-    user = relationship("User", foreign_keys=[user_id], backref="merchant_profile")
+    user = relationship("User", foreign_keys=[user_id], backref="merchant_profiles")
     approved_by = relationship("User", foreign_keys=[approved_by_id])
     onboarded_by = relationship("User", foreign_keys=[onboarded_by_id])

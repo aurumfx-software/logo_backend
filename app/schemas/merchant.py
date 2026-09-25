@@ -42,6 +42,17 @@ class MerchantRegisterRequest(BaseModel):
 from datetime import datetime
 
 
+class MerchantCreatorSummary(BaseModel):
+    id: int
+    user_code: Optional[str] = None
+    name: str
+    email: str
+    phone: Optional[str] = None
+    role: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MerchantProfileResponse(BaseModel):
     id: int
     user_id: int
@@ -65,12 +76,15 @@ class MerchantProfileResponse(BaseModel):
     approved_by_id: Optional[int] = None
     approved_at: Optional[datetime] = None
     onboarded_by_id: Optional[int] = None
+    creator: Optional[MerchantCreatorSummary] = None
+    created_by: Optional[MerchantCreatorSummary] = None
     is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class MerchantOnboardingRequest(BaseModel):
+    user_id: Optional[int] = Field(None, description="Creator user ID (Field Staff / Admin)", json_schema_extra={"example": 1})
     # Form fields matching screenshot
     business_name: str = Field(..., min_length=2, max_length=255, json_schema_extra={"example": "Royal Grand Bakery"})
     category: Optional[str] = Field(None, json_schema_extra={"example": "Food & Dining"})
@@ -139,9 +153,8 @@ class MerchantRegionResponse(BaseModel):
 
 
 class MerchantRejectRequest(BaseModel):
-    rejection_reason: str = Field(
-        ...,
-        min_length=3,
+    rejection_reason: Optional[str] = Field(
+        "Application rejected by administration.",
         max_length=500,
         json_schema_extra={"example": "Invalid business license or contact details not reachable."},
     )

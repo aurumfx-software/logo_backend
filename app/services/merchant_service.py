@@ -7,7 +7,9 @@ from app.db.models.merchant import MerchantProfile
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.merchant import (
+    MerchantCreatorSummary,
     MerchantOnboardingRequest,
+    MerchantProfileResponse,
     MerchantRegisterRequest,
     MerchantUpdateRequest,
 )
@@ -17,6 +19,25 @@ from app.services.otp_service import OTPService
 
 class MerchantService:
     """Service handling merchant registration, profile management, and discovery."""
+
+    @staticmethod
+    def build_merchant_response(merchant: MerchantProfile) -> MerchantProfileResponse:
+        creator_user = merchant.onboarded_by or merchant.user
+        creator_summary = None
+        if creator_user:
+            role_str = creator_user.role.value if hasattr(creator_user.role, "value") else str(creator_user.role)
+            creator_summary = MerchantCreatorSummary(
+                id=creator_user.id,
+                user_code=creator_user.user_code,
+                name=creator_user.name,
+                email=creator_user.email,
+                phone=creator_user.phone,
+                role=role_str,
+            )
+        resp = MerchantProfileResponse.model_validate(merchant)
+        resp.creator = creator_summary
+        resp.created_by = creator_summary
+        return resp
 
     @staticmethod
     def register_merchant(
@@ -114,63 +135,57 @@ class MerchantService:
         # 3. Normalize contact/phone number
         clean_phone = re.sub(r"[\s\-()]", "", data.phone_number)
 
-        # 4. Check or create linked User
+        # 4. Resolve creator user (Field Staff or Admin)
+        creator_user = None
+        if onboarded_by:
+            creator_user = onboarded_by
+        elif data.user_id:
+            creator_user = db.query(User).filter(User.id == data.user_id).first()
+
+        creator_user_id = creator_user.id if creator_user else None
+
+        # 5. Check or create linked User for merchant login if needed
         clean_email = data.email.strip().lower() if data.email else None
         user = None
 
         if clean_email:
             user = db.query(User).filter(User.email == clean_email).first()
-            if user:
-                # Check if this user already has a merchant profile
-                existing_profile = (
-                    db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
-                )
-                if existing_profile:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="A merchant profile already exists for this email address.",
-                    )
 
-        # Check by phone
-        phone_user = db.query(User).filter(User.phone == clean_phone).first()
-        if phone_user:
-            existing_profile = (
-                db.query(MerchantProfile).filter(MerchantProfile.user_id == phone_user.id).first()
-            )
-            if existing_profile:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A merchant profile already exists for this phone number.",
-                )
-            if not user:
+        if not user:
+            phone_user = db.query(User).filter(User.phone == clean_phone).first()
+            if phone_user:
                 user = phone_user
 
         if not user:
-            # Generate random password & synthetic email if email not provided
-            random_pw = secrets.token_urlsafe(12)
-            gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
-            # Ensure email uniqueness if synthetic
-            if db.query(User).filter(User.email == gen_email).first():
-                gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
+            if creator_user and not clean_email:
+                user = creator_user
+            else:
+                random_pw = secrets.token_urlsafe(12)
+                gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
+                if db.query(User).filter(User.email == gen_email).first():
+                    gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
 
-            user = User(
-                name=data.owner_name.strip(),
-                email=gen_email,
-                phone=clean_phone,
-                password_hash=hash_password(random_pw),
-                role=UserRole.FIELD_STAFF,
-                address=data.address.strip(),
-                profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
-                is_active=True,
-                is_verified=False,
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+                user = User(
+                    name=data.owner_name.strip(),
+                    email=gen_email,
+                    phone=clean_phone,
+                    password_hash=hash_password(random_pw),
+                    role=UserRole.FIELD_STAFF,
+                    address=data.address.strip(),
+                    profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
+                    is_active=True,
+                    is_verified=False,
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
 
-        # 5. Create Merchant Profile
+        # 6. Create Merchant Profile
+        # user_id is the creator user (Field Staff/Admin), with fallback to user.id
+        effective_user_id = creator_user_id if creator_user_id else user.id
+
         merchant = MerchantProfile(
-            user_id=user.id,
+            user_id=effective_user_id,
             business_name=data.business_name.strip(),
             owner_name=data.owner_name.strip(),
             categories=categories,
@@ -187,7 +202,7 @@ class MerchantService:
             verification_documents=data.verification_documents or [],
             is_verified=False,
             approval_status="PENDING",
-            onboarded_by_id=onboarded_by.id if onboarded_by else None,
+            onboarded_by_id=effective_user_id,
             is_active=True,
         )
         db.add(merchant)
@@ -200,13 +215,13 @@ class MerchantService:
             action="MERCHANT_ONBOARDED",
             entity_type="MERCHANT",
             entity_id=merchant.id,
-            user_id=onboarded_by.id if onboarded_by else user.id,
+            user_id=effective_user_id,
             details={
                 "business_name": merchant.business_name,
                 "district": merchant.district,
                 "city": merchant.city,
                 "location": merchant.location,
-                "onboarded_by": onboarded_by.name if onboarded_by else "Field Staff / Onboarding Portal",
+                "onboarded_by": creator_user.name if creator_user else "Field Staff / Onboarding Portal",
             },
         )
 
@@ -380,10 +395,24 @@ class MerchantService:
         skip: int = 0,
         limit: int = 50,
         public_only: bool = True,
+        current_user: Optional[User] = None,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[MerchantProfile], int]:
         q = db.query(MerchantProfile).join(User, MerchantProfile.user_id == User.id)
 
-        if public_only:
+        # Scoped access: Field staff only sees their own merchants
+        if current_user and current_user.role == UserRole.FIELD_STAFF:
+            q = q.filter(
+                (MerchantProfile.user_id == current_user.id)
+                | (MerchantProfile.onboarded_by_id == current_user.id)
+            )
+        elif user_id:
+            q = q.filter(
+                (MerchantProfile.user_id == user_id)
+                | (MerchantProfile.onboarded_by_id == user_id)
+            )
+
+        if public_only and not current_user:
             # Public discovery: only active users and approved merchants
             q = q.filter(
                 MerchantProfile.is_active == True,
@@ -549,8 +578,17 @@ class MerchantService:
         location: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
+        current_user: Optional[User] = None,
     ) -> List[MerchantProfile]:
         query = db.query(MerchantProfile)
+
+        # Scoped access: Field staff only sees their own merchants
+        if current_user and current_user.role == UserRole.FIELD_STAFF:
+            query = query.filter(
+                (MerchantProfile.user_id == current_user.id)
+                | (MerchantProfile.onboarded_by_id == current_user.id)
+            )
+
         if location:
             query = query.filter(MerchantProfile.location.ilike(f"%{location}%"))
         results = query.offset(skip).limit(limit).all()

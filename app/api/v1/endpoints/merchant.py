@@ -5,7 +5,13 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_current_user_optional, require_role, require_any_authenticated
+from app.api.deps import (
+    get_current_user,
+    get_current_user_optional,
+    require_admin,
+    require_role,
+    require_any_authenticated,
+)
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
@@ -23,6 +29,7 @@ from app.schemas.merchant import (
     MerchantRegionResponse,
     MerchantRegisterRequest,
     MerchantRegisterResponse,
+    MerchantRejectRequest,
     MerchantStatsResponse,
     MerchantUpdateRequest,
     MerchantVerifyOTPLoginRequest,
@@ -61,7 +68,7 @@ def register_merchant(
     return MerchantRegisterResponse(
         message="Merchant registered successfully",
         user=SafeUserResponse.model_validate(user),
-        merchant=MerchantProfileResponse.model_validate(merchant),
+        merchant=MerchantService.build_merchant_response(merchant),
     )
 
 
@@ -92,7 +99,7 @@ def onboard_merchant(
     )
     return MerchantOnboardingResponse(
         message="Merchant onboarded successfully",
-        merchant=MerchantProfileResponse.model_validate(merchant),
+        merchant=MerchantService.build_merchant_response(merchant),
         user=SafeUserResponse.model_validate(user),
     )
 
@@ -261,7 +268,7 @@ def get_my_merchant_profile(
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
-    return MerchantProfileResponse.model_validate(merchant)
+    return MerchantService.build_merchant_response(merchant)
 
 
 @router.put(
@@ -281,7 +288,73 @@ def update_my_merchant_profile(
     updated = MerchantService.update_merchant(
         db=db, merchant=merchant, data=update_data
     )
-    return MerchantProfileResponse.model_validate(updated)
+    return MerchantService.build_merchant_response(updated)
+
+
+@router.get(
+    "/my-merchants",
+    response_model=List[MerchantProfileResponse],
+    summary="Get all merchants created by / assigned to current user",
+    description="Returns the merchants scoped to the authenticated user's user_id.",
+)
+@router.get(
+    "/my",
+    response_model=List[MerchantProfileResponse],
+    include_in_schema=False,
+)
+def get_my_merchants(
+    current_user: User = Depends(require_any_authenticated),
+    db: Session = Depends(get_db),
+) -> List[MerchantProfileResponse]:
+    merchants = MerchantService.list_merchants(
+        db=db, current_user=current_user, limit=200
+    )
+    return [MerchantService.build_merchant_response(m) for m in merchants]
+
+
+@router.post(
+    "/{merchant_id}/approve",
+    response_model=StandardResponse[MerchantProfileResponse],
+    summary="Approve a merchant profile",
+    description="Approves a merchant profile, sets approval_status=APPROVED, is_verified=True, and notifies the merchant.",
+)
+def approve_merchant(
+    merchant_id: int,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantProfileResponse]:
+    approved = MerchantService.approve_merchant(
+        db=db, merchant_id=merchant_id, admin_user=current_admin
+    )
+    return success_response(
+        data=MerchantService.build_merchant_response(approved),
+        message=f"Merchant '{approved.business_name}' approved successfully",
+    )
+
+
+@router.post(
+    "/{merchant_id}/reject",
+    response_model=StandardResponse[MerchantProfileResponse],
+    summary="Reject a merchant profile",
+    description="Rejects a merchant profile with optional reason and notifies the merchant.",
+)
+def reject_merchant(
+    merchant_id: int,
+    data: Optional[MerchantRejectRequest] = None,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantProfileResponse]:
+    reason = data.rejection_reason if data else "Application rejected by administration."
+    rejected = MerchantService.reject_merchant(
+        db=db,
+        merchant_id=merchant_id,
+        reason=reason,
+        admin_user=current_admin,
+    )
+    return success_response(
+        data=MerchantService.build_merchant_response(rejected),
+        message=f"Merchant '{rejected.business_name}' rejected",
+    )
 
 
 @router.post(
@@ -333,26 +406,32 @@ def upload_merchant_photos(
     "",
     response_model=List[MerchantProfileResponse],
     summary="Discover & list merchants",
-    description="Public endpoint to list registered merchants, optionally filtered by category or location.",
+    description="Public endpoint to list registered merchants, optionally filtered by category or location. Scoped to creator when authenticated as Field Staff.",
 )
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
     merchants = MerchantService.list_merchants(
-        db=db, category=category, location=location, skip=skip, limit=limit
+        db=db,
+        category=category,
+        location=location,
+        skip=skip,
+        limit=limit,
+        current_user=current_user,
     )
-    return [MerchantProfileResponse.model_validate(m) for m in merchants]
+    return [MerchantService.build_merchant_response(m) for m in merchants]
 
 
 @router.get(
     "/list",
     response_model=StandardListResponse[MerchantProfileResponse],
     summary="List merchants with filters and pagination",
-    description="Returns a paginated list of approved and active merchants with filters for category, location, service, and search query.",
+    description="Returns a paginated list of approved and active merchants with filters. Scoped to creator when authenticated as Field Staff.",
 )
 def list_merchants_paginated(
     search: Optional[str] = Query(None, description="Search by business name, location, address, or service"),
@@ -362,6 +441,7 @@ def list_merchants_paginated(
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     skip = (page - 1) * page_size
@@ -375,9 +455,10 @@ def list_merchants_paginated(
         skip=skip,
         limit=page_size,
         public_only=True,
+        current_user=current_user,
     )
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=page_size,
@@ -399,6 +480,7 @@ def search_merchants(
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     results, total = MerchantService.search_merchants(
@@ -411,10 +493,11 @@ def search_merchants(
         skip=skip,
         limit=limit,
         public_only=True,
+        current_user=current_user,
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
@@ -433,6 +516,7 @@ def search_merchants_by_location(
     category: Optional[str] = Query(None, description="Optional category filter"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     results, total = MerchantService.search_merchants(
@@ -442,10 +526,11 @@ def search_merchants_by_location(
         skip=skip,
         limit=limit,
         public_only=True,
+        current_user=current_user,
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
@@ -464,6 +549,7 @@ def search_merchants_by_service(
     location: Optional[str] = Query(None, description="Optional location filter"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     results, total = MerchantService.search_merchants(
@@ -473,10 +559,11 @@ def search_merchants_by_service(
         skip=skip,
         limit=limit,
         public_only=True,
+        current_user=current_user,
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
@@ -553,6 +640,20 @@ def get_discovery_metadata(
         data=MerchantDiscoveryMetaResponse(**meta),
         message="Discovery metadata retrieved successfully",
     )
+
+
+@router.get(
+    "/{merchant_id}",
+    response_model=MerchantProfileResponse,
+    summary="Get merchant profile by ID",
+    description="Returns merchant business profile with linked creator summary and details.",
+)
+def get_merchant_by_id(
+    merchant_id: int,
+    db: Session = Depends(get_db),
+) -> MerchantProfileResponse:
+    merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    return MerchantService.build_merchant_response(merchant)
 
 
 # ── OTP Login Flow ────────────────────────────────────────────────────────────

@@ -275,7 +275,7 @@ def list_pending_merchants(
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
@@ -313,7 +313,7 @@ def list_all_merchants_admin(
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantProfileResponse.model_validate(m) for m in results],
+        data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
@@ -336,7 +336,7 @@ def approve_merchant(
         db=db, merchant_id=merchant_id, admin_user=current_admin
     )
     return success_response(
-        data=MerchantProfileResponse.model_validate(approved),
+        data=MerchantService.build_merchant_response(approved),
         message=f"Merchant '{approved.business_name}' approved successfully",
     )
 
@@ -360,7 +360,7 @@ def reject_merchant(
         admin_user=current_admin,
     )
     return success_response(
-        data=MerchantProfileResponse.model_validate(rejected),
+        data=MerchantService.build_merchant_response(rejected),
         message=f"Merchant '{rejected.business_name}' rejected",
     )
 
