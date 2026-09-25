@@ -46,11 +46,17 @@ class MerchantProfileResponse(BaseModel):
     id: int
     user_id: int
     business_name: str
+    owner_name: Optional[str] = None
     categories: List[str]
+    district: Optional[str] = None
+    city: Optional[str] = None
     location: str
-    services: List[str]
-    service_timing: str
-    merchant_photos: List[str]
+    landmark: Optional[str] = None
+    services: Optional[List[str]] = []
+    service_timing: Optional[str] = None
+    merchant_photos: List[str] = []
+    merchant_videos: List[str] = []
+    verification_documents: List[str] = []
     contact_number: str
     address: str
     is_verified: bool
@@ -58,9 +64,78 @@ class MerchantProfileResponse(BaseModel):
     rejection_reason: Optional[str] = None
     approved_by_id: Optional[int] = None
     approved_at: Optional[datetime] = None
+    onboarded_by_id: Optional[int] = None
     is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MerchantOnboardingRequest(BaseModel):
+    # Form fields matching screenshot
+    business_name: str = Field(..., min_length=2, max_length=255, json_schema_extra={"example": "Royal Grand Bakery"})
+    category: Optional[str] = Field(None, json_schema_extra={"example": "Food & Dining"})
+    categories: Optional[List[str]] = Field(None, json_schema_extra={"example": ["Food & Dining"]})
+    owner_name: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Rajesh Sharma"})
+    phone_number: str = Field(..., min_length=7, max_length=50, json_schema_extra={"example": "+91 98765 43210"})
+    email: Optional[str] = Field(None, json_schema_extra={"example": "owner@business.com"})
+
+    # Location fields: District, City, Location
+    district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore Urban"})
+    city: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore"})
+    location: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Indiranagar"})
+    city_region: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Bangalore"})
+
+    # Address & Landmark
+    address: str = Field(..., min_length=3, max_length=500, json_schema_extra={"example": "Shop #12, 100ft Road, Near Metro Station"})
+    landmark: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Near Metro Station"})
+
+    # Photos, Documents, Videos
+    merchant_photos: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/photos/shop_front.jpg"]})
+    verification_documents: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/documents/shop_license.pdf"]})
+    merchant_videos: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/videos/shop_tour.mp4"]})
+
+    # Optional extra details
+    services: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["Takeaway", "Dine-in"]})
+    service_timing: Optional[str] = Field("General Store Hours", json_schema_extra={"example": "09:00 AM - 09:00 PM"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            clean = v.strip().lower()
+            if not re.match(EMAIL_REGEX, clean):
+                raise ValueError("Invalid email format")
+            return clean
+        return None
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        cleaned = re.sub(r"[\s\-()]", "", v)
+        if not cleaned.replace("+", "").isdigit():
+            raise ValueError("Phone number must contain only digits")
+        return cleaned
+
+
+class MerchantOnboardingResponse(BaseModel):
+    message: str
+    merchant: MerchantProfileResponse
+    user: Optional[SafeUserResponse] = None
+
+
+class MerchantMediaUploadResponse(BaseModel):
+    message: str
+    photos: List[str] = []
+    videos: List[str] = []
+    documents: List[str] = []
+    all_urls: List[str] = []
+    total_files: int = 0
+
+
+class MerchantRegionResponse(BaseModel):
+    districts: List[str] = []
+    cities: List[str] = []
+    locations: List[str] = []
 
 
 class MerchantRejectRequest(BaseModel):

@@ -6,7 +6,11 @@ from app.core.security import hash_password
 from app.db.models.merchant import MerchantProfile
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
-from app.schemas.merchant import MerchantRegisterRequest, MerchantUpdateRequest
+from app.schemas.merchant import (
+    MerchantOnboardingRequest,
+    MerchantRegisterRequest,
+    MerchantUpdateRequest,
+)
 from app.schemas.auth import TokenResponse
 from app.services.otp_service import OTPService
 
@@ -79,6 +83,131 @@ class MerchantService:
             entity_id=merchant.id,
             user_id=user.id,
             details={"business_name": merchant.business_name, "location": merchant.location},
+        )
+
+        return user, merchant
+
+    @staticmethod
+    def onboard_merchant(
+        db: Session,
+        data: MerchantOnboardingRequest,
+        onboarded_by: Optional[User] = None,
+    ) -> Tuple[User, MerchantProfile]:
+        import re
+        import secrets
+
+        # 1. Normalize categories
+        categories = []
+        if data.categories:
+            categories = [c.strip() for c in data.categories if c and c.strip()]
+        elif data.category:
+            categories = [data.category.strip()]
+        if not categories:
+            categories = ["General"]
+
+        # 2. Normalize location fields: District, City, Location
+        district = data.district.strip() if data.district else None
+        city = (data.city or data.city_region or "").strip() or None
+        location = (data.location or data.city_region or data.city or "General").strip()
+        landmark = data.landmark.strip() if data.landmark else None
+
+        # 3. Normalize contact/phone number
+        clean_phone = re.sub(r"[\s\-()]", "", data.phone_number)
+
+        # 4. Check or create linked User
+        clean_email = data.email.strip().lower() if data.email else None
+        user = None
+
+        if clean_email:
+            user = db.query(User).filter(User.email == clean_email).first()
+            if user:
+                # Check if this user already has a merchant profile
+                existing_profile = (
+                    db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
+                )
+                if existing_profile:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A merchant profile already exists for this email address.",
+                    )
+
+        # Check by phone
+        phone_user = db.query(User).filter(User.phone == clean_phone).first()
+        if phone_user:
+            existing_profile = (
+                db.query(MerchantProfile).filter(MerchantProfile.user_id == phone_user.id).first()
+            )
+            if existing_profile:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A merchant profile already exists for this phone number.",
+                )
+            if not user:
+                user = phone_user
+
+        if not user:
+            # Generate random password & synthetic email if email not provided
+            random_pw = secrets.token_urlsafe(12)
+            gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
+            # Ensure email uniqueness if synthetic
+            if db.query(User).filter(User.email == gen_email).first():
+                gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
+
+            user = User(
+                name=data.owner_name.strip(),
+                email=gen_email,
+                phone=clean_phone,
+                password_hash=hash_password(random_pw),
+                role=UserRole.FIELD_STAFF,
+                address=data.address.strip(),
+                profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
+                is_active=True,
+                is_verified=False,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+        # 5. Create Merchant Profile
+        merchant = MerchantProfile(
+            user_id=user.id,
+            business_name=data.business_name.strip(),
+            owner_name=data.owner_name.strip(),
+            categories=categories,
+            district=district,
+            city=city,
+            location=location,
+            address=data.address.strip(),
+            landmark=landmark,
+            contact_number=clean_phone,
+            services=data.services or [],
+            service_timing=data.service_timing or "General Store Hours",
+            merchant_photos=data.merchant_photos or [],
+            merchant_videos=data.merchant_videos or [],
+            verification_documents=data.verification_documents or [],
+            is_verified=False,
+            approval_status="PENDING",
+            onboarded_by_id=onboarded_by.id if onboarded_by else None,
+            is_active=True,
+        )
+        db.add(merchant)
+        db.commit()
+        db.refresh(merchant)
+
+        from app.services.activity_log_service import ActivityLogService
+        ActivityLogService.log_activity(
+            db=db,
+            action="MERCHANT_ONBOARDED",
+            entity_type="MERCHANT",
+            entity_id=merchant.id,
+            user_id=onboarded_by.id if onboarded_by else user.id,
+            details={
+                "business_name": merchant.business_name,
+                "district": merchant.district,
+                "city": merchant.city,
+                "location": merchant.location,
+                "onboarded_by": onboarded_by.name if onboarded_by else "Field Staff / Onboarding Portal",
+            },
         )
 
         return user, merchant
@@ -274,6 +403,8 @@ class MerchantService:
             loc_clean = location.strip()
             q = q.filter(
                 (MerchantProfile.location.ilike(f"%{loc_clean}%"))
+                | (MerchantProfile.city.ilike(f"%{loc_clean}%"))
+                | (MerchantProfile.district.ilike(f"%{loc_clean}%"))
                 | (MerchantProfile.address.ilike(f"%{loc_clean}%"))
             )
 
@@ -301,7 +432,10 @@ class MerchantService:
             filtered = [
                 m for m in filtered
                 if kw in m.business_name.lower()
+                or (m.owner_name and kw in m.owner_name.lower())
                 or kw in m.location.lower()
+                or (m.city and kw in m.city.lower())
+                or (m.district and kw in m.district.lower())
                 or kw in m.address.lower()
                 or any(kw in str(s).lower() for s in (m.services or []))
                 or any(kw in str(c).lower() for c in (m.categories or []))
@@ -497,3 +631,124 @@ class MerchantService:
             )
 
         return AuthService.generate_token_pair(user)
+
+    @staticmethod
+    def attach_media(
+        db: Session,
+        merchant_id: int,
+        photos: Optional[List[str]] = None,
+        videos: Optional[List[str]] = None,
+        documents: Optional[List[str]] = None,
+    ) -> MerchantProfile:
+        merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+
+        if photos:
+            cur_photos = list(merchant.merchant_photos or [])
+            cur_photos.extend(photos)
+            merchant.merchant_photos = cur_photos
+
+        if videos:
+            cur_videos = list(merchant.merchant_videos or [])
+            cur_videos.extend(videos)
+            merchant.merchant_videos = cur_videos
+
+        if documents:
+            cur_docs = list(merchant.verification_documents or [])
+            cur_docs.extend(documents)
+            merchant.verification_documents = cur_docs
+
+        db.commit()
+        db.refresh(merchant)
+        return merchant
+
+    @staticmethod
+    def get_region_metadata(db: Session) -> dict:
+        """
+        Returns structured lists of districts, cities, and locations.
+        Includes database values plus well-known regions for seamless dropdown autocomplete.
+        """
+        db_districts = [
+            d[0]
+            for d in db.query(MerchantProfile.district)
+            .filter(MerchantProfile.district.isnot(None))
+            .distinct()
+            if d[0]
+        ]
+        db_cities = [
+            c[0]
+            for c in db.query(MerchantProfile.city)
+            .filter(MerchantProfile.city.isnot(None))
+            .distinct()
+            if c[0]
+        ]
+        db_locations = [
+            l[0]
+            for l in db.query(MerchantProfile.location)
+            .filter(MerchantProfile.location.isnot(None))
+            .distinct()
+            if l[0]
+        ]
+
+        preset_districts = [
+            "Bangalore Urban",
+            "Bangalore Rural",
+            "Ernakulam",
+            "Thiruvananthapuram",
+            "Kozhikode",
+            "Thrissur",
+            "Kannur",
+            "Kollam",
+            "Alappuzha",
+            "Kottayam",
+            "Palakkad",
+            "Malappuram",
+            "Wayanad",
+            "Idukki",
+            "Kasaragod",
+            "Pathanamthitta",
+        ]
+        preset_cities = [
+            "Bangalore",
+            "Kochi",
+            "Thiruvananthapuram",
+            "Kozhikode",
+            "Thrissur",
+            "Kannur",
+            "Kollam",
+            "Alappuzha",
+            "Kottayam",
+            "Palakkad",
+            "Malappuram",
+            "Kalpetta",
+            "Sulthan Bathery",
+        ]
+        preset_locations = [
+            "Indiranagar",
+            "Koramangala",
+            "Whitefield",
+            "HSR Layout",
+            "Jayanagar",
+            "MG Road",
+            "Edappally",
+            "Kaloor",
+            "Marine Drive",
+            "Palarivattom",
+            "Vyttila",
+            "Panampilly Nagar",
+            "Fort Kochi",
+            "Kakkanad",
+            "Mananchira",
+            "East Hill",
+            "Kowdiar",
+            "Pattom",
+        ]
+
+        districts = sorted(list(set(db_districts + preset_districts)))
+        cities = sorted(list(set(db_cities + preset_cities)))
+        locations = sorted(list(set(db_locations + preset_locations)))
+
+        return {
+            "districts": districts,
+            "cities": cities,
+            "locations": locations,
+        }

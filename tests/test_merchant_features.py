@@ -250,3 +250,124 @@ def test_activity_logs_api(client: TestClient, db_session: Session):
     actions = act_res.json()["data"]
     assert "MERCHANT_APPROVED" in actions
     assert "MERCHANT_REGISTERED" in actions
+
+
+def test_field_staff_merchant_onboarding(client: TestClient, db_session: Session):
+    # 1. Test onboarding without email (synthetic email generated)
+    payload_no_email = {
+        "business_name": "Royal Grand Bakery",
+        "category": "Food & Dining",
+        "owner_name": "Rajesh Sharma",
+        "phone_number": "+91 98765 43210",
+        "district": "Bangalore Urban",
+        "city": "Bangalore",
+        "location": "Indiranagar",
+        "address": "Shop #12, 100ft Road, Near Metro Station",
+        "landmark": "Near Metro Station",
+        "merchant_photos": ["/static/merchants/photos/photo1.jpg"],
+        "verification_documents": ["/static/merchants/documents/lic.pdf"],
+        "merchant_videos": ["/static/merchants/videos/tour.mp4"],
+    }
+    res = client.post("/api/v1/merchants/onboard", json=payload_no_email)
+    assert res.status_code == 201, res.text
+    data = res.json()
+    assert data["message"] == "Merchant onboarded successfully"
+    merchant = data["merchant"]
+    assert merchant["business_name"] == "Royal Grand Bakery"
+    assert merchant["owner_name"] == "Rajesh Sharma"
+    assert merchant["district"] == "Bangalore Urban"
+    assert merchant["city"] == "Bangalore"
+    assert merchant["location"] == "Indiranagar"
+    assert merchant["landmark"] == "Near Metro Station"
+    assert "Food & Dining" in merchant["categories"]
+    assert len(merchant["merchant_photos"]) == 1
+    assert len(merchant["verification_documents"]) == 1
+    assert len(merchant["merchant_videos"]) == 1
+    assert merchant["approval_status"] == "PENDING"
+    assert data["user"] is not None
+
+    # 2. Test onboarding with email and field staff auth
+    admin_token = create_admin(client, db_session)
+    staff_headers = {"Authorization": f"Bearer {admin_token}"}
+    payload_with_email = {
+        "business_name": "Spice Garden Cafe",
+        "categories": ["Food & Dining", "Cafe"],
+        "owner_name": "Ananya Nair",
+        "phone_number": "9847123456",
+        "email": "ananya.cafe@example.com",
+        "district": "Ernakulam",
+        "city": "Kochi",
+        "location": "Panampilly Nagar",
+        "address": "Plot 45, Main Avenue",
+        "landmark": "Opposite Central Park",
+    }
+    res2 = client.post("/api/v1/merchants/onboard", json=payload_with_email, headers=staff_headers)
+    assert res2.status_code == 201
+    m2 = res2.json()["merchant"]
+    assert m2["business_name"] == "Spice Garden Cafe"
+    assert m2["district"] == "Ernakulam"
+    assert m2["city"] == "Kochi"
+    assert m2["onboarded_by_id"] is not None
+
+
+def test_merchant_media_upload_flow(client: TestClient, db_session: Session):
+    import io
+
+    # 1. Upload photo, video, and document together
+    photo_file = ("shop.jpg", io.BytesIO(b"fake image data"), "image/jpeg")
+    video_file = ("shop_tour.mp4", io.BytesIO(b"fake video data"), "video/mp4")
+    doc_file = ("license.pdf", io.BytesIO(b"%PDF fake document data"), "application/pdf")
+
+    res = client.post(
+        "/api/v1/merchants/upload-media",
+        files={
+            "photos": photo_file,
+            "videos": video_file,
+            "documents": doc_file,
+        },
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert len(data["photos"]) == 1
+    assert data["photos"][0].startswith("/static/merchants/photos/")
+    assert len(data["videos"]) == 1
+    assert data["videos"][0].startswith("/static/merchants/videos/")
+    assert len(data["documents"]) == 1
+    assert data["documents"][0].startswith("/static/merchants/documents/")
+    assert data["total_files"] == 3
+
+    # 2. Upload media and attach directly to an onboarded merchant
+    onboard_res = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Quick Fix Auto",
+            "category": "Automobile",
+            "owner_name": "Sunil Kumar",
+            "phone_number": "9112233445",
+            "address": "Service Bay 3",
+        },
+    )
+    assert onboard_res.status_code == 201
+    merchant_id = onboard_res.json()["merchant"]["id"]
+
+    extra_photo = ("engine.png", io.BytesIO(b"png data"), "image/png")
+    attach_res = client.post(
+        f"/api/v1/merchants/{merchant_id}/upload-media",
+        files={"photos": extra_photo},
+    )
+    assert attach_res.status_code == 200
+    assert len(attach_res.json()["photos"]) == 1
+
+
+def test_merchant_regions_api(client: TestClient):
+    res = client.get("/api/v1/merchants/regions")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["success"] is True
+    regions = data["data"]
+    assert "districts" in regions
+    assert "cities" in regions
+    assert "locations" in regions
+    assert len(regions["districts"]) > 0
+    assert "Bangalore Urban" in regions["districts"]
+    assert "Kochi" in regions["cities"]

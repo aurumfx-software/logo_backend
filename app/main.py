@@ -74,7 +74,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Ensure upload directories exist and mount static files
 os.makedirs(os.path.join("uploads", "avatars"), exist_ok=True)
 os.makedirs(os.path.join("uploads", "logos"), exist_ok=True)
-os.makedirs(os.path.join("uploads", "merchants"), exist_ok=True)
+os.makedirs(os.path.join("uploads", "merchants", "photos"), exist_ok=True)
+os.makedirs(os.path.join("uploads", "merchants", "videos"), exist_ok=True)
+os.makedirs(os.path.join("uploads", "merchants", "documents"), exist_ok=True)
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
 
 # Include v1 API router

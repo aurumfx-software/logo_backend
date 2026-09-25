@@ -2,10 +2,10 @@ import os
 import shutil
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role, require_any_authenticated
+from app.api.deps import get_current_user, get_current_user_optional, require_role, require_any_authenticated
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
@@ -15,8 +15,12 @@ from app.schemas.merchant import (
     MerchantDiscoveryMetaResponse,
     MerchantLoginOTPRequest,
     MerchantLoginOTPResponse,
+    MerchantMediaUploadResponse,
+    MerchantOnboardingRequest,
+    MerchantOnboardingResponse,
     MerchantPhotosUploadResponse,
     MerchantProfileResponse,
+    MerchantRegionResponse,
     MerchantRegisterRequest,
     MerchantRegisterResponse,
     MerchantStatsResponse,
@@ -34,7 +38,9 @@ from app.services.merchant_service import MerchantService
 
 router = APIRouter(prefix="/merchants", tags=["Merchants"])
 
-ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi", ".mkv", ".3gp"}
+ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
 
 
 @router.post(
@@ -56,6 +62,189 @@ def register_merchant(
         message="Merchant registered successfully",
         user=SafeUserResponse.model_validate(user),
         merchant=MerchantProfileResponse.model_validate(merchant),
+    )
+
+
+@router.post(
+    "/onboard",
+    response_model=MerchantOnboardingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Field Staff Merchant Onboarding",
+    description=(
+        "Registers a new merchant via the Field Staff Onboarding Form. "
+        "Captures Business Name, Category, Owner/Contact Person, Phone Number, "
+        "District, City, Location, Address, Landmark, Photos, Documents, and Videos."
+    ),
+)
+@router.post(
+    "/onboarding",
+    response_model=MerchantOnboardingResponse,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+def onboard_merchant(
+    data: MerchantOnboardingRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> MerchantOnboardingResponse:
+    user, merchant = MerchantService.onboard_merchant(
+        db=db, data=data, onboarded_by=current_user
+    )
+    return MerchantOnboardingResponse(
+        message="Merchant onboarded successfully",
+        merchant=MerchantProfileResponse.model_validate(merchant),
+        user=SafeUserResponse.model_validate(user),
+    )
+
+
+@router.post(
+    "/upload-media",
+    response_model=MerchantMediaUploadResponse,
+    summary="Upload merchant photos, videos, and verification documents",
+    description=(
+        "Uploads shop front photos, promotional videos, and verification documents. "
+        "Optionally associates the media directly with a merchant if merchant_id is provided."
+    ),
+)
+def upload_merchant_media(
+    photos: Optional[List[UploadFile]] = File(None, description="Shop front or gallery photos (JPG, PNG, WEBP)"),
+    videos: Optional[List[UploadFile]] = File(None, description="Shop videos (MP4, MOV, WEBM, AVI)"),
+    documents: Optional[List[UploadFile]] = File(None, description="Verification documents (PDF, JPG, PNG)"),
+    files: Optional[List[UploadFile]] = File(None, description="General media files auto-detected by extension"),
+    merchant_id: Optional[int] = Form(None, description="Optional merchant ID to attach media to"),
+    db: Session = Depends(get_db),
+) -> MerchantMediaUploadResponse:
+    photos_dir = os.path.join("uploads", "merchants", "photos")
+    videos_dir = os.path.join("uploads", "merchants", "videos")
+    documents_dir = os.path.join("uploads", "merchants", "documents")
+
+    os.makedirs(photos_dir, exist_ok=True)
+    os.makedirs(videos_dir, exist_ok=True)
+    os.makedirs(documents_dir, exist_ok=True)
+
+    saved_photos: List[str] = []
+    saved_videos: List[str] = []
+    saved_docs: List[str] = []
+
+    def _save_file(file: UploadFile, target_dir: str, prefix_url: str) -> str:
+        ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        dest_path = os.path.join(target_dir, unique_name)
+        with open(dest_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return f"{prefix_url}/{unique_name}"
+
+    if photos:
+        for p in photos:
+            if not p or not p.filename:
+                continue
+            ext = os.path.splitext(p.filename)[1].lower()
+            if ext not in ALLOWED_IMAGE_EXTENSIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Photo {p.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}",
+                )
+            saved_photos.append(_save_file(p, photos_dir, "/static/merchants/photos"))
+
+    if videos:
+        for v in videos:
+            if not v or not v.filename:
+                continue
+            ext = os.path.splitext(v.filename)[1].lower()
+            if ext not in ALLOWED_VIDEO_EXTENSIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Video {v.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}",
+                )
+            saved_videos.append(_save_file(v, videos_dir, "/static/merchants/videos"))
+
+    if documents:
+        for d in documents:
+            if not d or not d.filename:
+                continue
+            ext = os.path.splitext(d.filename)[1].lower()
+            if ext not in ALLOWED_DOCUMENT_EXTENSIONS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Document {d.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_DOCUMENT_EXTENSIONS))}",
+                )
+            saved_docs.append(_save_file(d, documents_dir, "/static/merchants/documents"))
+
+    if files:
+        for f in files:
+            if not f or not f.filename:
+                continue
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext in ALLOWED_IMAGE_EXTENSIONS:
+                saved_photos.append(_save_file(f, photos_dir, "/static/merchants/photos"))
+            elif ext in ALLOWED_VIDEO_EXTENSIONS:
+                saved_videos.append(_save_file(f, videos_dir, "/static/merchants/videos"))
+            elif ext in ALLOWED_DOCUMENT_EXTENSIONS:
+                saved_docs.append(_save_file(f, documents_dir, "/static/merchants/documents"))
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"File {f.filename} has unsupported extension: {ext}",
+                )
+
+    all_urls = saved_photos + saved_videos + saved_docs
+
+    if merchant_id:
+        MerchantService.attach_media(
+            db=db,
+            merchant_id=merchant_id,
+            photos=saved_photos,
+            videos=saved_videos,
+            documents=saved_docs,
+        )
+
+    return MerchantMediaUploadResponse(
+        message=f"Successfully uploaded {len(all_urls)} file(s).",
+        photos=saved_photos,
+        videos=saved_videos,
+        documents=saved_docs,
+        all_urls=all_urls,
+        total_files=len(all_urls),
+    )
+
+
+@router.post(
+    "/{merchant_id}/upload-media",
+    response_model=MerchantMediaUploadResponse,
+    summary="Upload media and attach directly to merchant ID",
+    description="Uploads photos, videos, and documents directly linked to a specific merchant ID.",
+)
+def upload_merchant_media_by_id(
+    merchant_id: int,
+    photos: Optional[List[UploadFile]] = File(None, description="Shop front or gallery photos"),
+    videos: Optional[List[UploadFile]] = File(None, description="Shop tour or promotion videos"),
+    documents: Optional[List[UploadFile]] = File(None, description="Verification documents or licenses"),
+    files: Optional[List[UploadFile]] = File(None, description="General media files auto-detected by extension"),
+    db: Session = Depends(get_db),
+) -> MerchantMediaUploadResponse:
+    return upload_merchant_media(
+        photos=photos,
+        videos=videos,
+        documents=documents,
+        files=files,
+        merchant_id=merchant_id,
+        db=db,
+    )
+
+
+@router.get(
+    "/regions",
+    response_model=StandardResponse[MerchantRegionResponse],
+    summary="Get districts, cities, and locations hierarchy",
+    description="Returns distinct districts, cities, and locations for field staff onboarding dropdowns.",
+)
+def get_merchant_regions(
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantRegionResponse]:
+    regions = MerchantService.get_region_metadata(db=db)
+    return success_response(
+        data=MerchantRegionResponse(**regions),
+        message="Regions retrieved successfully",
     )
 
 
