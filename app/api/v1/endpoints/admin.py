@@ -258,12 +258,12 @@ def get_admin_merchant_stats(
     "/merchants/pending",
     response_model=StandardListResponse[MerchantProfileResponse],
     summary="List pending merchants for review",
-    description="Returns all merchant accounts with PENDING approval status awaiting administrator review.",
+    description="Returns all merchant accounts with PENDING approval status awaiting review. Scoped to current user if Field Staff.",
 )
 def list_pending_merchants(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    current_admin: User = Depends(require_admin),
+    current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     results, total = MerchantService.search_merchants(
@@ -272,6 +272,7 @@ def list_pending_merchants(
         skip=skip,
         limit=limit,
         public_only=False,
+        current_user=current_user,
     )
     page = (skip // limit) + 1
     return list_response(
@@ -286,8 +287,8 @@ def list_pending_merchants(
 @router.get(
     "/merchants",
     response_model=StandardListResponse[MerchantProfileResponse],
-    summary="List all merchants (admin view)",
-    description="Admin endpoint to list all merchants with filtering by approval status, active state, location, and keywords.",
+    summary="List all merchants (admin & staff view)",
+    description="Endpoint to list merchants with filtering by approval status, active state, location, and keywords. Scoped to current user if Field Staff.",
 )
 def list_all_merchants_admin(
     approval_status: Optional[str] = Query(None, description="PENDING, APPROVED, or REJECTED"),
@@ -297,7 +298,7 @@ def list_all_merchants_admin(
     search: Optional[str] = Query(None, description="Keyword search"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    current_admin: User = Depends(require_admin),
+    current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
     results, total = MerchantService.search_merchants(
@@ -310,6 +311,7 @@ def list_all_merchants_admin(
         skip=skip,
         limit=limit,
         public_only=False,
+        current_user=current_user,
     )
     page = (skip // limit) + 1
     return list_response(
