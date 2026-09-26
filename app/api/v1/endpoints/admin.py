@@ -263,6 +263,7 @@ def get_admin_merchant_stats(
 def list_pending_merchants(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
@@ -273,6 +274,7 @@ def list_pending_merchants(
         limit=limit,
         public_only=False,
         current_user=current_user,
+        user_code=user_code,
     )
     page = (skip // limit) + 1
     return list_response(
@@ -295,6 +297,7 @@ def list_all_merchants_admin(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
     location: Optional[str] = Query(None, description="Filter by location"),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     search: Optional[str] = Query(None, description="Keyword search"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -312,6 +315,7 @@ def list_all_merchants_admin(
         limit=limit,
         public_only=False,
         current_user=current_user,
+        user_code=user_code,
     )
     page = (skip // limit) + 1
     return list_response(

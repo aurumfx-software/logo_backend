@@ -1,6 +1,6 @@
 import re
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any, List, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.schemas.auth import SafeUserResponse
 
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
@@ -86,12 +86,16 @@ class MerchantProfileResponse(BaseModel):
 
 class MerchantOnboardingRequest(BaseModel):
     user_id: Optional[int] = Field(None, description="Creator user ID (Field Staff / Admin)", json_schema_extra={"example": 1})
+    user_code: Optional[str] = Field(None, description="Creator user code (e.g. FLS_1, ADM_1)", json_schema_extra={"example": "FLS_1"})
     # Form fields matching screenshot
     business_name: str = Field(..., min_length=2, max_length=255, json_schema_extra={"example": "Royal Grand Bakery"})
     category: Optional[str] = Field(None, json_schema_extra={"example": "Food & Dining"})
     categories: Optional[List[str]] = Field(None, json_schema_extra={"example": ["Food & Dining"]})
-    owner_name: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Rajesh Sharma"})
-    phone_number: str = Field(..., min_length=7, max_length=50, json_schema_extra={"example": "+91 98765 43210"})
+    owner_name: Optional[str] = Field(None, min_length=2, max_length=100, json_schema_extra={"example": "Rajesh Sharma"})
+    contact_person: Optional[str] = Field(None, json_schema_extra={"example": "Rajesh Sharma"})
+    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+91 98765 43210"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    contact_number: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
     email: Optional[str] = Field(None, json_schema_extra={"example": "owner@business.com"})
 
     # Location fields: District, City, Location
@@ -113,6 +117,18 @@ class MerchantOnboardingRequest(BaseModel):
     services: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["Takeaway", "Dine-in"]})
     service_timing: Optional[str] = Field("General Store Hours", json_schema_extra={"example": "09:00 AM - 09:00 PM"})
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_onboarding_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("owner_name") and data.get("contact_person"):
+                data["owner_name"] = data["contact_person"]
+            if not data.get("phone_number"):
+                data["phone_number"] = data.get("contact_number") or data.get("phone") or "0000000000"
+            if not data.get("owner_name"):
+                data["owner_name"] = "Business Owner"
+        return data
+
     @field_validator("email")
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
@@ -125,7 +141,9 @@ class MerchantOnboardingRequest(BaseModel):
 
     @field_validator("phone_number")
     @classmethod
-    def validate_phone(cls, v: str) -> str:
+    def validate_phone(cls, v: Optional[str]) -> str:
+        if not v:
+            return "0000000000"
         cleaned = re.sub(r"[\s\-()]", "", v)
         if not cleaned.replace("+", "").isdigit():
             raise ValueError("Phone number must contain only digits")

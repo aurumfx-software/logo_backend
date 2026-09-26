@@ -142,6 +142,8 @@ class MerchantService:
         creator_user = None
         if onboarded_by:
             creator_user = onboarded_by
+        elif data.user_code:
+            creator_user = db.query(User).filter(User.user_code == data.user_code.strip()).first()
         elif data.user_id:
             creator_user = db.query(User).filter(User.id == data.user_id).first()
 
@@ -402,11 +404,17 @@ class MerchantService:
         public_only: bool = True,
         current_user: Optional[User] = None,
         user_id: Optional[int] = None,
+        user_code: Optional[str] = None,
     ) -> Tuple[List[MerchantProfile], int]:
         q = db.query(MerchantProfile).join(User, MerchantProfile.user_id == User.id)
 
-        # Scoped access: Field staff only sees their own merchants
-        if current_user and current_user.role == UserRole.FIELD_STAFF:
+        # Scoped access or explicit filter:
+        if user_code:
+            q = q.filter(
+                (MerchantProfile.user_code == user_code.strip())
+                | (User.user_code == user_code.strip())
+            )
+        elif current_user and current_user.role == UserRole.FIELD_STAFF:
             q = q.filter(
                 (MerchantProfile.user_id == current_user.id)
                 | (MerchantProfile.onboarded_by_id == current_user.id)
@@ -417,7 +425,7 @@ class MerchantService:
                 | (MerchantProfile.onboarded_by_id == user_id)
             )
 
-        if public_only and not current_user:
+        if public_only and not current_user and not user_code and not user_id:
             # Public discovery: only active users and approved merchants
             q = q.filter(
                 MerchantProfile.is_active == True,
@@ -584,11 +592,14 @@ class MerchantService:
         skip: int = 0,
         limit: int = 50,
         current_user: Optional[User] = None,
+        user_code: Optional[str] = None,
     ) -> List[MerchantProfile]:
         query = db.query(MerchantProfile)
 
-        # Scoped access: Field staff only sees their own merchants
-        if current_user and current_user.role == UserRole.FIELD_STAFF:
+        # Scoped access or explicit filter:
+        if user_code:
+            query = query.filter(MerchantProfile.user_code == user_code.strip())
+        elif current_user and current_user.role == UserRole.FIELD_STAFF:
             query = query.filter(
                 (MerchantProfile.user_id == current_user.id)
                 | (MerchantProfile.onboarded_by_id == current_user.id)

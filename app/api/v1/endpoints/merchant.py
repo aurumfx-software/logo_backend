@@ -411,6 +411,7 @@ def upload_merchant_photos(
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     current_user: Optional[User] = Depends(get_current_user_optional),
@@ -423,6 +424,7 @@ def list_merchants(
         skip=skip,
         limit=limit,
         current_user=current_user,
+        user_code=user_code,
     )
     return [MerchantService.build_merchant_response(m) for m in merchants]
 
@@ -431,13 +433,14 @@ def list_merchants(
     "/list",
     response_model=StandardListResponse[MerchantProfileResponse],
     summary="List merchants with filters and pagination",
-    description="Returns a paginated list of approved and active merchants with filters. Scoped to creator when authenticated as Field Staff.",
+    description="Returns a paginated list of merchants with filters. Can be filtered by creator user_code (e.g. FLS_1).",
 )
 def list_merchants_paginated(
     search: Optional[str] = Query(None, description="Search by business name, location, address, or service"),
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Spa, Cafe)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
     service: Optional[str] = Query(None, description="Filter by specific service offered"),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -456,6 +459,7 @@ def list_merchants_paginated(
         limit=page_size,
         public_only=True,
         current_user=current_user,
+        user_code=user_code,
     )
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],
@@ -477,6 +481,7 @@ def search_merchants(
     location: Optional[str] = Query(None, description="Search by location / city / area"),
     service: Optional[str] = Query(None, description="Search by specific service offered (e.g. Haircut, Facial)"),
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Spa)"),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -494,6 +499,7 @@ def search_merchants(
         limit=limit,
         public_only=True,
         current_user=current_user,
+        user_code=user_code,
     )
     page = (skip // limit) + 1
     return list_response(

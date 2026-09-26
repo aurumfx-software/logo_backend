@@ -597,3 +597,51 @@ def test_direct_merchant_approve_and_reject_apis(client: TestClient, db_session:
     assert rej_res.json()["success"] is True
     assert rej_res.json()["data"]["approval_status"] == "REJECTED"
     assert rej_res.json()["data"]["rejection_reason"] == "Incomplete documentation submitted"
+
+
+def test_merchant_list_and_onboard_by_user_code(client: TestClient, db_session: Session):
+    # Create staff user with code FLS_99
+    staff = User(
+        name="Staff 99",
+        email="staff.99@example.com",
+        phone="9899999999",
+        password_hash=hash_password("Pass123!"),
+        role=UserRole.FIELD_STAFF,
+        is_active=True,
+    )
+    db_session.add(staff)
+    db_session.commit()
+    db_session.refresh(staff)
+
+    # 1. Onboard passing user_code directly in request body and using aliases contact_person & contact_number
+    onboard_payload = {
+        "user_code": staff.user_code,
+        "business_name": "Bakery 99",
+        "category": "Bakery",
+        "contact_person": "Baker 99",
+        "contact_number": "9812345678",
+        "address": "Baker Street 99",
+        "district": "Ernakulam",
+        "city": "Kochi",
+        "location": "Edappally",
+    }
+    res = client.post("/api/v1/merchants/onboard", json=onboard_payload)
+    assert res.status_code == 201
+    m = res.json()["merchant"]
+    assert m["user_code"] == staff.user_code
+    assert m["business_name"] == "Bakery 99"
+    assert m["owner_name"] == "Baker 99"
+
+    # 2. List merchants with ?user_code=FLS_...
+    list_res = client.get(f"/api/v1/merchants/list?user_code={staff.user_code}")
+    assert list_res.status_code == 200
+    items = list_res.json()["data"]
+    assert len(items) >= 1
+    assert any(item["id"] == m["id"] for item in items)
+    assert all(item["user_code"] == staff.user_code for item in items)
+
+    # 3. Simple list with ?user_code=FLS_...
+    simple_res = client.get(f"/api/v1/merchants?user_code={staff.user_code}")
+    assert simple_res.status_code == 200
+    simple_items = simple_res.json()
+    assert any(item["id"] == m["id"] for item in simple_items)
