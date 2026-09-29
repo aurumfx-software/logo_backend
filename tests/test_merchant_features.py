@@ -437,8 +437,9 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert get_res.status_code == 200
     fetched = get_res.json()
     assert fetched["id"] == m1["id"]
-    assert fetched["user_code"] == staff.user_code
+    assert fetched["user_code"].startswith("MRH")
     assert fetched["creator"]["id"] == staff.id
+    assert fetched["creator"]["user_code"] == staff.user_code
     assert fetched["creator"]["name"] == "Staff User One"
 
 
