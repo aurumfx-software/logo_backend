@@ -628,7 +628,8 @@ def test_merchant_list_and_onboard_by_user_code(client: TestClient, db_session: 
     res = client.post("/api/v1/merchants/onboard", json=onboard_payload)
     assert res.status_code == 201
     m = res.json()["merchant"]
-    assert m["user_code"] == staff.user_code
+    assert m["user_code"].startswith("MRH")
+    assert m["creator"]["user_code"] == staff.user_code
     assert m["business_name"] == "Bakery 99"
     assert m["owner_name"] == "Baker 99"
 
@@ -638,10 +639,68 @@ def test_merchant_list_and_onboard_by_user_code(client: TestClient, db_session: 
     items = list_res.json()["data"]
     assert len(items) >= 1
     assert any(item["id"] == m["id"] for item in items)
-    assert all(item["user_code"] == staff.user_code for item in items)
 
     # 3. Simple list with ?user_code=FLS_...
     simple_res = client.get(f"/api/v1/merchants?user_code={staff.user_code}")
     assert simple_res.status_code == 200
     simple_items = simple_res.json()
     assert any(item["id"] == m["id"] for item in simple_items)
+
+
+def test_new_merchant_profile_schema_fields(client: TestClient, db_session: Session):
+    """Test full schema with category, address, city, district, state, lat/long, social, photos 1-4, video_url, owner, status."""
+    payload = {
+        "business_name": "Grand Supermarket",
+        "owner": "Suresh Kumar",
+        "category": "Supermarket",
+        "address": "MG Road, Near Metro Pillar 120",
+        "city": "Kochi",
+        "district": "Ernakulam",
+        "state": "Kerala",
+        "latitude": 9.9816,
+        "longitude": 76.2999,
+        "phone": "9876500002",
+        "whatsapp": "9876500002",
+        "landline": "0484223344",
+        "email": "grand.supermarket@example.com",
+        "website": "https://grandmarket.example.com",
+        "facebook": "https://facebook.com/grandmarket",
+        "instagram": "https://instagram.com/grandmarket",
+        "twitter": "https://twitter.com/grandmarket",
+        "youtube": "https://youtube.com/@grandmarket",
+        "photo_1": "https://example.com/photo1.jpg",
+        "photo_2": "https://example.com/photo2.jpg",
+        "photo_3": "https://example.com/photo3.jpg",
+        "photo_4": "https://example.com/photo4.jpg",
+        "video_url": "https://example.com/promo.mp4",
+        "status": "PENDING",
+    }
+    res = client.post("/api/v1/merchants/onboard", json=payload)
+    assert res.status_code == 201
+    m = res.json()["merchant"]
+
+    assert m["user_code"].startswith("MRH")
+    assert m["business_name"] == "Grand Supermarket"
+    assert m["owner"] == "Suresh Kumar"
+    assert m["category"] == "Supermarket"
+    assert m["city"] == "Kochi"
+    assert m["district"] == "Ernakulam"
+    assert m["state"] == "Kerala"
+    assert m["latitude"] == 9.9816
+    assert m["longitude"] == 76.2999
+    assert m["phone"] == "9876500002"
+    assert m["whatsapp"] == "9876500002"
+    assert m["landline"] == "0484223344"
+    assert m["email"] == "grand.supermarket@example.com"
+    assert m["website"] == "https://grandmarket.example.com"
+    assert m["facebook"] == "https://facebook.com/grandmarket"
+    assert m["instagram"] == "https://instagram.com/grandmarket"
+    assert m["twitter"] == "https://twitter.com/grandmarket"
+    assert m["youtube"] == "https://youtube.com/@grandmarket"
+    assert m["photo_1"] == "https://example.com/photo1.jpg"
+    assert m["photo_2"] == "https://example.com/photo2.jpg"
+    assert m["photo_3"] == "https://example.com/photo3.jpg"
+    assert m["photo_4"] == "https://example.com/photo4.jpg"
+    assert m["video_url"] == "https://example.com/promo.mp4"
+    assert m["status"] == "PENDING"
+

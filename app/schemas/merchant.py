@@ -58,21 +58,41 @@ class MerchantProfileResponse(BaseModel):
     user_id: int
     user_code: Optional[str] = None
     business_name: str
+    owner: Optional[str] = None
     owner_name: Optional[str] = None
-    categories: List[str]
+    category: Optional[str] = None
+    categories: List[str] = []
     district: Optional[str] = None
     city: Optional[str] = None
-    location: str
+    state: Optional[str] = None
+    location: Optional[str] = None
     landmark: Optional[str] = None
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    phone: Optional[str] = None
+    whatsapp: Optional[str] = None
+    landline: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    facebook: Optional[str] = None
+    instagram: Optional[str] = None
+    twitter: Optional[str] = None
+    youtube: Optional[str] = None
+    photo_1: Optional[str] = None
+    photo_2: Optional[str] = None
+    photo_3: Optional[str] = None
+    photo_4: Optional[str] = None
+    video_url: Optional[str] = None
+    status: str = "PENDING"
+    approval_status: str = "PENDING"
+    contact_number: Optional[str] = None
     services: Optional[List[str]] = []
     service_timing: Optional[str] = None
     merchant_photos: List[str] = []
     merchant_videos: List[str] = []
     verification_documents: List[str] = []
-    contact_number: str
-    address: str
-    is_verified: bool
-    approval_status: str = "PENDING"
+    is_verified: bool = False
     rejection_reason: Optional[str] = None
     approved_by_id: Optional[int] = None
     approved_at: Optional[datetime] = None
@@ -87,46 +107,105 @@ class MerchantProfileResponse(BaseModel):
 class MerchantOnboardingRequest(BaseModel):
     user_id: Optional[int] = Field(None, description="Creator user ID (Field Staff / Admin)", json_schema_extra={"example": 1})
     user_code: Optional[str] = Field(None, description="Creator user code (e.g. FLS_1, ADM_1)", json_schema_extra={"example": "FLS_1"})
-    # Form fields matching screenshot
+    # Form fields matching new schema
     business_name: str = Field(..., min_length=2, max_length=255, json_schema_extra={"example": "Royal Grand Bakery"})
-    category: Optional[str] = Field(None, json_schema_extra={"example": "Food & Dining"})
-    categories: Optional[List[str]] = Field(None, json_schema_extra={"example": ["Food & Dining"]})
-    owner_name: Optional[str] = Field(None, min_length=2, max_length=100, json_schema_extra={"example": "Rajesh Sharma"})
+    owner: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Rajesh Sharma"})
+    owner_name: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Rajesh Sharma"})
     contact_person: Optional[str] = Field(None, json_schema_extra={"example": "Rajesh Sharma"})
-    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+91 98765 43210"})
-    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
-    contact_number: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
-    email: Optional[str] = Field(None, json_schema_extra={"example": "owner@business.com"})
+    category: Optional[str] = Field(None, max_length=150, json_schema_extra={"example": "Food & Dining"})
+    categories: Optional[List[str]] = Field(None, json_schema_extra={"example": ["Food & Dining"]})
 
-    # Location fields: District, City, Location
-    district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore Urban"})
+    # Location fields
+    address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "Shop #12, 100ft Road, Near Metro Station"})
     city: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore"})
+    district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore Urban"})
+    state: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Karnataka"})
     location: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Indiranagar"})
     city_region: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Bangalore"})
-
-    # Address & Landmark
-    address: str = Field(..., min_length=3, max_length=500, json_schema_extra={"example": "Shop #12, 100ft Road, Near Metro Station"})
     landmark: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Near Metro Station"})
 
-    # Photos, Documents, Videos
-    merchant_photos: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/photos/shop_front.jpg"]})
-    verification_documents: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/documents/shop_license.pdf"]})
-    merchant_videos: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["/static/merchants/videos/shop_tour.mp4"]})
+    # Geo coordinates
+    latitude: Optional[float] = Field(None, json_schema_extra={"example": 12.9716})
+    longitude: Optional[float] = Field(None, json_schema_extra={"example": 77.5946})
 
-    # Optional extra details
-    services: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["Takeaway", "Dine-in"]})
-    service_timing: Optional[str] = Field("General Store Hours", json_schema_extra={"example": "09:00 AM - 09:00 PM"})
+    # Contact fields
+    phone: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "9876543210"})
+    phone_number: Optional[str] = Field(None, json_schema_extra={"example": "+91 98765 43210"})
+    contact_number: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    whatsapp: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "9876543210"})
+    landline: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "0484234567"})
+    email: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "owner@business.com"})
+
+    # Social & Web links
+    website: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://example.com"})
+    facebook: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://facebook.com/business"})
+    instagram: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://instagram.com/business"})
+    twitter: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://twitter.com/business"})
+    youtube: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://youtube.com/@business"})
+
+    # Media fields
+    photo_1: Optional[str] = None
+    photo_2: Optional[str] = None
+    photo_3: Optional[str] = None
+    photo_4: Optional[str] = None
+    video_url: Optional[str] = None
+    merchant_photos: Optional[List[str]] = Field(default_factory=list)
+    verification_documents: Optional[List[str]] = Field(default_factory=list)
+    merchant_videos: Optional[List[str]] = Field(default_factory=list)
+
+    # Status & Auxiliary
+    status: Optional[str] = Field("PENDING", max_length=50)
+    services: Optional[List[str]] = Field(default_factory=list)
+    service_timing: Optional[str] = Field("General Store Hours")
 
     @model_validator(mode="before")
     @classmethod
     def normalize_onboarding_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            if not data.get("owner_name") and data.get("contact_person"):
-                data["owner_name"] = data["contact_person"]
-            if not data.get("phone_number"):
-                data["phone_number"] = data.get("contact_number") or data.get("phone") or "0000000000"
+            # Normalize owner
+            if not data.get("owner"):
+                data["owner"] = data.get("owner_name") or data.get("contact_person") or "Business Owner"
             if not data.get("owner_name"):
-                data["owner_name"] = "Business Owner"
+                data["owner_name"] = data["owner"]
+
+            # Normalize phone
+            phone_val = data.get("phone") or data.get("phone_number") or data.get("contact_number") or "0000000000"
+            data["phone"] = phone_val
+            data["phone_number"] = phone_val
+            data["contact_number"] = phone_val
+
+            # Normalize category
+            if not data.get("category") and data.get("categories"):
+                cats = data.get("categories")
+                if isinstance(cats, list) and len(cats) > 0:
+                    data["category"] = cats[0]
+            elif data.get("category") and not data.get("categories"):
+                data["categories"] = [data["category"]]
+
+            # Normalize photos
+            photos = data.get("merchant_photos") or []
+            if photos and isinstance(photos, list):
+                if not data.get("photo_1") and len(photos) > 0:
+                    data["photo_1"] = photos[0]
+                if not data.get("photo_2") and len(photos) > 1:
+                    data["photo_2"] = photos[1]
+                if not data.get("photo_3") and len(photos) > 2:
+                    data["photo_3"] = photos[2]
+                if not data.get("photo_4") and len(photos) > 3:
+                    data["photo_4"] = photos[3]
+            else:
+                p_list = [p for p in [data.get("photo_1"), data.get("photo_2"), data.get("photo_3"), data.get("photo_4")] if p]
+                if p_list:
+                    data["merchant_photos"] = p_list
+
+            # Normalize video
+            if not data.get("video_url") and data.get("merchant_videos"):
+                vids = data.get("merchant_videos")
+                if isinstance(vids, list) and len(vids) > 0:
+                    data["video_url"] = vids[0]
+
+            if not data.get("address"):
+                data["address"] = data.get("location") or "Kerala, India"
         return data
 
     @field_validator("email")

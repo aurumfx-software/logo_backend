@@ -35,7 +35,9 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
-        if not resp.user_code and creator_summary:
+        if merchant.user_code:
+            resp.user_code = merchant.user_code
+        elif creator_summary:
             resp.user_code = creator_summary.user_code
         resp.creator = creator_summary
         resp.created_by = creator_summary
@@ -186,31 +188,44 @@ class MerchantService:
                 db.refresh(user)
 
         # 6. Create Merchant Profile
-        # user_id is the creator user (Field Staff/Admin), with fallback to user.id
         effective_user_id = creator_user_id if creator_user_id else user.id
-        effective_user_code = creator_user.user_code if creator_user else user.user_code
+        category_val = data.category or (categories[0] if categories else None)
+        owner_val = data.owner or data.owner_name
+
+        merchant_user_code = data.user_code if (data.user_code and data.user_code.startswith("MRH")) else None
 
         merchant = MerchantProfile(
             user_id=effective_user_id,
-            user_code=effective_user_code,
+            user_code=merchant_user_code,
             business_name=data.business_name.strip(),
-            owner_name=data.owner_name.strip(),
-            categories=categories,
-            district=district,
+            owner=owner_val.strip() if owner_val else "Business Owner",
+            category=category_val,
+            address=data.address.strip() if data.address else None,
             city=city,
-            location=location,
-            address=data.address.strip(),
+            district=district,
+            state=data.state,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            phone=clean_phone or data.phone,
+            whatsapp=data.whatsapp,
+            landline=data.landline,
+            email=data.email,
+            website=data.website,
+            facebook=data.facebook,
+            instagram=data.instagram,
+            twitter=data.twitter,
+            youtube=data.youtube,
+            photo_1=data.photo_1 or (data.merchant_photos[0] if data.merchant_photos else None),
+            photo_2=data.photo_2 or (data.merchant_photos[1] if len(data.merchant_photos) > 1 else None),
+            photo_3=data.photo_3 or (data.merchant_photos[2] if len(data.merchant_photos) > 2 else None),
+            photo_4=data.photo_4 or (data.merchant_photos[3] if len(data.merchant_photos) > 3 else None),
+            video_url=data.video_url or (data.merchant_videos[0] if data.merchant_videos else None),
+            status=data.status or "PENDING",
             landmark=landmark,
-            contact_number=clean_phone,
-            services=data.services or [],
             service_timing=data.service_timing or "General Store Hours",
-            merchant_photos=data.merchant_photos or [],
-            merchant_videos=data.merchant_videos or [],
-            verification_documents=data.verification_documents or [],
             is_verified=False,
-            approval_status="PENDING",
-            onboarded_by_id=effective_user_id,
             is_active=True,
+            onboarded_by_id=effective_user_id,
         )
         db.add(merchant)
         db.commit()
@@ -598,7 +613,11 @@ class MerchantService:
 
         # Scoped access or explicit filter:
         if user_code:
-            query = query.filter(MerchantProfile.user_code == user_code.strip())
+            uc = user_code.strip()
+            query = query.filter(
+                (MerchantProfile.user_code.ilike(f"%{uc}%"))
+                | (MerchantProfile.onboarded_by.has(User.user_code.ilike(f"%{uc}%")))
+            )
         elif current_user and current_user.role == UserRole.FIELD_STAFF:
             query = query.filter(
                 (MerchantProfile.user_id == current_user.id)
