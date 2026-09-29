@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user_optional
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
+from app.schemas.admin import AdminUserCreateRequest
 from app.schemas.auth import SafeUserResponse
 from app.schemas.response import (
     StandardListResponse,
@@ -13,6 +14,7 @@ from app.schemas.response import (
     list_response,
     success_response,
 )
+from app.services.admin_service import AdminService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -99,4 +101,23 @@ def get_user_by_id(
     return success_response(
         data=SafeUserResponse.model_validate(user),
         message="User details retrieved successfully",
+    )
+
+
+@router.post(
+    "",
+    response_model=StandardResponse[SafeUserResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new user",
+    description="Creates a new user specifying all 17 fields: name, email, phone, password, role, district, regions, city, module_access, send_email, status, etc.",
+)
+def create_user(
+    data: AdminUserCreateRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> StandardResponse[SafeUserResponse]:
+    user = AdminService.create_user(db=db, user_data=data, current_admin=current_user)
+    return success_response(
+        data=SafeUserResponse.model_validate(user),
+        message=f"User '{user.name}' created successfully with code {user.user_code}",
     )

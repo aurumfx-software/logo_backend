@@ -1,5 +1,6 @@
 import re
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.db.models.user import UserRole
 from app.db.models.otp import OTPPurpose
@@ -29,6 +30,13 @@ class UserRegisterRequest(UserBase):
         description="User role: SUPER_ADMIN, ADMIN, or FIELD_STAFF (defaults to FIELD_STAFF if omitted)",
         json_schema_extra={"example": "FIELD_STAFF"},
     )
+    district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Ernakulam"})
+    regions: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["Central Kerala", "Kochi Zone"]})
+    city: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Kochi"})
+    module_access: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["merchants", "users", "categories"]})
+    send_email: Optional[bool] = Field(False, description="Send welcome email / notifications (true/false binary)", json_schema_extra={"example": True})
+    status: Optional[str] = Field("ACTIVE", max_length=50, json_schema_extra={"example": "ACTIVE"})
+    created_by: Optional[str] = Field(None, max_length=50, json_schema_extra={"example": "ADM_1"})
     address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "123 MG Road, Kochi, Kerala"})
     profile_picture: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "https://example.com/avatar.jpg"})
 
@@ -77,10 +85,20 @@ class SafeUserResponse(BaseModel):
     email: str
     phone: Optional[str] = None
     role: UserRole
+    district: Optional[str] = None
+    regions: Optional[List[str]] = Field(default_factory=list)
+    city: Optional[str] = None
+    module_access: Optional[List[str]] = Field(default_factory=list)
+    send_email: bool = False
+    status: Optional[str] = "ACTIVE"
+    last_active: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     address: Optional[str] = None
     profile_picture: Optional[str] = None
     is_active: bool = True
-    is_verified: bool
+    is_verified: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

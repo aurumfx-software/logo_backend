@@ -7,6 +7,7 @@ from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.admin import (
     AdminDashboardStats,
+    AdminUserCreateRequest,
     AdminUserDetailResponse,
     AdminUserListResponse,
     AdminUserRoleUpdateRequest,
@@ -132,6 +133,22 @@ def list_users(
     )
 
 
+@router.post(
+    "/users",
+    response_model=AdminUserDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new user with modules, region, and access controls",
+    description="Allows administrator to create a user account specifying role, district, regions, city, module_access list, send_email binary flag, status, and created_by.",
+)
+def create_user(
+    data: AdminUserCreateRequest,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminUserDetailResponse:
+    user = AdminService.create_user(db=db, user_data=data, current_admin=current_admin)
+    return AdminService.get_user_details(db=db, user_id=user.id)
+
+
 def _parse_user_id(db: Session, uid: Union[str, int]) -> int:
     val = str(uid).strip()
     if val.isdigit():
@@ -199,6 +216,7 @@ def update_user_status(
         user_id=numeric_id,
         is_active=data.is_active,
         current_admin=current_admin,
+        status_text=data.status,
     )
 
 

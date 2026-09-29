@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, JSON
 from app.db.database import Base
 
 
@@ -26,15 +26,25 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_code = Column(String(50), unique=True, index=True, nullable=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     phone = Column(String(50), unique=True, index=True, nullable=True)
-    password_hash = Column(String(255), nullable=True)  # nullable for OAuth users
+    password = Column(String(255), nullable=True)
+    password_hash = Column(String(255), nullable=True)  # stores hashed password
     role = Column(
         Enum(UserRole, name="user_role", native_enum=False),
         default=UserRole.FIELD_STAFF,
         nullable=False,
     )
+    district = Column(String(100), nullable=True)
+    regions = Column(JSON, default=list, nullable=True)
+    city = Column(String(100), nullable=True)
+    module_access = Column(JSON, default=list, nullable=True)
+    send_email = Column(Boolean, default=False, nullable=False)
+    status = Column(String(50), default="ACTIVE", nullable=False)
+    last_active = Column(DateTime(timezone=True), nullable=True)
+    created_by = Column(String(50), nullable=True)
     address = Column(String(500), nullable=True)
     profile_picture = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
@@ -50,8 +60,6 @@ class User(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-
-    user_code = Column(String(50), unique=True, index=True, nullable=True)
 
 
 def get_role_prefix(role) -> str:
@@ -74,6 +82,27 @@ from sqlalchemy.orm import Session
 def assign_user_codes_before_flush(session, flush_context, instances):
     new_users = [obj for obj in session.new if isinstance(obj, User)]
     for user in new_users:
+        # Sync password and password_hash
+        if user.password_hash and not user.password:
+            user.password = user.password_hash
+        elif user.password and not user.password_hash:
+            user.password_hash = user.password
+
+        # Sync status and is_active
+        if user.status and user.status.upper() == "INACTIVE":
+            user.is_active = False
+        elif user.is_active is False and (not user.status or user.status == "ACTIVE"):
+            user.status = "INACTIVE"
+        elif not user.status:
+            user.status = "ACTIVE" if user.is_active else "INACTIVE"
+
+        if user.regions is None:
+            user.regions = []
+        if user.module_access is None:
+            user.module_access = []
+        if user.send_email is None:
+            user.send_email = False
+
         if not user.user_code:
             prefix = get_role_prefix(user.role)
             try:
@@ -98,6 +127,20 @@ def assign_user_codes_before_flush(session, flush_context, instances):
 
     for obj in session.dirty:
         if isinstance(obj, User):
+            # Sync password and password_hash if modified
+            if obj.password_hash and not obj.password:
+                obj.password = obj.password_hash
+            elif obj.password and not obj.password_hash:
+                obj.password_hash = obj.password
+
+            # Sync status and is_active if modified
+            if obj.status and obj.status.upper() == "INACTIVE":
+                obj.is_active = False
+            elif obj.is_active is False and (not obj.status or obj.status == "ACTIVE"):
+                obj.status = "INACTIVE"
+            elif obj.is_active is True and obj.status == "INACTIVE":
+                obj.status = "ACTIVE"
+
             try:
                 state = inspect(obj)
                 history = state.get_history("role", True)

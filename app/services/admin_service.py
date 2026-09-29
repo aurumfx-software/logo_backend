@@ -1,14 +1,17 @@
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
 from app.db.models.logo import Logo, LogoCategory, LogoFavorite, LogoStatus
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
 from app.schemas.admin import (
     AdminCategoryDistributionItem,
     AdminDashboardStats,
+    AdminUserCreateRequest,
     AdminUserDetailResponse,
     AdminUserListItem,
     AdminUserListResponse,
@@ -177,11 +180,20 @@ class AdminService:
                     email=u.email,
                     phone=u.phone,
                     role=u.role,
+                    district=u.district,
+                    regions=u.regions or [],
+                    city=u.city,
+                    module_access=u.module_access or [],
+                    send_email=bool(u.send_email),
+                    status=u.status or ("ACTIVE" if u.is_active else "INACTIVE"),
+                    last_active=u.last_active,
+                    created_by=u.created_by,
                     is_active=u.is_active,
                     is_verified=u.is_verified,
                     address=u.address,
                     profile_picture=u.profile_picture,
                     created_at=u.created_at,
+                    updated_at=u.updated_at,
                     submitted_logos_count=sub_count,
                     favorite_logos_count=fav_count,
                 )
@@ -223,6 +235,14 @@ class AdminService:
             email=user.email,
             phone=user.phone,
             role=user.role,
+            district=user.district,
+            regions=user.regions or [],
+            city=user.city,
+            module_access=user.module_access or [],
+            send_email=bool(user.send_email),
+            status=user.status or ("ACTIVE" if user.is_active else "INACTIVE"),
+            last_active=user.last_active,
+            created_by=user.created_by,
             is_active=user.is_active,
             is_verified=user.is_verified,
             address=user.address,
@@ -233,6 +253,61 @@ class AdminService:
             favorite_logos_count=fav_count,
             merchant_profile=merchant_data,
         )
+
+    @classmethod
+    def create_user(
+        cls,
+        db: Session,
+        user_data: AdminUserCreateRequest,
+        current_admin: Optional[User] = None,
+    ) -> User:
+        """Create a new user with all 17 fields, including module access array and binary send_email."""
+        clean_email = user_data.email.strip().lower()
+        existing_email = db.query(User).filter(User.email == clean_email).first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email already exists.",
+            )
+
+        if user_data.phone:
+            existing_phone = db.query(User).filter(User.phone == user_data.phone).first()
+            if existing_phone:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A user with this phone number already exists.",
+                )
+
+        hashed_pwd = hash_password(user_data.password)
+        assigned_role = user_data.role or UserRole.FIELD_STAFF
+        creator = user_data.created_by or (current_admin.user_code if current_admin and current_admin.user_code else (current_admin.name if current_admin else None))
+
+        user_status = user_data.status or "ACTIVE"
+        is_active = (user_status.upper() != "INACTIVE")
+
+        new_user = User(
+            name=user_data.name.strip(),
+            email=clean_email,
+            phone=user_data.phone,
+            password=hashed_pwd,
+            password_hash=hashed_pwd,
+            role=assigned_role,
+            district=user_data.district,
+            regions=user_data.regions or [],
+            city=user_data.city,
+            module_access=user_data.module_access or [],
+            send_email=bool(user_data.send_email),
+            status=user_status,
+            is_active=is_active,
+            is_verified=True,
+            created_by=creator,
+            address=user_data.address,
+            profile_picture=user_data.profile_picture,
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return new_user
 
     @classmethod
     def update_user_role(
@@ -259,7 +334,12 @@ class AdminService:
 
     @classmethod
     def update_user_status(
-        cls, db: Session, user_id: int, is_active: bool, current_admin: User
+        cls,
+        db: Session,
+        user_id: int,
+        is_active: bool,
+        current_admin: User,
+        status_text: Optional[str] = None,
     ) -> AdminUserDetailResponse:
         """Activate or ban a user, preventing self-deactivation."""
         if user_id == current_admin.id and not is_active:
@@ -276,6 +356,11 @@ class AdminService:
             )
 
         user.is_active = is_active
+        if status_text:
+            user.status = status_text
+        else:
+            user.status = "ACTIVE" if is_active else "INACTIVE"
+
         db.commit()
         db.refresh(user)
         return cls.get_user_details(db, user_id)

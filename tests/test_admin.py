@@ -129,3 +129,72 @@ def test_user_management_by_admin(client: TestClient, db_session: Session):
     self_del_res = client.delete(f"/api/v1/admin/users/{admin.id}", headers=admin_headers)
     assert self_del_res.status_code == 400
     assert "cannot delete" in self_del_res.json()["detail"]
+
+
+def test_admin_create_user_with_all_fields(client: TestClient, db_session: Session):
+    admin, admin_token, _ = setup_admin_and_users(client, db_session)
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    payload = {
+        "name": "Field Executive Alpha",
+        "email": "executive.alpha@example.com",
+        "phone": "9876500001",
+        "password": "ExecPassword123!",
+        "role": "FIELD_STAFF",
+        "district": "Ernakulam",
+        "regions": ["Kochi Zone", "North Central"],
+        "city": "Kochi",
+        "module_access": ["merchants", "users", "categories"],
+        "send_email": True,
+        "status": "ACTIVE",
+        "created_by": "ADM_1",
+    }
+
+    # 1. Test POST /api/v1/admin/users
+    create_res = client.post("/api/v1/admin/users", json=payload, headers=admin_headers)
+    assert create_res.status_code == 201
+    created_user = create_res.json()
+
+    assert created_user["name"] == "Field Executive Alpha"
+    assert created_user["email"] == "executive.alpha@example.com"
+    assert created_user["phone"] == "9876500001"
+    assert created_user["role"] == "FIELD_STAFF"
+    assert created_user["user_code"].startswith("FLS_")
+    assert created_user["district"] == "Ernakulam"
+    assert created_user["regions"] == ["Kochi Zone", "North Central"]
+    assert created_user["city"] == "Kochi"
+    assert created_user["module_access"] == ["merchants", "users", "categories"]
+    assert created_user["send_email"] is True
+    assert created_user["status"] == "ACTIVE"
+    assert created_user["created_by"] == "ADM_1"
+    assert created_user["created_at"] is not None
+
+    # 2. Test duplicate email prevents creation
+    dup_res = client.post("/api/v1/admin/users", json=payload, headers=admin_headers)
+    assert dup_res.status_code == 409
+
+    # 3. Test POST /api/v1/users endpoint
+    payload2 = {
+        "name": "Field Executive Beta",
+        "email": "executive.beta@example.com",
+        "phone": "9876500002",
+        "password": "ExecPassword123!",
+        "role": "FIELD_STAFF",
+        "district": "Thrissur",
+        "regions": ["Thrissur City", "Chalakudy"],
+        "city": "Thrissur",
+        "module_access": ["merchants"],
+        "send_email": False,
+        "status": "ACTIVE",
+    }
+    create_res2 = client.post("/api/v1/users", json=payload2, headers=admin_headers)
+    assert create_res2.status_code == 201
+    user2 = create_res2.json()["data"]
+    assert user2["name"] == "Field Executive Beta"
+    assert user2["user_code"].startswith("FLS_")
+    assert user2["district"] == "Thrissur"
+    assert user2["regions"] == ["Thrissur City", "Chalakudy"]
+    assert user2["city"] == "Thrissur"
+    assert user2["module_access"] == ["merchants"]
+    assert user2["send_email"] is False
+

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -51,15 +52,26 @@ class AuthService:
         # Hash password and assign requested role (or default to FIELD_STAFF)
         hashed_pwd = hash_password(user_data.password)
         assigned_role = user_data.role if user_data.role is not None else UserRole.FIELD_STAFF
+        user_status = getattr(user_data, "status", "ACTIVE") or "ACTIVE"
+        is_active = (user_status.upper() != "INACTIVE")
+
         new_user = User(
             name=user_data.name.strip(),
             email=clean_email,
             phone=user_data.phone,
+            password=hashed_pwd,
             password_hash=hashed_pwd,
             role=assigned_role,
+            district=getattr(user_data, "district", None),
+            regions=getattr(user_data, "regions", None) or [],
+            city=getattr(user_data, "city", None),
+            module_access=getattr(user_data, "module_access", None) or [],
+            send_email=bool(getattr(user_data, "send_email", False)),
+            status=user_status,
+            created_by=getattr(user_data, "created_by", None),
             address=user_data.address,
             profile_picture=user_data.profile_picture,
-            is_active=True,
+            is_active=is_active,
             is_verified=False,
         )
         db.add(new_user)
@@ -117,6 +129,10 @@ class AuthService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User account is inactive. Please contact support.",
             )
+
+        user.last_active = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(user)
 
         return user
 
