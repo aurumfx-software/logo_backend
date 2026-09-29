@@ -203,6 +203,7 @@ class MerchantService:
             address=data.address.strip() if data.address else None,
             city=city,
             district=district,
+            location=location,
             state=data.state,
             latitude=data.latitude,
             longitude=data.longitude,

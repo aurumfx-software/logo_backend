@@ -405,9 +405,10 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert res1.status_code == 201
     m1 = res1.json()["merchant"]
     assert m1["user_id"] == staff.id
-    assert m1["user_code"] == staff.user_code
+    assert m1["user_code"].startswith("MRH")
     assert m1["creator"] is not None
     assert m1["creator"]["id"] == staff.id
+    assert m1["creator"]["user_code"] == staff.user_code
     assert m1["creator"]["name"] == "Staff User One"
     assert m1["creator"]["role"] == "FIELD_STAFF"
     assert m1["created_by"]["id"] == staff.id
@@ -427,9 +428,9 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     assert res2.status_code == 201
     m2 = res2.json()["merchant"]
     assert m2["user_id"] == staff.id
-    assert m2["user_code"] == staff.user_code
+    assert m2["user_code"].startswith("MRH")
     assert m2["creator"]["id"] == staff.id
-    assert m2["creator"]["user_code"] is not None
+    assert m2["creator"]["user_code"] == staff.user_code
 
     # 4. Fetch merchant by ID (GET /api/v1/merchants/{merchant_id})
     get_res = client.get(f"/api/v1/merchants/{m1['id']}")
