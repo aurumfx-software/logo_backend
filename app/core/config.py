@@ -20,8 +20,9 @@ class Settings(BaseSettings):
     def assemble_db_connection(self) -> "Settings":
         if not self.DATABASE_URL:
             pwd_part = f":{self.DB_PASSWORD}" if self.DB_PASSWORD else ""
+            ssl_part = "?sslmode=require" if ("ondigitalocean.com" in self.DB_HOST or "render.com" in self.DB_HOST) else ""
             self.DATABASE_URL = (
-                f"postgresql+psycopg://{self.DB_USER}{pwd_part}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+                f"postgresql+psycopg://{self.DB_USER}{pwd_part}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}{ssl_part}"
             )
         else:
             url = self.DATABASE_URL.strip()
@@ -29,6 +30,9 @@ class Settings(BaseSettings):
                 url = url.replace("postgres://", "postgresql+psycopg://", 1)
             elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
                 url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+            if ("ondigitalocean.com" in url or "render.com" in url) and "sslmode" not in url:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}sslmode=require"
             self.DATABASE_URL = url
         return self
 
@@ -46,6 +50,13 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+
+    # DigitalOcean Spaces / S3
+    SPACES_BUCKET: str = ""
+    SPACES_REGION: str = "sgp1"
+    SPACES_ENDPOINT: str = ""
+    SPACES_ACCESS_KEY: str = ""
+    SPACES_SECRET_KEY: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
