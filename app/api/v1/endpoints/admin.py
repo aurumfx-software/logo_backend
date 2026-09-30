@@ -21,6 +21,7 @@ from app.schemas.merchant import (
     MerchantProfileResponse,
     MerchantRejectRequest,
     MerchantStatsResponse,
+    MerchantUpdateRequest,
 )
 from app.schemas.response import (
     StandardListResponse,
@@ -420,6 +421,46 @@ def reject_merchant(
         data=MerchantService.build_merchant_response(rejected),
         message=f"Merchant '{rejected.business_name}' rejected",
     )
+
+
+@router.put(
+    "/merchants/{merchant_id}",
+    response_model=MerchantProfileResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update merchant profile by ID",
+    description="Updates business details, location, contact, social, media, or services for a specific merchant.",
+)
+@router.patch(
+    "/merchants/{merchant_id}",
+    response_model=MerchantProfileResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Partially update merchant profile by ID",
+)
+def admin_update_merchant(
+    merchant_id: int,
+    data: MerchantUpdateRequest,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> MerchantProfileResponse:
+    merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    updated = MerchantService.update_merchant(db=db, merchant=merchant, data=data)
+    return MerchantService.build_merchant_response(updated)
+
+
+@router.delete(
+    "/merchants/{merchant_id}",
+    response_model=GenericMessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete merchant profile by ID",
+    description="Permanently deletes a merchant profile from the database.",
+)
+def admin_delete_merchant(
+    merchant_id: int,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> GenericMessageResponse:
+    MerchantService.delete_merchant(db=db, merchant_id=merchant_id)
+    return GenericMessageResponse(message=f"Merchant {merchant_id} deleted successfully.")
 
 
 # --- Activity Audit Logs ---

@@ -15,7 +15,7 @@ from app.api.deps import (
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
-from app.schemas.auth import SafeUserResponse, TokenResponse
+from app.schemas.auth import GenericMessageResponse, SafeUserResponse, TokenResponse
 from app.schemas.merchant import (
     LocationCountItem,
     MerchantDiscoveryMetaResponse,
@@ -673,6 +673,46 @@ def get_merchant_by_id(
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
     return MerchantService.build_merchant_response(merchant)
+
+
+@router.put(
+    "/{merchant_id}",
+    response_model=MerchantProfileResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update merchant profile by ID",
+    description="Updates business details, location, contact, social, media, or services for a specific merchant.",
+)
+@router.patch(
+    "/{merchant_id}",
+    response_model=MerchantProfileResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Partially update merchant profile by ID",
+)
+def update_merchant_by_id(
+    merchant_id: int,
+    data: MerchantUpdateRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> MerchantProfileResponse:
+    merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    updated = MerchantService.update_merchant(db=db, merchant=merchant, data=data)
+    return MerchantService.build_merchant_response(updated)
+
+
+@router.delete(
+    "/{merchant_id}",
+    response_model=GenericMessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Delete merchant profile by ID",
+    description="Permanently deletes a merchant profile from the database.",
+)
+def delete_merchant_by_id(
+    merchant_id: int,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> GenericMessageResponse:
+    MerchantService.delete_merchant(db=db, merchant_id=merchant_id)
+    return GenericMessageResponse(message=f"Merchant {merchant_id} deleted successfully.")
 
 
 # ── OTP Login Flow ────────────────────────────────────────────────────────────

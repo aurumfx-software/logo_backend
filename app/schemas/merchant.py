@@ -348,14 +348,54 @@ class MerchantRegisterResponse(BaseModel):
 
 
 class MerchantUpdateRequest(BaseModel):
-    business_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    business_name: Optional[str] = Field(None, max_length=255)
+    name: Optional[str] = Field(None, max_length=255)
+    owner: Optional[str] = Field(None, max_length=255)
+    owner_name: Optional[str] = Field(None, max_length=255)
+    contact_person: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=150)
     categories: Optional[List[str]] = None
-    location: Optional[str] = Field(None, min_length=2, max_length=255)
-    services: Optional[List[str]] = None
-    service_timing: Optional[str] = Field(None, max_length=255)
-    merchant_photos: Optional[List[str]] = None
+    address: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=100)
+    district: Optional[str] = Field(None, max_length=100)
+    state: Optional[str] = Field(None, max_length=100)
+    location: Optional[str] = Field(None, max_length=255)
+    city_region: Optional[str] = Field(None, max_length=255)
+    landmark: Optional[str] = Field(None, max_length=255)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    phone: Optional[str] = None
+    phone_number: Optional[str] = None
     contact_number: Optional[str] = None
-    address: Optional[str] = Field(None, min_length=5, max_length=500)
+    whatsapp: Optional[str] = None
+    landline: Optional[str] = None
+    email: Optional[str] = None
+    website: Optional[str] = None
+    facebook: Optional[str] = None
+    instagram: Optional[str] = None
+    twitter: Optional[str] = None
+    youtube: Optional[str] = None
+    about: Optional[str] = None
+    description: Optional[str] = None
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+    key_highlights: Optional[List[str]] = None
+    photo_1: Optional[str] = None
+    photo_2: Optional[str] = None
+    photo_3: Optional[str] = None
+    photo_4: Optional[str] = None
+    photo_5: Optional[str] = None
+    photo_6: Optional[str] = None
+    photos: Optional[List[str]] = None
+    merchant_photos: Optional[List[str]] = None
+    video_url: Optional[str] = None
+    merchant_videos: Optional[List[str]] = None
+    verification_documents: Optional[List[str]] = None
+    services: Optional[List[str]] = None
+    service_timing: Optional[str] = None
+    status: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class MerchantPhotosUploadResponse(BaseModel):

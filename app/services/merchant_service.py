@@ -578,26 +578,145 @@ class MerchantService:
     def update_merchant(
         db: Session, merchant: MerchantProfile, data: MerchantUpdateRequest
     ) -> MerchantProfile:
-        if data.business_name is not None:
+        # Names & Owner
+        if data.business_name is not None and data.business_name.strip():
             merchant.business_name = data.business_name.strip()
+        if data.name is not None and data.name.strip():
+            merchant.business_name = data.name.strip()
+        if data.owner is not None and data.owner.strip():
+            merchant.owner = data.owner.strip()
+            merchant.owner_name = data.owner.strip()
+        if data.owner_name is not None and data.owner_name.strip():
+            merchant.owner_name = data.owner_name.strip()
+            merchant.owner = data.owner_name.strip()
+        if data.contact_person is not None and data.contact_person.strip():
+            merchant.owner = data.contact_person.strip()
+            merchant.owner_name = data.contact_person.strip()
+
+        # Categories
         if data.categories is not None:
             merchant.categories = data.categories
+            if data.categories and len(data.categories) > 0:
+                merchant.category = data.categories[0]
+        if data.category is not None and data.category.strip():
+            merchant.category = data.category.strip()
+            if not merchant.categories:
+                merchant.categories = [data.category.strip()]
+
+        # Location & Address
+        if data.address is not None:
+            merchant.address = data.address.strip()
+        if data.city is not None:
+            merchant.city = data.city.strip()
+        if data.district is not None:
+            merchant.district = data.district.strip()
+        if data.state is not None:
+            merchant.state = data.state.strip()
         if data.location is not None:
             merchant.location = data.location.strip()
+        if data.city_region is not None:
+            merchant.location = data.city_region.strip()
+        if data.landmark is not None:
+            merchant.landmark = data.landmark.strip()
+        if data.latitude is not None:
+            merchant.latitude = data.latitude
+        if data.longitude is not None:
+            merchant.longitude = data.longitude
+
+        # Contact Info
+        if data.phone is not None:
+            merchant.phone = data.phone.strip()
+        if data.phone_number is not None:
+            merchant.phone = data.phone_number.strip()
+        if data.contact_number is not None:
+            merchant.contact_number = data.contact_number.strip()
+            if not merchant.phone:
+                merchant.phone = data.contact_number.strip()
+        if data.whatsapp is not None:
+            merchant.whatsapp = data.whatsapp.strip()
+        if data.landline is not None:
+            merchant.landline = data.landline.strip()
+        if data.email is not None:
+            merchant.email = data.email.strip().lower()
+
+        # Social & Web Links
+        if data.website is not None:
+            merchant.website = data.website.strip()
+        if data.facebook is not None:
+            merchant.facebook = data.facebook.strip()
+        if data.instagram is not None:
+            merchant.instagram = data.instagram.strip()
+        if data.twitter is not None:
+            merchant.twitter = data.twitter.strip()
+        if data.youtube is not None:
+            merchant.youtube = data.youtube.strip()
+
+        # About, Rating & Highlights
+        if data.about is not None:
+            merchant.about = data.about.strip()
+        if data.description is not None:
+            merchant.about = data.description.strip()
+        if data.rating is not None:
+            merchant.rating = data.rating
+        if data.reviews_count is not None:
+            merchant.reviews_count = data.reviews_count
+        if data.key_highlights is not None:
+            merchant.key_highlights = data.key_highlights
+
+        # Media & Documents
+        if data.merchant_photos is not None:
+            merchant.merchant_photos = data.merchant_photos
+        elif data.photos is not None:
+            merchant.merchant_photos = data.photos
+        if data.photo_1 is not None:
+            merchant.photo_1 = data.photo_1
+        if data.photo_2 is not None:
+            merchant.photo_2 = data.photo_2
+        if data.photo_3 is not None:
+            merchant.photo_3 = data.photo_3
+        if data.photo_4 is not None:
+            merchant.photo_4 = data.photo_4
+        if data.photo_5 is not None:
+            merchant.photo_5 = data.photo_5
+        if data.photo_6 is not None:
+            merchant.photo_6 = data.photo_6
+
+        if data.video_url is not None:
+            merchant.video_url = data.video_url
+        if data.merchant_videos is not None:
+            merchant.merchant_videos = data.merchant_videos
+        if data.verification_documents is not None:
+            merchant.verification_documents = data.verification_documents
+
+        # Status & Services
         if data.services is not None:
             merchant.services = data.services
         if data.service_timing is not None:
             merchant.service_timing = data.service_timing.strip()
-        if data.merchant_photos is not None:
-            merchant.merchant_photos = data.merchant_photos
-        if data.contact_number is not None:
-            merchant.contact_number = data.contact_number.strip()
-        if data.address is not None:
-            merchant.address = data.address.strip()
+        if data.status is not None:
+            merchant.status = data.status.strip().upper()
+            if merchant.status in ("APPROVED", "ACTIVE"):
+                merchant.approval_status = "APPROVED"
+                merchant.is_verified = True
+                merchant.is_active = True
+            elif merchant.status in ("REJECTED", "SUSPENDED", "INACTIVE"):
+                merchant.is_active = False
 
         db.commit()
         db.refresh(merchant)
         return merchant
+
+    @staticmethod
+    def delete_merchant(db: Session, merchant_id: int) -> bool:
+        merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+        if not merchant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Merchant with ID {merchant_id} not found.",
+            )
+        db.delete(merchant)
+        db.commit()
+        return True
 
     @staticmethod
     def add_photos(
