@@ -1,5 +1,5 @@
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.schemas.auth import SafeUserResponse
 
@@ -111,7 +111,7 @@ class MerchantProfileResponse(BaseModel):
 
 
 class MerchantOnboardingRequest(BaseModel):
-    user_id: Optional[int] = Field(None, description="Creator user ID (Field Staff / Admin)", json_schema_extra={"example": 1})
+    user_id: Optional[Union[int, str]] = Field(None, description="Creator user ID (Field Staff / Admin)", json_schema_extra={"example": 1})
     user_code: Optional[str] = Field(None, description="Creator user code (e.g. FLS_1, ADM_1)", json_schema_extra={"example": "FLS_1"})
     # Form fields matching new schema
     business_name: str = Field(..., min_length=2, max_length=255, json_schema_extra={"example": "Royal Grand Bakery"})
@@ -179,6 +179,21 @@ class MerchantOnboardingRequest(BaseModel):
     @classmethod
     def normalize_onboarding_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Normalize business_name / name
+            if not data.get("business_name") and data.get("name"):
+                data["business_name"] = str(data["name"]).strip()
+            elif not data.get("name") and data.get("business_name"):
+                data["name"] = str(data["business_name"]).strip()
+
+            # Normalize user_id
+            if "user_id" in data and data["user_id"] is not None:
+                try:
+                    data["user_id"] = int(str(data["user_id"]).strip())
+                except (ValueError, TypeError):
+                    if not data.get("user_code"):
+                        data["user_code"] = str(data["user_id"]).strip()
+                    data["user_id"] = None
+
             # Normalize owner
             if not data.get("owner"):
                 data["owner"] = data.get("owner_name") or data.get("contact_person") or "Business Owner"
