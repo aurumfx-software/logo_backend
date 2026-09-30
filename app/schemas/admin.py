@@ -81,6 +81,7 @@ class AdminUserListItem(BaseModel):
     last_active: Optional[datetime] = None
     created_by: Optional[str] = None
     is_active: bool = True
+    is_suspended: bool = False
     is_verified: bool = False
     address: Optional[str] = None
     profile_picture: Optional[str] = None
@@ -115,6 +116,7 @@ class AdminUserDetailResponse(BaseModel):
     last_active: Optional[datetime] = None
     created_by: Optional[str] = None
     is_active: bool = True
+    is_suspended: bool = False
     is_verified: bool = False
     address: Optional[str] = None
     profile_picture: Optional[str] = None
@@ -132,6 +134,45 @@ class AdminUserRoleUpdateRequest(BaseModel):
 
 
 class AdminUserStatusUpdateRequest(BaseModel):
-    is_active: bool = Field(..., json_schema_extra={"example": False})
+    is_active: Optional[bool] = Field(None, json_schema_extra={"example": False})
+    is_suspended: Optional[bool] = Field(None, json_schema_extra={"example": True})
     status: Optional[str] = Field(None, json_schema_extra={"example": "INACTIVE"})
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class AdminUserUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    role: Optional[UserRole] = None
+    district: Optional[str] = None
+    regions: Optional[List[str]] = None
+    city: Optional[str] = None
+    module_access: Optional[List[str]] = None
+    send_email: Optional[bool] = None
+    status: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_suspended: Optional[bool] = None
+    address: Optional[str] = None
+    profile_picture: Optional[str] = None
+    password: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def validate_role(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_clean = v.strip().upper().replace(" ", "_").replace("-", "_")
+            if v_clean in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
+                return UserRole.FIELD_STAFF
+            if v_clean in ("SUPERADMIN", "SUPER_ADMIN"):
+                return UserRole.SUPER_ADMIN
+            if v_clean in ("ADMIN", "ADMINISTRATOR"):
+                return UserRole.ADMIN
+            return UserRole(v_clean)
+        return v
 

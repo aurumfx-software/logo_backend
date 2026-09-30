@@ -15,6 +15,7 @@ from app.schemas.admin import (
     AdminUserDetailResponse,
     AdminUserListItem,
     AdminUserListResponse,
+    AdminUserUpdateRequest,
 )
 from app.schemas.auth import SafeUserResponse
 from app.services.logo_service import LogoService
@@ -189,6 +190,7 @@ class AdminService:
                     last_active=u.last_active,
                     created_by=u.created_by,
                     is_active=u.is_active,
+                    is_suspended=not u.is_active,
                     is_verified=u.is_verified,
                     address=u.address,
                     profile_picture=u.profile_picture,
@@ -244,6 +246,7 @@ class AdminService:
             last_active=user.last_active,
             created_by=user.created_by,
             is_active=user.is_active,
+            is_suspended=not user.is_active,
             is_verified=user.is_verified,
             address=user.address,
             profile_picture=user.profile_picture,
@@ -337,17 +340,12 @@ class AdminService:
         cls,
         db: Session,
         user_id: int,
-        is_active: bool,
-        current_admin: User,
+        is_active: Optional[bool] = None,
+        current_admin: Optional[User] = None,
         status_text: Optional[str] = None,
+        is_suspended: Optional[bool] = None,
     ) -> AdminUserDetailResponse:
-        """Activate or ban a user, preventing self-deactivation."""
-        if user_id == current_admin.id and not is_active:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="You cannot deactivate or ban your own administrator account.",
-            )
-
+        """Activate, deactivate, or suspend a user."""
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(
@@ -355,11 +353,122 @@ class AdminService:
                 detail=f"User with ID {user_id} not found.",
             )
 
-        user.is_active = is_active
-        if status_text:
-            user.status = status_text
-        else:
+        if current_admin and user_id == current_admin.id and (is_active is False or is_suspended is True):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot deactivate or ban your own administrator account.",
+            )
+
+        if is_suspended is not None:
+            if is_suspended:
+                user.is_active = False
+                user.status = "INACTIVE"
+            else:
+                user.is_active = True
+                user.status = "ACTIVE"
+        elif is_active is not None:
+            user.is_active = is_active
             user.status = "ACTIVE" if is_active else "INACTIVE"
+
+        if status_text:
+            s_clean = status_text.strip().lower()
+            if s_clean in ("active", "approved", "enabled"):
+                user.is_active = True
+                user.status = "ACTIVE"
+            elif s_clean in ("inactive", "suspended", "banned", "disabled"):
+                user.is_active = False
+                user.status = "INACTIVE" if s_clean == "inactive" else "SUSPENDED"
+            else:
+                user.status = status_text.strip().upper()
+
+        db.commit()
+        db.refresh(user)
+        return cls.get_user_details(db, user_id)
+
+    @classmethod
+    def update_user(
+        cls,
+        db: Session,
+        user_id: int,
+        data: AdminUserUpdateRequest,
+        current_admin: Optional[User] = None,
+    ) -> AdminUserDetailResponse:
+        """Update user profile, status, active/inactive, or suspended state."""
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found.",
+            )
+
+        if current_admin and user_id == current_admin.id:
+            if data.is_suspended is True or data.is_active is False:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="You cannot deactivate or ban your own administrator account.",
+                )
+
+        # Handle active / inactive / suspended
+        if data.is_suspended is not None:
+            if data.is_suspended:
+                user.is_active = False
+                user.status = "INACTIVE"
+            else:
+                user.is_active = True
+                user.status = "ACTIVE"
+        elif data.is_active is not None:
+            user.is_active = data.is_active
+            user.status = "ACTIVE" if data.is_active else "INACTIVE"
+
+        if data.status is not None:
+            s_clean = data.status.strip().lower()
+            if s_clean in ("active", "approved", "enabled"):
+                user.is_active = True
+                user.status = "ACTIVE"
+            elif s_clean in ("inactive", "suspended", "banned", "disabled"):
+                user.is_active = False
+                user.status = "INACTIVE" if s_clean == "inactive" else "SUSPENDED"
+            else:
+                user.status = data.status.strip().upper()
+
+        if data.name is not None and data.name.strip():
+            user.name = data.name.strip()
+        if data.email is not None and data.email.strip():
+            clean_email = data.email.strip().lower()
+            if clean_email != user.email:
+                existing = db.query(User).filter(User.email == clean_email, User.id != user.id).first()
+                if existing:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A user with this email already exists.",
+                    )
+                user.email = clean_email
+        if data.phone is not None:
+            clean_phone = data.phone.strip() if data.phone else None
+            if clean_phone and clean_phone != user.phone:
+                existing_p = db.query(User).filter(User.phone == clean_phone, User.id != user.id).first()
+                if existing_p:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="A user with this phone number already exists.",
+                    )
+            user.phone = clean_phone
+        if data.role is not None:
+            user.role = data.role
+        if data.district is not None:
+            user.district = data.district
+        if data.regions is not None:
+            user.regions = data.regions
+        if data.city is not None:
+            user.city = data.city
+        if data.module_access is not None:
+            user.module_access = data.module_access
+        if data.send_email is not None:
+            user.send_email = data.send_email
+        if data.address is not None:
+            user.address = data.address
+        if data.profile_picture is not None:
+            user.profile_picture = data.profile_picture
 
         db.commit()
         db.refresh(user)

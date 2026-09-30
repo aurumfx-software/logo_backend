@@ -12,6 +12,7 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserRoleUpdateRequest,
     AdminUserStatusUpdateRequest,
+    AdminUserUpdateRequest,
 )
 from app.schemas.activity_log import ActivityLogListResponse, ActivityLogResponse
 from app.schemas.auth import GenericMessageResponse
@@ -198,6 +199,37 @@ def update_user_role(
     )
 
 
+@router.put(
+    "/users/{user_id}",
+    response_model=AdminUserDetailResponse,
+    summary="Update user details, active/inactive, or suspended status",
+    description="Updates user profile, role, status, is_active, and is_suspended flag.",
+)
+@router.patch(
+    "/users/{user_id}",
+    response_model=AdminUserDetailResponse,
+    summary="Partially update user details, active/inactive, or suspended status",
+)
+def update_user(
+    user_id: str,
+    data: AdminUserUpdateRequest,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminUserDetailResponse:
+    numeric_id = _parse_user_id(db, user_id)
+    return AdminService.update_user(
+        db=db,
+        user_id=numeric_id,
+        data=data,
+        current_admin=current_admin,
+    )
+
+
+@router.put(
+    "/users/{user_id}/status",
+    response_model=AdminUserDetailResponse,
+    summary="Activate or suspend user via PUT",
+)
 @router.patch(
     "/users/{user_id}/status",
     response_model=AdminUserDetailResponse,
@@ -217,6 +249,7 @@ def update_user_status(
         is_active=data.is_active,
         current_admin=current_admin,
         status_text=data.status,
+        is_suspended=data.is_suspended,
     )
 
 
