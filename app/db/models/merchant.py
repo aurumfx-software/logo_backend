@@ -43,7 +43,14 @@ class MerchantProfile(Base):
     photo_2 = Column(Text, nullable=True)
     photo_3 = Column(Text, nullable=True)
     photo_4 = Column(Text, nullable=True)
+    photo_5 = Column(Text, nullable=True)
+    photo_6 = Column(Text, nullable=True)
     merchant_photos = Column(JSON, default=list, nullable=True)
+
+    about = Column(Text, nullable=True)
+    rating = Column(Numeric(3, 2), default=0.0, nullable=True)
+    reviews_count = Column(Integer, default=0, nullable=True)
+    key_highlights = Column(JSON, default=list, nullable=True)
 
     video_url = Column(Text, nullable=True)
     merchant_videos = Column(JSON, default=list, nullable=True)
@@ -109,7 +116,7 @@ def sync_merchant_fields_and_user_codes(session, flush_context, instances):
         elif m.category and (not m.categories or len(m.categories) == 0):
             m.categories = [m.category]
 
-        photos = [p for p in [m.photo_1, m.photo_2, m.photo_3, m.photo_4] if p]
+        photos = [p for p in [m.photo_1, m.photo_2, m.photo_3, m.photo_4, m.photo_5, m.photo_6] if p]
         if photos and (not m.merchant_photos or len(m.merchant_photos) == 0):
             m.merchant_photos = photos
         elif m.merchant_photos and len(m.merchant_photos) > 0 and not m.photo_1:
@@ -120,6 +127,10 @@ def sync_merchant_fields_and_user_codes(session, flush_context, instances):
                 m.photo_3 = m.merchant_photos[2]
             if len(m.merchant_photos) > 3:
                 m.photo_4 = m.merchant_photos[3]
+            if len(m.merchant_photos) > 4:
+                m.photo_5 = m.merchant_photos[4]
+            if len(m.merchant_photos) > 5:
+                m.photo_6 = m.merchant_photos[5]
 
         if m.video_url and (not m.merchant_videos or len(m.merchant_videos) == 0):
             m.merchant_videos = [m.video_url]

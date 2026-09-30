@@ -83,6 +83,12 @@ class MerchantProfileResponse(BaseModel):
     photo_2: Optional[str] = None
     photo_3: Optional[str] = None
     photo_4: Optional[str] = None
+    photo_5: Optional[str] = None
+    photo_6: Optional[str] = None
+    about: Optional[str] = None
+    rating: Optional[float] = 0.0
+    reviews_count: Optional[int] = 0
+    key_highlights: Optional[List[str]] = []
     video_url: Optional[str] = None
     status: str = "PENDING"
     approval_status: str = "PENDING"
@@ -143,11 +149,22 @@ class MerchantOnboardingRequest(BaseModel):
     twitter: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://twitter.com/business"})
     youtube: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://youtube.com/@business"})
 
+    # About, Rating & Highlights
+    about: Optional[str] = None
+    description: Optional[str] = None
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+    key_highlights: Optional[List[str]] = Field(default_factory=list)
+    google_maps_url: Optional[str] = None
+
     # Media fields
     photo_1: Optional[str] = None
     photo_2: Optional[str] = None
     photo_3: Optional[str] = None
     photo_4: Optional[str] = None
+    photo_5: Optional[str] = None
+    photo_6: Optional[str] = None
+    photos: Optional[List[str]] = Field(default_factory=list)
     video_url: Optional[str] = None
     merchant_photos: Optional[List[str]] = Field(default_factory=list)
     verification_documents: Optional[List[str]] = Field(default_factory=list)
@@ -173,6 +190,21 @@ class MerchantOnboardingRequest(BaseModel):
             data["phone"] = phone_val
             data["phone_number"] = phone_val
             data["contact_number"] = phone_val
+
+            # Normalize about / description
+            if not data.get("about") and data.get("description"):
+                data["about"] = data["description"]
+            elif not data.get("description") and data.get("about"):
+                data["description"] = data["about"]
+
+            # Normalize photos
+            if data.get("photos") and not data.get("merchant_photos"):
+                data["merchant_photos"] = data["photos"]
+            elif data.get("merchant_photos") and not data.get("photos"):
+                data["photos"] = data["merchant_photos"]
+
+            if data.get("google_maps_url") and not data.get("location"):
+                data["location"] = data["google_maps_url"]
 
             # Normalize category
             if not data.get("category") and data.get("categories"):

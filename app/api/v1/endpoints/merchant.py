@@ -73,6 +73,19 @@ def register_merchant(
 
 
 @router.post(
+    "",
+    response_model=MerchantOnboardingResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create or onboard a merchant",
+    description="Registers/creates a new merchant profile with full business, location, rating, contact, social, and media details.",
+)
+@router.post(
+    "/create",
+    response_model=MerchantOnboardingResponse,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+@router.post(
     "/onboard",
     response_model=MerchantOnboardingResponse,
     status_code=status.HTTP_201_CREATED,
