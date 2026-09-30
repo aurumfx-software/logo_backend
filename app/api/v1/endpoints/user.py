@@ -107,7 +107,7 @@ def get_user_by_id(
 @router.post(
     "",
     response_model=StandardResponse[SafeUserResponse],
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
     summary="Create a new user",
     description="Creates a new user specifying all 17 fields: name, email, phone, password, role, district, regions, city, module_access, send_email, status, etc.",
 )

@@ -137,7 +137,7 @@ def list_users(
 @router.post(
     "/users",
     response_model=AdminUserDetailResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
     summary="Create a new user with modules, region, and access controls",
     description="Allows administrator to create a user account specifying role, district, regions, city, module_access list, send_email binary flag, status, and created_by.",
 )
