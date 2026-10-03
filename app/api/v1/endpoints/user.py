@@ -27,7 +27,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 )
 def list_users(
     search: Optional[str] = Query(None, description="Search keyword in user name, email, or phone"),
-    role: Optional[UserRole] = Query(None, description="Filter by user role: SUPER_ADMIN, ADMIN, FIELD_STAFF"),
+    role: Optional[str] = Query(None, description="Filter by user role: SUPER_ADMIN, ADMIN, FIELD_STAFF, PUBLIC_USER"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_verified: Optional[bool] = Query(None, description="Filter by email verification status"),
     page: int = Query(1, ge=1, description="Page number"),
@@ -39,7 +39,16 @@ def list_users(
     query = db.query(User)
 
     if role is not None:
-        query = query.filter(User.role == role)
+        role_clean = str(role).strip().upper().replace(" ", "_").replace("-", "_")
+        if role_clean in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
+            query = query.filter(or_(User.role == UserRole.FIELD_STAFF, User.role == "PUBLIC_USER"))
+        else:
+            try:
+                role_enum = UserRole(role_clean)
+                query = query.filter(User.role == role_enum)
+            except ValueError:
+                pass
+
 
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
@@ -107,10 +116,11 @@ def get_user_by_id(
 @router.post(
     "",
     response_model=StandardResponse[SafeUserResponse],
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_201_CREATED,
     summary="Create a new user",
     description="Creates a new user specifying all 17 fields: name, email, phone, password, role, district, regions, city, module_access, send_email, status, etc.",
 )
+
 def create_user(
     data: AdminUserCreateRequest,
     current_user: Optional[User] = Depends(get_current_user_optional),

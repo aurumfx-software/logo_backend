@@ -303,6 +303,19 @@ class MerchantRejectRequest(BaseModel):
         max_length=500,
         json_schema_extra={"example": "Invalid business license or contact details not reachable."},
     )
+    reason: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_rejection_reason(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            reason_val = data.get("rejection_reason") or data.get("reason") or "Application rejected by administration."
+            data["rejection_reason"] = str(reason_val).strip()
+            data["reason"] = str(reason_val).strip()
+        elif isinstance(data, str):
+            data = {"rejection_reason": data.strip(), "reason": data.strip()}
+        return data
+
 
 
 class LocationCountItem(BaseModel):

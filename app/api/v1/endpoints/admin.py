@@ -2,7 +2,7 @@ from typing import Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin, require_any_authenticated
+from app.api.deps import get_admin_user_flexible, require_admin, require_any_authenticated
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.admin import (
@@ -13,6 +13,11 @@ from app.schemas.admin import (
     AdminUserRoleUpdateRequest,
     AdminUserStatusUpdateRequest,
     AdminUserUpdateRequest,
+    DashboardChartsResponse,
+    RecentActivityResponse,
+    RegistrationRequestItem,
+    RegistrationRequestsResponse,
+    SingleRegistrationRequestResponse,
 )
 from app.schemas.activity_log import ActivityLogListResponse, ActivityLogResponse
 from app.schemas.auth import GenericMessageResponse
@@ -42,13 +47,46 @@ router = APIRouter(prefix="/admin", tags=["Admin Operations"])
     "/dashboard/stats",
     response_model=AdminDashboardStats,
     summary="Get admin dashboard statistics",
-    description="Returns high-level platform statistics including user counts, logo counts, views, favorites, pending items, and category distribution.",
+    description="Returns KPI platform stats: Total Merchants, Pending Approvals, Total Users, Active Staff, Total Searches, and growth % metrics.",
+)
+@router.get(
+    "/dashboard",
+    response_model=AdminDashboardStats,
+    summary="Get admin dashboard statistics (alias)",
 )
 def get_dashboard_stats(
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(get_admin_user_flexible),
     db: Session = Depends(get_db),
 ) -> AdminDashboardStats:
     return AdminService.get_dashboard_stats(db=db)
+
+
+@router.get(
+    "/dashboard/charts",
+    response_model=DashboardChartsResponse,
+    summary="Get dashboard charts & growth analytics",
+    description="Returns monthly time-series data for signup/search trends and merchant category distribution breakdown.",
+)
+def get_dashboard_charts(
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> DashboardChartsResponse:
+    return AdminService.get_dashboard_charts(db=db)
+
+
+@router.get(
+    "/dashboard/recent-activity",
+    response_model=RecentActivityResponse,
+    summary="Get recent activity feed",
+    description="Returns last 10 audit logs (onboardings, approvals, user signups).",
+)
+def get_dashboard_recent_activity(
+    limit: int = Query(10, ge=1, le=50),
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> RecentActivityResponse:
+    return AdminService.get_dashboard_recent_activity(db=db, limit=limit)
+
 
 
 # --- Logo Moderation & Approval ---
@@ -138,10 +176,11 @@ def list_users(
 @router.post(
     "/users",
     response_model=AdminUserDetailResponse,
-    status_code=status.HTTP_200_OK,
+    status_code=status.HTTP_201_CREATED,
     summary="Create a new user with modules, region, and access controls",
     description="Allows administrator to create a user account specifying role, district, regions, city, module_access list, send_email binary flag, status, and created_by.",
 )
+
 def create_user(
     data: AdminUserCreateRequest,
     current_admin: User = Depends(require_admin),
@@ -379,15 +418,59 @@ def list_all_merchants_admin(
     )
 
 
+# --- Merchant Registration Requests ---
+@router.get(
+    "/merchants/registration-requests",
+    response_model=RegistrationRequestsResponse,
+    summary="List merchant registration applications",
+    description="Returns list of onboarding requests filtered by status (pending, approved, rejected, all), with search (business_name, owner, city, phone) and location filters.",
+)
+def list_registration_requests(
+    status: Optional[str] = Query(None, description="Filter by status: pending, approved, rejected, all"),
+    search: Optional[str] = Query(None, description="Search keyword for business name, owner, city, phone, email"),
+    district: Optional[str] = Query(None, description="Filter by district"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    location: Optional[str] = Query(None, description="Filter by location/address"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> RegistrationRequestsResponse:
+    return AdminService.list_registration_requests(
+        db=db,
+        status=status,
+        search=search,
+        district=district,
+        city=city,
+        location=location,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/merchants/registration-requests/{request_id}",
+    response_model=RegistrationRequestItem,
+    summary="Get single merchant registration application details",
+    description="Returns full application profile details including photos, documents, and coordinates.",
+)
+def get_single_registration_request(
+    request_id: int,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> RegistrationRequestItem:
+    return AdminService.get_registration_request_by_id(db=db, request_id=request_id)
+
+
 @router.post(
     "/merchants/{merchant_id}/approve",
     response_model=StandardResponse[MerchantProfileResponse],
     summary="Approve a merchant application",
-    description="Approves a merchant profile, sets approval_status=APPROVED, is_verified=True, and sends an in-app notification to the merchant.",
+    description="Updates status to APPROVED/ACTIVE, logs approved_at timestamp & admin ID, sets is_verified = true, and triggers notification SMS/Email to merchant.",
 )
 def approve_merchant(
     merchant_id: int,
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(get_admin_user_flexible),
     db: Session = Depends(get_db),
 ) -> StandardResponse[MerchantProfileResponse]:
     approved = MerchantService.approve_merchant(
@@ -403,24 +486,26 @@ def approve_merchant(
     "/merchants/{merchant_id}/reject",
     response_model=StandardResponse[MerchantProfileResponse],
     summary="Reject a merchant application",
-    description="Rejects a merchant profile with a mandatory reason and sends an in-app notification to the merchant.",
+    description="Accepts { rejection_reason: string }, updates status to REJECTED, logs reason & admin ID, and triggers rejection notice to merchant.",
 )
 def reject_merchant(
     merchant_id: int,
-    data: MerchantRejectRequest,
-    current_admin: User = Depends(require_admin),
+    data: Optional[MerchantRejectRequest] = None,
+    current_admin: User = Depends(get_admin_user_flexible),
     db: Session = Depends(get_db),
 ) -> StandardResponse[MerchantProfileResponse]:
+    reason = (data.rejection_reason or data.reason) if data else "Application rejected by administration."
     rejected = MerchantService.reject_merchant(
         db=db,
         merchant_id=merchant_id,
-        reason=data.rejection_reason,
+        reason=reason,
         admin_user=current_admin,
     )
     return success_response(
         data=MerchantService.build_merchant_response(rejected),
         message=f"Merchant '{rejected.business_name}' rejected",
     )
+
 
 
 @router.put(

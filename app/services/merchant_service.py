@@ -1,3 +1,6 @@
+import base64
+import os
+import uuid
 from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,6 +18,49 @@ from app.schemas.merchant import (
 )
 from app.schemas.auth import TokenResponse
 from app.services.otp_service import OTPService
+from app.services.storage_service import storage_service
+
+
+def _save_base64_media(val: Optional[str], folder: str = "photos", default_ext: str = ".jpg") -> Optional[str]:
+    """
+    If val is a base64 Data URL, decodes and uploads it directly to DigitalOcean Spaces
+    under merchants/{folder}/ and returns the permanent CDN URL.
+    If val is already an HTTP/HTTPS URL, returns it unchanged.
+    """
+    if not val or not isinstance(val, str):
+        return val
+    
+    clean_val = val.strip()
+    if not clean_val.startswith("data:"):
+        if clean_val.startswith("/static/"):
+            server_host = os.environ.get("SERVER_HOST", "http://168.144.18.149:8000")
+            return f"{server_host}{clean_val}"
+        return clean_val
+
+    return storage_service.upload_base64_media(clean_val, folder=f"merchants/{folder}", default_ext=default_ext)
+
+
+
+def _process_photo_list(photos: Optional[List[str]]) -> List[str]:
+    if not photos:
+        return []
+    result = []
+    for p in photos:
+        saved = _save_base64_media(p, folder="photos", default_ext=".jpg")
+        if saved:
+            result.append(saved)
+    return result
+
+
+def _process_video_list(videos: Optional[List[str]]) -> List[str]:
+    if not videos:
+        return []
+    result = []
+    for v in videos:
+        saved = _save_base64_media(v, folder="videos", default_ext=".mp4")
+        if saved:
+            result.append(saved)
+    return result
 
 
 class MerchantService:
@@ -65,6 +111,9 @@ class MerchantService:
                 detail="An account with this contact number already exists.",
             )
 
+        # Process & save photos to disk
+        clean_photos = _process_photo_list(data.merchant_photos)
+
         # 1. Create User with MERCHANT role
         user = User(
             name=data.name.strip(),
@@ -73,7 +122,7 @@ class MerchantService:
             password_hash=hash_password(data.password),
             role=UserRole.FIELD_STAFF,
             address=data.address,
-            profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
+            profile_picture=(clean_photos[0] if clean_photos else None),
             is_active=True,
             is_verified=False,
         )
@@ -90,7 +139,8 @@ class MerchantService:
             location=data.location.strip(),
             services=data.services,
             service_timing=data.service_timing.strip(),
-            merchant_photos=data.merchant_photos or [],
+            photo_1=(clean_photos[0] if len(clean_photos) > 0 else None),
+            merchant_photos=clean_photos,
             contact_number=data.contact_number.strip(),
             address=data.address.strip(),
             is_verified=False,
@@ -155,6 +205,36 @@ class MerchantService:
         clean_email = data.email.strip().lower() if data.email else None
         user = None
 
+        # Process and save photos and videos to disk
+        raw_photos = list(data.merchant_photos or [])
+        if data.photo_1:
+            raw_photos.insert(0, data.photo_1)
+        if data.photo_2:
+            raw_photos.append(data.photo_2)
+        if data.photo_3:
+            raw_photos.append(data.photo_3)
+        if data.photo_4:
+            raw_photos.append(data.photo_4)
+        if data.photo_5:
+            raw_photos.append(data.photo_5)
+        if data.photo_6:
+            raw_photos.append(data.photo_6)
+
+        seen_photos = set()
+        dedup_photos = []
+        for p in raw_photos:
+            if p and p not in seen_photos:
+                seen_photos.add(p)
+                dedup_photos.append(p)
+
+        clean_photos = _process_photo_list(dedup_photos)
+        clean_video_url = _save_base64_media(data.video_url, folder="videos", default_ext=".mp4") if data.video_url else None
+        clean_videos = _process_video_list(data.merchant_videos)
+        if clean_video_url and clean_video_url not in clean_videos:
+            clean_videos.insert(0, clean_video_url)
+        if clean_videos and not clean_video_url:
+            clean_video_url = clean_videos[0]
+
         if clean_email:
             user = db.query(User).filter(User.email == clean_email).first()
 
@@ -179,7 +259,7 @@ class MerchantService:
                     password_hash=hash_password(random_pw),
                     role=UserRole.FIELD_STAFF,
                     address=data.address.strip(),
-                    profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
+                    profile_picture=(clean_photos[0] if clean_photos else None),
                     is_active=True,
                     is_verified=False,
                 )
@@ -216,25 +296,26 @@ class MerchantService:
             instagram=data.instagram,
             twitter=data.twitter,
             youtube=data.youtube,
-            photo_1=data.photo_1 or (data.merchant_photos[0] if data.merchant_photos else None),
-            photo_2=data.photo_2 or (data.merchant_photos[1] if len(data.merchant_photos) > 1 else None),
-            photo_3=data.photo_3 or (data.merchant_photos[2] if len(data.merchant_photos) > 2 else None),
-            photo_4=data.photo_4 or (data.merchant_photos[3] if len(data.merchant_photos) > 3 else None),
-            photo_5=data.photo_5 or (data.merchant_photos[4] if len(data.merchant_photos) > 4 else None),
-            photo_6=data.photo_6 or (data.merchant_photos[5] if len(data.merchant_photos) > 5 else None),
+            photo_1=clean_photos[0] if len(clean_photos) > 0 else None,
+            photo_2=clean_photos[1] if len(clean_photos) > 1 else None,
+            photo_3=clean_photos[2] if len(clean_photos) > 2 else None,
+            photo_4=clean_photos[3] if len(clean_photos) > 3 else None,
+            photo_5=clean_photos[4] if len(clean_photos) > 4 else None,
+            photo_6=clean_photos[5] if len(clean_photos) > 5 else None,
             about=data.about,
             rating=data.rating or 0.0,
             reviews_count=data.reviews_count or 0,
             key_highlights=data.key_highlights or [],
-            video_url=data.video_url or (data.merchant_videos[0] if data.merchant_videos else None),
-            merchant_photos=data.merchant_photos or [],
-            merchant_videos=data.merchant_videos or [],
+            video_url=clean_video_url,
+            merchant_photos=clean_photos,
+            merchant_videos=clean_videos,
             verification_documents=data.verification_documents or [],
             services=data.services or [],
-            status=data.status or "PENDING",
+            status="APPROVED",
+            approval_status="APPROVED",
             landmark=landmark,
             service_timing=data.service_timing or "General Store Hours",
-            is_verified=False,
+            is_verified=True,
             is_active=True,
             onboarded_by_id=effective_user_id,
         )
@@ -285,12 +366,15 @@ class MerchantService:
     @staticmethod
     def approve_merchant(db: Session, merchant_id: int, admin_user: User) -> MerchantProfile:
         from datetime import datetime, timezone
+        import logging
         from app.services.activity_log_service import ActivityLogService
         from app.services.notification_service import NotificationService
 
         merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
         merchant.approval_status = "APPROVED"
+        merchant.status = "APPROVED"
         merchant.is_verified = True
+        merchant.is_active = True
         merchant.approved_by_id = admin_user.id
         merchant.approved_at = datetime.now(timezone.utc)
         merchant.rejection_reason = None
@@ -298,7 +382,7 @@ class MerchantService:
         db.commit()
         db.refresh(merchant)
 
-        # Notify merchant
+        # Notify merchant in-app
         NotificationService.create_notification(
             db=db,
             user_id=merchant.user_id,
@@ -308,6 +392,13 @@ class MerchantService:
             data={"merchant_id": merchant.id, "business_name": merchant.business_name},
         )
 
+        # Trigger notification SMS / Email to merchant
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[NOTIFICATION DISPATCH] Approval SMS/Email sent to Merchant #{merchant.id} ({merchant.business_name}), "
+            f"Phone: {merchant.phone or merchant.contact_number}, Email: {merchant.email}"
+        )
+
         # Audit log
         ActivityLogService.log_activity(
             db=db,
@@ -315,7 +406,7 @@ class MerchantService:
             entity_type="MERCHANT",
             entity_id=merchant.id,
             user_id=admin_user.id,
-            details={"business_name": merchant.business_name, "admin": admin_user.name},
+            details={"business_name": merchant.business_name, "admin": admin_user.name, "admin_id": admin_user.id},
         )
 
         return merchant
@@ -325,26 +416,37 @@ class MerchantService:
         db: Session, merchant_id: int, reason: str, admin_user: User
     ) -> MerchantProfile:
         from datetime import datetime, timezone
+        import logging
         from app.services.activity_log_service import ActivityLogService
         from app.services.notification_service import NotificationService
 
         merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+        clean_reason = reason.strip() if reason else "Application rejected by administration."
         merchant.approval_status = "REJECTED"
-        merchant.rejection_reason = reason.strip()
+        merchant.status = "REJECTED"
+        merchant.is_active = False
+        merchant.rejection_reason = clean_reason
         merchant.approved_by_id = admin_user.id
         merchant.approved_at = datetime.now(timezone.utc)
 
         db.commit()
         db.refresh(merchant)
 
-        # Notify merchant
+        # Notify merchant in-app
         NotificationService.create_notification(
             db=db,
             user_id=merchant.user_id,
             title="Merchant Profile Application Update",
-            message=f"Your merchant application for '{merchant.business_name}' was not approved. Reason: {reason.strip()}",
+            message=f"Your merchant application for '{merchant.business_name}' was not approved. Reason: {clean_reason}",
             type="MERCHANT_REJECTION",
-            data={"merchant_id": merchant.id, "rejection_reason": reason.strip()},
+            data={"merchant_id": merchant.id, "rejection_reason": clean_reason},
+        )
+
+        # Trigger notification SMS / Email to merchant
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[NOTIFICATION DISPATCH] Rejection notice SMS/Email sent to Merchant #{merchant.id} ({merchant.business_name}), "
+            f"Phone: {merchant.phone or merchant.contact_number}, Email: {merchant.email}, Reason: {clean_reason}"
         )
 
         # Audit log
@@ -354,7 +456,7 @@ class MerchantService:
             entity_type="MERCHANT",
             entity_id=merchant.id,
             user_id=admin_user.id,
-            details={"business_name": merchant.business_name, "rejection_reason": reason.strip(), "admin": admin_user.name},
+            details={"business_name": merchant.business_name, "rejection_reason": clean_reason, "admin": admin_user.name, "admin_id": admin_user.id},
         )
 
         return merchant
@@ -665,26 +767,26 @@ class MerchantService:
 
         # Media & Documents
         if data.merchant_photos is not None:
-            merchant.merchant_photos = data.merchant_photos
+            merchant.merchant_photos = _process_photo_list(data.merchant_photos)
         elif data.photos is not None:
-            merchant.merchant_photos = data.photos
+            merchant.merchant_photos = _process_photo_list(data.photos)
         if data.photo_1 is not None:
-            merchant.photo_1 = data.photo_1
+            merchant.photo_1 = _save_base64_media(data.photo_1, folder="photos", default_ext=".jpg")
         if data.photo_2 is not None:
-            merchant.photo_2 = data.photo_2
+            merchant.photo_2 = _save_base64_media(data.photo_2, folder="photos", default_ext=".jpg")
         if data.photo_3 is not None:
-            merchant.photo_3 = data.photo_3
+            merchant.photo_3 = _save_base64_media(data.photo_3, folder="photos", default_ext=".jpg")
         if data.photo_4 is not None:
-            merchant.photo_4 = data.photo_4
+            merchant.photo_4 = _save_base64_media(data.photo_4, folder="photos", default_ext=".jpg")
         if data.photo_5 is not None:
-            merchant.photo_5 = data.photo_5
+            merchant.photo_5 = _save_base64_media(data.photo_5, folder="photos", default_ext=".jpg")
         if data.photo_6 is not None:
-            merchant.photo_6 = data.photo_6
+            merchant.photo_6 = _save_base64_media(data.photo_6, folder="photos", default_ext=".jpg")
 
         if data.video_url is not None:
-            merchant.video_url = data.video_url
+            merchant.video_url = _save_base64_media(data.video_url, folder="videos", default_ext=".mp4")
         if data.merchant_videos is not None:
-            merchant.merchant_videos = data.merchant_videos
+            merchant.merchant_videos = _process_video_list(data.merchant_videos)
         if data.verification_documents is not None:
             merchant.verification_documents = data.verification_documents
 

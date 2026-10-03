@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, JSON
+from sqlalchemy import Boolean, Column, DateTime, Enum, Float, Integer, String, Text, JSON
 from app.db.database import Base
 
 
@@ -8,17 +8,20 @@ class UserRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
     FIELD_STAFF = "FIELD_STAFF"
+    CUSTOMER = "CUSTOMER"
 
     @classmethod
     def _missing_(cls, value):
         if isinstance(value, str):
             norm = value.strip().upper().replace(" ", "_").replace("-", "_")
-            if norm in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
-                return cls.FIELD_STAFF
+            if norm in ("CUSTOMER", "CLIENT", "CONSUMER", "PUBLIC_USER", "PUBLICUSER", "USER"):
+                return cls.CUSTOMER
             if norm in ("SUPERADMIN", "SUPER_ADMIN"):
                 return cls.SUPER_ADMIN
             if norm in ("ADMIN", "ADMINISTRATOR"):
                 return cls.ADMIN
+            if norm in ("FIELDSTAFF", "FIELD_STAFF", "STAFF"):
+                return cls.FIELD_STAFF
         return None
 
 
@@ -45,8 +48,11 @@ class User(Base):
     status = Column(String(50), default="ACTIVE", nullable=False)
     last_active = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(50), nullable=True)
-    address = Column(String(500), nullable=True)
-    profile_picture = Column(String(500), nullable=True)
+    address = Column(Text, nullable=True)
+    location = Column(String(255), nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    profile_picture = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(
@@ -70,6 +76,8 @@ def get_role_prefix(role) -> str:
         return "SAD_"
     elif "ADMIN" in r_str:
         return "ADM_"
+    elif "CUSTOMER" in r_str or "CLIENT" in r_str or "USER" in r_str:
+        return "CST_"
     else:
         return "FLS_"
 

@@ -71,6 +71,27 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+        content={
+            "success": False,
+            "message": "Internal Server Error",
+            "detail": str(exc),
+            "data": None,
+            "errors": [str(exc)],
+        },
+    )
+
+
 # Ensure upload directories exist and mount static files
 os.makedirs(os.path.join("uploads", "avatars"), exist_ok=True)
 os.makedirs(os.path.join("uploads", "logos"), exist_ok=True)

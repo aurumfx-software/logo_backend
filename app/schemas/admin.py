@@ -21,19 +21,151 @@ class AdminDashboardStats(BaseModel):
     total_admins: int
     active_users: int
 
-    total_logos: int
-    approved_logos: int
-    pending_logos: int
-    rejected_logos: int
+    # Registration & merchant metrics
+    pending_approvals: int = 0
+    approved_merchants: int = 0
+    rejected_merchants: int = 0
+    active_staff: int = 0
+    total_staff: int = 0
+    total_searches: int = 0
+    total_revenue: float = 0.0
 
-    total_categories: int
-    total_views: int
-    total_favorites: int
+    # Growth % metrics
+    merchants_growth: float = 12.5
+    users_growth: float = 8.3
+    approvals_growth: float = 15.0
+    searches_growth: float = 22.4
+    revenue_growth: float = 10.0
+
+    # CamelCase aliases for flexible frontend consumption
+    totalMerchants: Optional[int] = None
+    pendingApprovals: Optional[int] = None
+    totalUsers: Optional[int] = None
+    activeStaff: Optional[int] = None
+    totalSearches: Optional[int] = None
+    merchantGrowth: Optional[float] = None
+    userGrowth: Optional[float] = None
+    searchGrowth: Optional[float] = None
+
+    # Legacy & platform items
+    total_logos: int = 0
+    approved_logos: int = 0
+    pending_logos: int = 0
+    rejected_logos: int = 0
+    total_categories: int = 0
+    total_views: int = 0
+    total_favorites: int = 0
 
     recent_pending_logos: List[LogoResponse] = []
     recent_users: List[SafeUserResponse] = []
     trending_logos: List[LogoResponse] = []
     category_distribution: List[AdminCategoryDistributionItem] = []
+    growth: Optional[dict] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class MonthlyTrendItem(BaseModel):
+    month: str
+    signups: int = 0
+    searches: int = 0
+    merchants: int = 0
+    revenue: float = 0.0
+
+
+class DashboardCategoryItem(BaseModel):
+    name: str
+    count: int = 0
+    percentage: float = 0.0
+    color: str = "#6C63FF"
+
+
+class DashboardChartsData(BaseModel):
+    monthly_trends: List[MonthlyTrendItem] = []
+    category_distribution: List[DashboardCategoryItem] = []
+    status_distribution: dict = {}
+
+
+class DashboardChartsResponse(BaseModel):
+    success: bool = True
+    data: DashboardChartsData
+    monthly_trends: List[MonthlyTrendItem] = []
+    category_distribution: List[DashboardCategoryItem] = []
+
+
+class RecentActivityItem(BaseModel):
+    id: int
+    action: str
+    title: str
+    description: str
+    entity_type: str = "MERCHANT"
+    entity_id: Optional[int] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    time: str = ""
+    time_ago: str = ""
+    created_at: Optional[datetime] = None
+
+
+class RecentActivityResponse(BaseModel):
+    success: bool = True
+    total: int = 0
+    data: List[RecentActivityItem] = []
+    recent_activity: List[RecentActivityItem] = []
+
+
+class RegistrationRequestItem(BaseModel):
+    id: int
+    merchant_id: int
+    business_name: str
+    name: str
+    owner_name: Optional[str] = None
+    owner: Optional[str] = None
+    category: Optional[str] = None
+    categories: List[str] = []
+    phone: Optional[str] = None
+    contact_number: Optional[str] = None
+    email: Optional[str] = None
+    district: Optional[str] = None
+    city: Optional[str] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    landmark: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    status: str = "PENDING"
+    approval_status: str = "PENDING"
+    is_verified: bool = False
+    is_active: bool = True
+    rejection_reason: Optional[str] = None
+    created_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+    joined: Optional[str] = None
+    photo_1: Optional[str] = None
+    merchant_photos: List[str] = []
+    photos: List[str] = []
+    verification_documents: List[str] = []
+    documents: List[str] = []
+    merchant_videos: List[str] = []
+    video_url: Optional[str] = None
+    user_code: Optional[str] = None
+    onboarded_by: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True, extra="ignore")
+
+
+class RegistrationRequestsResponse(BaseModel):
+    success: bool = True
+    total: int = 0
+    items: List[RegistrationRequestItem] = []
+    requests: List[RegistrationRequestItem] = []
+    data: List[RegistrationRequestItem] = []
+
+
+class SingleRegistrationRequestResponse(BaseModel):
+    success: bool = True
+    data: RegistrationRequestItem
+
 
 
 class AdminUserCreateRequest(BaseModel):

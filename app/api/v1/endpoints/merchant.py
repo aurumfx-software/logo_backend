@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    get_admin_user_flexible,
     get_current_user,
     get_current_user_optional,
     require_admin,
@@ -15,6 +16,7 @@ from app.api.deps import (
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
+from app.schemas.admin import RegistrationRequestItem, RegistrationRequestsResponse
 from app.schemas.auth import GenericMessageResponse, SafeUserResponse, TokenResponse
 from app.schemas.merchant import (
     LocationCountItem,
@@ -41,7 +43,12 @@ from app.schemas.response import (
     list_response,
     success_response,
 )
+from app.schemas.customer import NearbyMerchantsResponse
+from app.services.admin_service import AdminService
 from app.services.merchant_service import MerchantService
+from app.services.customer_service import CustomerService
+from app.services.storage_service import storage_service
+
 
 router = APIRouter(prefix="/merchants", tags=["Merchants"])
 
@@ -134,25 +141,9 @@ def upload_merchant_media(
     merchant_id: Optional[int] = Form(None, description="Optional merchant ID to attach media to"),
     db: Session = Depends(get_db),
 ) -> MerchantMediaUploadResponse:
-    photos_dir = os.path.join("uploads", "merchants", "photos")
-    videos_dir = os.path.join("uploads", "merchants", "videos")
-    documents_dir = os.path.join("uploads", "merchants", "documents")
-
-    os.makedirs(photos_dir, exist_ok=True)
-    os.makedirs(videos_dir, exist_ok=True)
-    os.makedirs(documents_dir, exist_ok=True)
-
     saved_photos: List[str] = []
     saved_videos: List[str] = []
     saved_docs: List[str] = []
-
-    def _save_file(file: UploadFile, target_dir: str, prefix_url: str) -> str:
-        ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        dest_path = os.path.join(target_dir, unique_name)
-        with open(dest_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        return f"{prefix_url}/{unique_name}"
 
     if photos:
         for p in photos:
@@ -164,7 +155,8 @@ def upload_merchant_media(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Photo {p.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}",
                 )
-            saved_photos.append(_save_file(p, photos_dir, "/static/merchants/photos"))
+            url = storage_service.upload_file(p, folder="merchants/photos")
+            saved_photos.append(url)
 
     if videos:
         for v in videos:
@@ -176,7 +168,8 @@ def upload_merchant_media(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Video {v.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}",
                 )
-            saved_videos.append(_save_file(v, videos_dir, "/static/merchants/videos"))
+            url = storage_service.upload_file(v, folder="merchants/videos")
+            saved_videos.append(url)
 
     if documents:
         for d in documents:
@@ -188,7 +181,8 @@ def upload_merchant_media(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Document {d.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_DOCUMENT_EXTENSIONS))}",
                 )
-            saved_docs.append(_save_file(d, documents_dir, "/static/merchants/documents"))
+            url = storage_service.upload_file(d, folder="merchants/documents")
+            saved_docs.append(url)
 
     if files:
         for f in files:
@@ -196,16 +190,17 @@ def upload_merchant_media(
                 continue
             ext = os.path.splitext(f.filename)[1].lower()
             if ext in ALLOWED_IMAGE_EXTENSIONS:
-                saved_photos.append(_save_file(f, photos_dir, "/static/merchants/photos"))
+                saved_photos.append(storage_service.upload_file(f, folder="merchants/photos"))
             elif ext in ALLOWED_VIDEO_EXTENSIONS:
-                saved_videos.append(_save_file(f, videos_dir, "/static/merchants/videos"))
+                saved_videos.append(storage_service.upload_file(f, folder="merchants/videos"))
             elif ext in ALLOWED_DOCUMENT_EXTENSIONS:
-                saved_docs.append(_save_file(f, documents_dir, "/static/merchants/documents"))
+                saved_docs.append(storage_service.upload_file(f, folder="merchants/documents"))
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"File {f.filename} has unsupported extension: {ext}",
                 )
+
 
     all_urls = saved_photos + saved_videos + saved_docs
 
@@ -325,15 +320,59 @@ def get_my_merchants(
     return [MerchantService.build_merchant_response(m) for m in merchants]
 
 
+# --- Merchant Registration Applications & Approvals ---
+@router.get(
+    "/registration-requests",
+    response_model=RegistrationRequestsResponse,
+    summary="List merchant registration applications",
+    description="Returns list of onboarding requests filtered by status (pending, approved, rejected, all), with search (business_name, owner, city, phone) and location filters.",
+)
+def list_registration_requests(
+    status: Optional[str] = Query(None, description="Filter by status: pending, approved, rejected, all"),
+    search: Optional[str] = Query(None, description="Search keyword for business name, owner, city, phone, email"),
+    district: Optional[str] = Query(None, description="Filter by district"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    location: Optional[str] = Query(None, description="Filter by location/address"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> RegistrationRequestsResponse:
+    return AdminService.list_registration_requests(
+        db=db,
+        status=status,
+        search=search,
+        district=district,
+        city=city,
+        location=location,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/registration-requests/{request_id}",
+    response_model=RegistrationRequestItem,
+    summary="Get single merchant registration application details",
+    description="Returns full application profile details including photos, documents, and coordinates.",
+)
+def get_single_registration_request(
+    request_id: int,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> RegistrationRequestItem:
+    return AdminService.get_registration_request_by_id(db=db, request_id=request_id)
+
+
 @router.post(
     "/{merchant_id}/approve",
     response_model=StandardResponse[MerchantProfileResponse],
     summary="Approve a merchant profile",
-    description="Approves a merchant profile, sets approval_status=APPROVED, is_verified=True, and notifies the merchant.",
+    description="Updates status to APPROVED/ACTIVE, logs approved_at timestamp & admin ID, sets is_verified = true, and triggers notification SMS/Email to merchant.",
 )
 def approve_merchant(
     merchant_id: int,
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(get_admin_user_flexible),
     db: Session = Depends(get_db),
 ) -> StandardResponse[MerchantProfileResponse]:
     approved = MerchantService.approve_merchant(
@@ -349,15 +388,15 @@ def approve_merchant(
     "/{merchant_id}/reject",
     response_model=StandardResponse[MerchantProfileResponse],
     summary="Reject a merchant profile",
-    description="Rejects a merchant profile with optional reason and notifies the merchant.",
+    description="Accepts { rejection_reason: string }, updates status to REJECTED, logs reason & admin ID, and triggers rejection notice to merchant.",
 )
 def reject_merchant(
     merchant_id: int,
     data: Optional[MerchantRejectRequest] = None,
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(get_admin_user_flexible),
     db: Session = Depends(get_db),
 ) -> StandardResponse[MerchantProfileResponse]:
-    reason = data.rejection_reason if data else "Application rejected by administration."
+    reason = (data.rejection_reason or data.reason) if data else "Application rejected by administration."
     rejected = MerchantService.reject_merchant(
         db=db,
         merchant_id=merchant_id,
@@ -368,6 +407,7 @@ def reject_merchant(
         data=MerchantService.build_merchant_response(rejected),
         message=f"Merchant '{rejected.business_name}' rejected",
     )
+
 
 
 @router.post(
@@ -385,9 +425,6 @@ def upload_merchant_photos(
         db=db, user_id=current_user.id
     )
 
-    upload_dir = os.path.join("uploads", "merchants")
-    os.makedirs(upload_dir, exist_ok=True)
-
     saved_urls = []
     for photo in photos:
         ext = os.path.splitext(photo.filename)[1].lower() if photo.filename else ""
@@ -396,13 +433,9 @@ def upload_merchant_photos(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"File {photo.filename} has an invalid format. Allowed: JPG, JPEG, PNG, WEBP.",
             )
+        url = storage_service.upload_file(photo, folder="merchants/photos")
+        saved_urls.append(url)
 
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        dest_path = os.path.join(upload_dir, unique_name)
-        with open(dest_path, "wb") as buffer:
-            shutil.copyfileobj(photo.file, buffer)
-
-        saved_urls.append(f"/static/merchants/{unique_name}")
 
     updated_merchant = MerchantService.add_photos(
         db=db, merchant=merchant, new_photo_urls=saved_urls
@@ -659,6 +692,41 @@ def get_discovery_metadata(
         data=MerchantDiscoveryMetaResponse(**meta),
         message="Discovery metadata retrieved successfully",
     )
+
+
+@router.get(
+    "/nearby",
+    response_model=NearbyMerchantsResponse,
+    summary="Discover nearby merchants based on location or coordinates",
+    description="Returns approved merchants sorted by proximity to provided location, district, city, or GPS coordinates.",
+)
+def get_nearby_merchants_public(
+    district: Optional[str] = Query(None, description="Filter by district"),
+    city: Optional[str] = Query(None, description="Filter by city/town"),
+    location: Optional[str] = Query(None, description="Filter by area / sub-location"),
+    latitude: Optional[float] = Query(None, description="GPS Latitude"),
+    longitude: Optional[float] = Query(None, description="GPS Longitude"),
+    radius_km: Optional[float] = Query(50.0, description="Search radius in kilometers"),
+    category: Optional[str] = Query(None, description="Category filter"),
+    search: Optional[str] = Query(None, description="Search keyword"),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> NearbyMerchantsResponse:
+    result = CustomerService.get_nearby_merchants(
+        db=db,
+        customer_user=current_user,
+        district=district,
+        city=city,
+        location=location,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        category=category,
+        search=search,
+        limit=limit,
+    )
+    return NearbyMerchantsResponse(**result)
 
 
 @router.get(
