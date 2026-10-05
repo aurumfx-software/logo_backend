@@ -457,6 +457,7 @@ def upload_merchant_photos(
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
+    status: Optional[str] = Query(None, description="Filter by status: approved, active, pending, rejected, all"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -467,6 +468,7 @@ def list_merchants(
         db=db,
         category=category,
         location=location,
+        status=status,
         skip=skip,
         limit=limit,
         current_user=current_user,

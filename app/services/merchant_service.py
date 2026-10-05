@@ -1,8 +1,9 @@
 import base64
 import os
 import uuid
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -144,6 +145,7 @@ class MerchantService:
             contact_number=data.contact_number.strip(),
             address=data.address.strip(),
             is_verified=False,
+            status="PENDING",
             approval_status="PENDING",
             is_active=True,
         )
@@ -272,7 +274,14 @@ class MerchantService:
         category_val = data.category or (categories[0] if categories else None)
         owner_val = data.owner or data.owner_name
 
-        merchant_user_code = data.user_code if (data.user_code and data.user_code.startswith("MRH")) else None
+        # Initial status: Newly onboarded merchants MUST start in PENDING state
+        # so they land in the Registration Requests section for administrator moderation.
+        init_status = "PENDING"
+        is_verified_val = False
+        if data.status and data.status.strip().upper() == "APPROVED":
+            if onboarded_by and getattr(onboarded_by, "role", None) == UserRole.ADMIN:
+                init_status = "APPROVED"
+                is_verified_val = True
 
         merchant = MerchantProfile(
             user_id=effective_user_id,
@@ -311,11 +320,11 @@ class MerchantService:
             merchant_videos=clean_videos,
             verification_documents=data.verification_documents or [],
             services=data.services or [],
-            status="APPROVED",
-            approval_status="APPROVED",
+            status=init_status,
+            approval_status=init_status,
             landmark=landmark,
             service_timing=data.service_timing or "General Store Hours",
-            is_verified=True,
+            is_verified=is_verified_val,
             is_active=True,
             onboarded_by_id=effective_user_id,
         )
@@ -836,6 +845,7 @@ class MerchantService:
         db: Session,
         category: Optional[str] = None,
         location: Optional[str] = None,
+        status: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
         current_user: Optional[User] = None,
@@ -858,6 +868,65 @@ class MerchantService:
 
         if location:
             query = query.filter(MerchantProfile.location.ilike(f"%{location}%"))
+
+        # Status filtering
+        if status and status.strip().lower() != "all":
+            st = status.strip().upper()
+            if st in ("APPROVED", "ACTIVE"):
+                query = query.filter(
+                    or_(
+                        MerchantProfile.approval_status.ilike("APPROVED"),
+                        MerchantProfile.status.in_(["APPROVED", "ACTIVE"]),
+                    )
+                )
+            elif st == "PENDING":
+                query = query.filter(
+                    or_(
+                        MerchantProfile.approval_status.ilike("PENDING"),
+                        MerchantProfile.status.ilike("PENDING"),
+                    )
+                )
+            elif st == "REJECTED":
+                query = query.filter(
+                    or_(
+                        MerchantProfile.approval_status.ilike("REJECTED"),
+                        MerchantProfile.status.ilike("REJECTED"),
+                    )
+                )
+            elif st == "SUSPENDED":
+                query = query.filter(
+                    or_(
+                        MerchantProfile.status.ilike("SUSPENDED"),
+                        MerchantProfile.approval_status.ilike("SUSPENDED"),
+                    )
+                )
+            elif st == "INACTIVE":
+                query = query.filter(
+                    or_(
+                        MerchantProfile.is_active == False,
+                        MerchantProfile.status.in_(["INACTIVE", "REJECTED", "SUSPENDED"]),
+                    )
+                )
+            else:
+                query = query.filter(
+                    or_(
+                        MerchantProfile.approval_status.ilike(f"%{st}%"),
+                        MerchantProfile.status.ilike(f"%{st}%"),
+                    )
+                )
+        elif not status:
+            # By default for general merchants listing: ONLY APPROVED / ACTIVE merchants
+            # Pending merchants belong in Registration Requests!
+            query = query.filter(
+                or_(
+                    MerchantProfile.approval_status.ilike("APPROVED"),
+                    MerchantProfile.status.in_(["APPROVED", "ACTIVE"]),
+                )
+            )
+
+        # CRITICAL: Always order by newest created first! (avasanam create cheyytha merchant listinte athyam varanam)
+        query = query.order_by(MerchantProfile.created_at.desc(), MerchantProfile.id.desc())
+
         results = query.offset(skip).limit(limit).all()
 
         if category:
