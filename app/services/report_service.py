@@ -1,7 +1,7 @@
 import csv
 import io
 from typing import Any, Dict, List, Optional
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.db.models.complaint import Complaint
@@ -40,7 +40,12 @@ class ReportService:
         category_distribution = []
         palette = ["#FF6B6B", "#FFB946", "#3B82F6", "#9C27B0", "#FF9800", "#10B981", "#607D8B"]
         for idx, cat in enumerate(categories):
-            m_count = db.query(MerchantProfile).filter(MerchantProfile.category_id == cat.id).count()
+            m_count = db.query(MerchantProfile).filter(
+                or_(
+                    MerchantProfile.category == cat.name,
+                    MerchantProfile.category.ilike(f"%{cat.name}%"),
+                )
+            ).count()
             category_distribution.append({
                 "name": cat.name,
                 "value": m_count if m_count > 0 else (idx + 1) * 35,
@@ -78,10 +83,10 @@ class ReportService:
                     m.id,
                     m.business_name or "N/A",
                     m.owner_name or "N/A",
-                    m.contact_phone or "N/A",
-                    m.contact_email or "N/A",
+                    m.phone or m.contact_number or "N/A",
+                    m.email or "N/A",
                     m.city or "N/A",
-                    m.category.name if m.category else "N/A",
+                    str(m.category) if m.category else "N/A",
                     "Approved" if m.is_verified else "Pending",
                     m.created_at.strftime("%Y-%m-%d %H:%M:%S") if m.created_at else "N/A",
                 ])
