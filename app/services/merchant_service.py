@@ -273,6 +273,11 @@ class MerchantService:
         effective_user_id = creator_user_id if creator_user_id else user.id
         category_val = data.category or (categories[0] if categories else None)
         owner_val = data.owner or data.owner_name
+        merchant_user_code = (
+            str(data.user_code).strip()
+            if (data.user_code and str(data.user_code).strip().startswith("MRH"))
+            else None
+        )
 
         # Initial status: Newly onboarded merchants MUST start in PENDING state
         # so they land in the Registration Requests section for administrator moderation.
