@@ -80,6 +80,12 @@ class ComplaintService:
     @staticmethod
     def update(db: Session, complaint_id: int, data: ComplaintUpdateRequest) -> Complaint:
         complaint = ComplaintService.get_by_id(db, complaint_id)
+        if data.user is not None:
+            complaint.user = data.user
+        if data.merchant is not None:
+            complaint.merchant = data.merchant
+        if data.user_phone is not None:
+            complaint.user_phone = data.user_phone
         if data.subject is not None:
             complaint.subject = data.subject
         if data.category is not None:

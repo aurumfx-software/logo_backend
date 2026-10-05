@@ -17,6 +17,9 @@ class ComplaintCreateRequest(BaseModel):
 
 
 class ComplaintUpdateRequest(BaseModel):
+    user: Optional[str] = None
+    merchant: Optional[str] = None
+    user_phone: Optional[str] = None
     subject: Optional[str] = None
     category: Optional[str] = None
     priority: Optional[str] = None
