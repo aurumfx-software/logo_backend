@@ -17,6 +17,13 @@ import app.db.models  # Ensure all SQLAlchemy models are registered
 async def lifespan(app: FastAPI):
     # Ensure all tables exist in PostgreSQL (pgAdmin) on application start
     Base.metadata.create_all(bind=engine)
+    try:
+        from app.db.database import SessionLocal
+        from app.services.seeder_service import seed_operations_data
+        with SessionLocal() as db:
+            seed_operations_data(db)
+    except Exception as e:
+        print(f"Warning during seed: {e}")
     yield
 
 
