@@ -460,7 +460,7 @@ def list_merchants(
     status: Optional[str] = Query(None, description="Filter by status: approved, active, pending, rejected, all"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(2000, ge=1, le=5000),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
