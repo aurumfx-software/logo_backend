@@ -13,10 +13,13 @@ class PromotionService:
         db: Session,
         status_filter: Optional[str] = None,
         search: Optional[str] = None,
+        placement: Optional[str] = None,
     ) -> List[Promotion]:
         query = db.query(Promotion)
         if status_filter and status_filter.lower() != "all":
             query = query.filter(Promotion.status == status_filter.lower())
+        if placement:
+            query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
         if search:
             s = f"%{search}%"
             query = query.filter(
@@ -62,6 +65,9 @@ class PromotionService:
             impressions=data.impressions or 0,
             clicks=data.clicks or 0,
             image_url=data.image_url,
+            video_url=data.video_url,
+            media_type=data.media_type or ("video" if data.video_url else "image"),
+            thumbnail_url=data.thumbnail_url,
             target_url=data.target_url,
         )
         db.add(promo)
@@ -94,6 +100,12 @@ class PromotionService:
             promo.clicks = data.clicks
         if data.image_url is not None:
             promo.image_url = data.image_url
+        if data.video_url is not None:
+            promo.video_url = data.video_url
+        if data.media_type is not None:
+            promo.media_type = data.media_type
+        if data.thumbnail_url is not None:
+            promo.thumbnail_url = data.thumbnail_url
         if data.target_url is not None:
             promo.target_url = data.target_url
 

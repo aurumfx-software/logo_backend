@@ -15,6 +15,9 @@ class PromotionCreateRequest(BaseModel):
     impressions: Optional[int] = 0
     clicks: Optional[int] = 0
     image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = "image"  # image, video
+    thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
 
 
@@ -30,6 +33,9 @@ class PromotionUpdateRequest(BaseModel):
     impressions: Optional[int] = None
     clicks: Optional[int] = None
     image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = None
+    thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
 
 
@@ -47,6 +53,9 @@ class PromotionResponse(BaseModel):
     impressions: int
     clicks: int
     image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = "image"
+    thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     created_at: Optional[datetime] = None
 

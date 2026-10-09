@@ -19,6 +19,9 @@ class Promotion(Base):
     impressions = Column(Integer, default=0, nullable=False)
     clicks = Column(Integer, default=0, nullable=False)
     image_url = Column(String(500), nullable=True)
+    video_url = Column(String(500), nullable=True)
+    media_type = Column(String(20), nullable=False, default="image")  # image, video
+    thumbnail_url = Column(String(500), nullable=True)
     target_url = Column(String(500), nullable=True)
 
     created_at = Column(
