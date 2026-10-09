@@ -14,10 +14,16 @@ class ComplaintService:
         db: Session,
         status_filter: Optional[str] = None,
         search: Optional[str] = None,
+        category: Optional[str] = None,
+        priority: Optional[str] = None,
     ) -> List[Complaint]:
         query = db.query(Complaint)
         if status_filter and status_filter.lower() != "all":
             query = query.filter(Complaint.status == status_filter.lower())
+        if category and category.lower() != "all":
+            query = query.filter(Complaint.category.ilike(f"%{category}%"))
+        if priority and priority.lower() != "all":
+            query = query.filter(Complaint.priority == priority.lower())
         if search:
             s = f"%{search}%"
             query = query.filter(
@@ -55,15 +61,29 @@ class ComplaintService:
         return complaint
 
     @staticmethod
-    def create(db: Session, data: ComplaintCreateRequest) -> Complaint:
-        count = db.query(Complaint).count() + 1
-        code = f"CMP-{count:03d}"
+    def create(
+        db: Session,
+        data: ComplaintCreateRequest,
+        fallback_user: Optional[str] = None,
+        fallback_email: Optional[str] = None,
+        fallback_phone: Optional[str] = None,
+    ) -> Complaint:
+        last_complaint = db.query(Complaint).order_by(Complaint.id.desc()).first()
+        next_num = (last_complaint.id + 1) if last_complaint else 1
+        code = f"CMP-{next_num:03d}"
+        while db.query(Complaint).filter(Complaint.complaint_code == code).first():
+            next_num += 1
+            code = f"CMP-{next_num:03d}"
+
+        user_name = data.user or fallback_user or "Customer"
+        user_email = data.user_email or fallback_email
+        user_phone = data.user_phone or fallback_phone
 
         complaint = Complaint(
             complaint_code=code,
-            user=data.user,
-            user_email=data.user_email,
-            user_phone=data.user_phone,
+            user=user_name,
+            user_email=user_email,
+            user_phone=user_phone,
             merchant=data.merchant,
             subject=data.subject,
             category=data.category or "Service Quality",
@@ -82,10 +102,12 @@ class ComplaintService:
         complaint = ComplaintService.get_by_id(db, complaint_id)
         if data.user is not None:
             complaint.user = data.user
-        if data.merchant is not None:
-            complaint.merchant = data.merchant
+        if data.user_email is not None:
+            complaint.user_email = data.user_email
         if data.user_phone is not None:
             complaint.user_phone = data.user_phone
+        if data.merchant is not None:
+            complaint.merchant = data.merchant
         if data.subject is not None:
             complaint.subject = data.subject
         if data.category is not None:
@@ -112,6 +134,18 @@ class ComplaintService:
         complaint.resolved_at = datetime.now(timezone.utc)
         if data.admin_response:
             complaint.admin_response = data.admin_response
+        db.commit()
+        db.refresh(complaint)
+        return complaint
+
+    @staticmethod
+    def update_status(db: Session, complaint_id: int, status_val: str, admin_response: Optional[str] = None) -> Complaint:
+        complaint = ComplaintService.get_by_id(db, complaint_id)
+        complaint.status = status_val.lower()
+        if complaint.status == "resolved" and not complaint.resolved_at:
+            complaint.resolved_at = datetime.now(timezone.utc)
+        if admin_response:
+            complaint.admin_response = admin_response
         db.commit()
         db.refresh(complaint)
         return complaint
