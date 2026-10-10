@@ -19,6 +19,7 @@ class PromotionCreateRequest(BaseModel):
     media_type: Optional[str] = "image"  # image, video
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
+    description: Optional[str] = None
 
 
 class PromotionUpdateRequest(BaseModel):
@@ -37,6 +38,7 @@ class PromotionUpdateRequest(BaseModel):
     media_type: Optional[str] = None
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
+    description: Optional[str] = None
 
 
 class PromotionResponse(BaseModel):
@@ -57,6 +59,7 @@ class PromotionResponse(BaseModel):
     media_type: Optional[str] = "image"
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
+    description: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:

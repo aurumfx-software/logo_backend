@@ -23,6 +23,7 @@ class Promotion(Base):
     media_type = Column(String(20), nullable=False, default="image")  # image, video
     thumbnail_url = Column(String(500), nullable=True)
     target_url = Column(String(500), nullable=True)
+    description = Column(Text, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

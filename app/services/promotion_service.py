@@ -49,14 +49,12 @@ class PromotionService:
         code = f"BNR-{count:03d}"
 
         placement_str = data.placement or "Home Top"
-        if data.category and data.category not in placement_str:
-            placement_str = f"{placement_str} ({data.category})"
 
         promo = Promotion(
             promo_code=code,
             title=data.title,
             category=data.category,
-            type=data.type or "Featured",
+            type=data.type or ("Text Carousel" if "Moving" in placement_str or "Ticker" in placement_str else "Featured"),
             placement=placement_str,
             location=data.location,
             start_date=data.start_date or "2026-10-01",
@@ -69,6 +67,7 @@ class PromotionService:
             media_type=data.media_type or ("video" if data.video_url else "image"),
             thumbnail_url=data.thumbnail_url,
             target_url=data.target_url,
+            description=data.description,
         )
         db.add(promo)
         db.commit()
@@ -108,6 +107,8 @@ class PromotionService:
             promo.thumbnail_url = data.thumbnail_url
         if data.target_url is not None:
             promo.target_url = data.target_url
+        if data.description is not None:
+            promo.description = data.description
 
         db.commit()
         db.refresh(promo)
