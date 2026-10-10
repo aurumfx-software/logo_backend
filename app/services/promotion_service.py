@@ -1,6 +1,6 @@
 from typing import List, Optional
 from fastapi import HTTPException, status
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from app.db.models.promotion import Promotion
@@ -44,9 +44,13 @@ class PromotionService:
 
     @staticmethod
     def create(db: Session, data: PromotionCreateRequest) -> Promotion:
-        # Generate promo_code
-        count = db.query(Promotion).count() + 1
-        code = f"BNR-{count:03d}"
+        # Generate unique promo_code
+        max_id = db.query(func.max(Promotion.id)).scalar() or 0
+        counter = max_id + 1
+        code = f"BNR-{counter:03d}"
+        while db.query(Promotion).filter(Promotion.promo_code == code).first():
+            counter += 1
+            code = f"BNR-{counter:03d}"
 
         placement_str = data.placement or "Home Top"
 
