@@ -14,12 +14,13 @@ router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
 @router.get("/overview", response_model=StandardResponse[ReportOverviewResponse], summary="Get overall reports data & monthly trends")
 def get_reports_overview(
+    year: Optional[int] = Query(None, description="Filter monthly data by specific year (e.g. 2026, 2025, 2024). Default is 2026. Use 0 for all years combined."),
     from_date: Optional[str] = Query(None, description="Start date YYYY-MM-DD"),
     to_date: Optional[str] = Query(None, description="End date YYYY-MM-DD"),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user_flexible),
 ):
-    overview = ReportService.get_overview(db, from_date=from_date, to_date=to_date)
+    overview = ReportService.get_overview(db, year=year, from_date=from_date, to_date=to_date)
     return success_response(
         data=ReportOverviewResponse(**overview),
         message="Reports overview generated successfully",
@@ -29,10 +30,11 @@ def get_reports_overview(
 @router.get("/export/csv", summary="Export report data as CSV")
 def export_csv_report(
     type: str = Query("merchants", description="Report type (merchants, users, transactions)"),
+    year: Optional[int] = Query(None, description="Filter CSV by specific year"),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user_flexible),
 ):
-    csv_content = ReportService.generate_csv_report(db, type)
+    csv_content = ReportService.generate_csv_report(db, type, year=year)
     filename = f"logo_{type}_report.csv"
     return Response(
         content=csv_content,

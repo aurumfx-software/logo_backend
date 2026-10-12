@@ -1,6 +1,8 @@
 import base64
 import os
 import uuid
+import re
+import difflib
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy import or_
@@ -613,17 +615,60 @@ class MerchantService:
 
         if query:
             kw = query.strip().lower()
-            filtered = [
-                m for m in filtered
-                if kw in m.business_name.lower()
-                or (m.owner_name and kw in m.owner_name.lower())
-                or kw in m.location.lower()
-                or (m.city and kw in m.city.lower())
-                or (m.district and kw in m.district.lower())
-                or kw in m.address.lower()
-                or any(kw in str(s).lower() for s in (m.services or []))
-                or any(kw in str(c).lower() for c in (m.categories or []))
-            ]
+            tokens = [t for t in re.sub(r'[^a-z0-9\s]', ' ', kw).split() if t]
+
+            synonyms_map = {
+                'resturant': ['restaurant', 'food', 'dining', 'hotel'],
+                'restraunt': ['restaurant', 'food', 'dining'],
+                'hotel': ['hotel', 'restaurant', 'food', 'dining'],
+                'hosptial': ['hospital', 'clinic', 'medical'],
+                'clinic': ['clinic', 'hospital', 'doctor', 'medical'],
+                'doctor': ['doctor', 'clinic', 'hospital', 'medical'],
+                'bakry': ['bakery', 'cake', 'bakes', 'food'],
+                'supermarkt': ['supermarket', 'grocery', 'mart'],
+                'supermart': ['supermarket', 'grocery', 'mart'],
+                'jewlery': ['jewellery', 'jewelry', 'gold'],
+                'calicut': ['kozhikode', 'calicut'],
+                'cochin': ['kochi', 'ernakulam', 'cochin'],
+                'trivandrum': ['thiruvananthapuram', 'trivandrum'],
+                'alleppey': ['alappuzha', 'alleppey'],
+                'cannanore': ['kannur', 'cannanore'],
+                'palghat': ['palakkad', 'palghat'],
+                'quilon': ['kollam', 'quilon'],
+                'trichur': ['thrissur', 'trichur'],
+            }
+
+            expanded_keywords = {kw}
+            for t in tokens:
+                expanded_keywords.add(t)
+                if t in synonyms_map:
+                    expanded_keywords.update(synonyms_map[t])
+
+            def matches_merchant(m):
+                m_text = " ".join([
+                    m.business_name or "",
+                    m.owner_name or "",
+                    m.location or "",
+                    m.city or "",
+                    m.district or "",
+                    m.address or "",
+                    " ".join(str(s) for s in (m.services or [])),
+                    " ".join(str(c) for c in (m.categories or [])),
+                ]).lower()
+
+                # If any expanded keyword matches
+                if any(k in m_text for k in expanded_keywords):
+                    return True
+
+                # Difflib close match for typos on individual words
+                m_words = m_text.split()
+                for t in tokens:
+                    if len(t) >= 4 and difflib.get_close_matches(t, m_words, n=1, cutoff=0.75):
+                        return True
+
+                return False
+
+            filtered = [m for m in filtered if matches_merchant(m)]
 
         total = len(filtered)
         paginated = filtered[skip : skip + limit]

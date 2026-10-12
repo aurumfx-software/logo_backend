@@ -27,9 +27,9 @@ router = APIRouter(prefix="/content", tags=["Content Management"])
 
 # --- App Policies (Terms, Privacy, etc.) ---
 @router.get("/policies", response_model=StandardListResponse[AppPolicyResponse], summary="List all static policies")
+@router.get("/public/policies", response_model=StandardListResponse[AppPolicyResponse], summary="List all static policies (public)")
 def list_policies(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user_flexible),
 ):
     policies = ContentService.get_all_policies(db)
     return list_response(
@@ -40,10 +40,10 @@ def list_policies(
 
 
 @router.get("/policies/{key}", response_model=StandardResponse[AppPolicyResponse], summary="Get policy by key")
+@router.get("/public/policies/{key}", response_model=StandardResponse[AppPolicyResponse], summary="Get policy by key (public)")
 def get_policy(
     key: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user_flexible),
 ):
     policy = ContentService.get_policy(db, key)
     return success_response(
