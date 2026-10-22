@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     SPACES_ACCESS_KEY: str = ""
     SPACES_SECRET_KEY: str = ""
 
+    # Wallet / cashback (percent of sale amount)
+    WALLET_CURRENCY: str = "INR"
+    CASHBACK_TOTAL_PERCENT: float = 5.0
+    CASHBACK_USER_PERCENT: float = 3.0
+    CASHBACK_COMPANY_PERCENT: float = 2.0
+    SALE_QR_DEFAULT_EXPIRE_MINUTES: int = 30
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

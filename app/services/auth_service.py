@@ -23,6 +23,7 @@ from app.schemas.auth import (
     UserRegisterRequest,
 )
 from app.services.otp_service import OTPService
+from app.services.wallet_service import WalletService
 
 
 class AuthService:
@@ -75,6 +76,8 @@ class AuthService:
             is_verified=False,
         )
         db.add(new_user)
+        db.flush()
+        WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
         return new_user
