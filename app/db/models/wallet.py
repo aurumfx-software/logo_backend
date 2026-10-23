@@ -182,3 +182,48 @@ class MerchantSaleQR(Base):
     merchant_profile = relationship("MerchantProfile", backref="sale_qrs")
     merchant_user = relationship("User", foreign_keys=[merchant_user_id])
     redeemed_by = relationship("User", foreign_keys=[redeemed_by_user_id])
+
+
+class CompanyPlatformWalletLedger(Base):
+    """Dedicated table for Company Platform Wallet commissions (2%) and audit tracking."""
+
+    __tablename__ = "company_platform_wallet_ledger"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    transaction_type = Column(String(50), default="PLATFORM_FEE", nullable=False, index=True)
+    direction = Column(String(10), default="CREDIT", nullable=False)
+
+    # Financial amounts
+    amount = Column(Numeric(18, 2), nullable=False)  # 2% platform fee
+    currency = Column(String(3), default="INR", nullable=False)
+    balance_after = Column(Numeric(18, 2), nullable=True)
+
+    # Sale & QR Context
+    sale_qr_id = Column(Integer, ForeignKey("merchant_sale_qrs.id", ondelete="SET NULL"), nullable=True, index=True)
+    qr_token = Column(String(36), nullable=True, index=True)
+    sale_amount = Column(Numeric(18, 2), nullable=True)  # Gross bill amount
+    platform_fee_percent = Column(Numeric(5, 2), nullable=True)  # e.g. 2.00%
+    customer_cashback_amount = Column(Numeric(18, 2), nullable=True)
+    merchant_deducted_amount = Column(Numeric(18, 2), nullable=True)
+
+    # Store / Counterparty Info
+    merchant_id = Column(Integer, ForeignKey("merchant_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+    merchant_name = Column(String(255), nullable=True)
+    customer_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    customer_name = Column(String(255), nullable=True)
+    customer_phone = Column(String(30), nullable=True)
+
+    # Audit reference & Notes
+    reference_id = Column(String(64), nullable=True, index=True)
+    note = Column(String(500), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    sale_qr = relationship("MerchantSaleQR", foreign_keys=[sale_qr_id])
+    merchant = relationship("MerchantProfile", foreign_keys=[merchant_id])
+    customer = relationship("User", foreign_keys=[customer_user_id])
+

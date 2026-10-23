@@ -18,6 +18,7 @@ from app.db.models.wallet import (
     WalletTransaction,
     WalletTransactionType,
     WalletType,
+    CompanyPlatformWalletLedger,
 )
 from app.schemas.wallet import (
     SaleQRCreateRequest,
@@ -531,6 +532,30 @@ class WalletService:
             note=f"{company_rate_str} platform fee from {merchant_name} on sale ₹{sale_amount}",
         )
 
+        # Record directly into dedicated Company Platform Wallet Ledger table
+        customer_display_name = getattr(customer, "name", None) or getattr(customer, "phone", "Customer")
+        co_ledger_entry = CompanyPlatformWalletLedger(
+            transaction_type="PLATFORM_FEE",
+            direction="CREDIT",
+            amount=company_fee,
+            currency=getattr(settings, "WALLET_CURRENCY", "INR"),
+            balance_after=locked_company.balance,
+            sale_qr_id=sale_qr.id,
+            qr_token=sale_qr.token,
+            sale_amount=sale_amount,
+            platform_fee_percent=sale_qr.company_fee_percent,
+            customer_cashback_amount=user_cb,
+            merchant_deducted_amount=merchant_debit,
+            merchant_id=sale_qr.merchant_profile_id,
+            merchant_name=merchant_name,
+            customer_user_id=customer.id,
+            customer_name=customer_display_name,
+            customer_phone=customer.phone,
+            reference_id=group_id,
+            note=f"{company_rate_str} platform fee from {merchant_name} on sale ₹{sale_amount}",
+        )
+        db.add(co_ledger_entry)
+
         sale_qr.status = SaleQRStatus.REDEEMED
         sale_qr.redeemed_by_user_id = customer.id
         sale_qr.redeemed_at = now
@@ -597,6 +622,97 @@ class WalletService:
             note=note or f"Admin {operation}",
         )
 
+        if target_wallet.wallet_type == WalletType.COMPANY:
+            co_adj_entry = CompanyPlatformWalletLedger(
+                transaction_type="ADMIN_ADJUSTMENT",
+                direction=direction.value if hasattr(direction, "value") else str(direction),
+                amount=amount,
+                currency=getattr(settings, "WALLET_CURRENCY", "INR"),
+                balance_after=locked.balance,
+                reference_id=group_id,
+                note=note or f"Admin {operation}",
+            )
+            db.add(co_adj_entry)
+
         db.commit()
         db.refresh(locked)
         return WalletService.wallet_to_response(locked), group_id, txn_type
+
+    @staticmethod
+    def get_company_wallet_overview(db: Session) -> dict:
+        company_wallet = WalletService.get_company_wallet(db)
+
+        # Aggregate stats from MerchantSaleQR
+        redeemed_qrs = (
+            db.query(MerchantSaleQR)
+            .filter(MerchantSaleQR.status == SaleQRStatus.REDEEMED)
+            .all()
+        )
+        total_sales_volume = sum((qr.sale_amount for qr in redeemed_qrs), Decimal("0.00"))
+        total_cashback_given = sum((qr.user_cashback_amount or Decimal("0.00") for qr in redeemed_qrs), Decimal("0.00"))
+        total_company_fee = sum((qr.company_fee_amount or Decimal("0.00") for qr in redeemed_qrs), Decimal("0.00"))
+
+        # 1. Read from dedicated CompanyPlatformWalletLedger first
+        dedicated_entries = (
+            db.query(CompanyPlatformWalletLedger)
+            .order_by(CompanyPlatformWalletLedger.created_at.desc())
+            .limit(100)
+            .all()
+        )
+
+        items = []
+        if dedicated_entries:
+            for de in dedicated_entries:
+                items.append({
+                    "id": de.id,
+                    "direction": de.direction,
+                    "amount": float(de.amount),
+                    "balance_after": float(de.balance_after) if de.balance_after is not None else None,
+                    "note": de.note,
+                    "created_at": de.created_at.isoformat() if de.created_at else None,
+                    "reference_id": de.reference_id,
+                    "description": de.note or f"{de.platform_fee_percent or 2.00}% Platform Fee on sale ₹{de.sale_amount or '—'}",
+                    "merchant_name": de.merchant_name,
+                    "customer_name": de.customer_name,
+                    "customer_phone": de.customer_phone,
+                    "sale_amount": float(de.sale_amount) if de.sale_amount is not None else None,
+                })
+        else:
+            # Fallback to wallet_ledger_entries if dedicated table hasn't been backfilled yet
+            entries = (
+                db.query(WalletLedgerEntry)
+                .filter(WalletLedgerEntry.wallet_id == company_wallet.id)
+                .order_by(WalletLedgerEntry.created_at.desc())
+                .limit(100)
+                .all()
+            )
+            for e in entries:
+                txn = e.transaction
+                merchant_name = None
+                if txn and txn.reference_id:
+                    sq = db.query(MerchantSaleQR).filter(MerchantSaleQR.token == txn.reference_id).first()
+                    if sq and sq.merchant_profile:
+                        merchant_name = sq.merchant_profile.business_name
+                items.append({
+                    "id": e.id,
+                    "direction": e.direction.value if hasattr(e.direction, "value") else str(e.direction),
+                    "amount": float(e.amount),
+                    "balance_after": float(e.balance_after) if e.balance_after is not None else None,
+                    "note": e.note,
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                    "reference_id": txn.reference_id if txn else None,
+                    "description": txn.description if txn else None,
+                    "merchant_name": merchant_name,
+                })
+
+        return {
+            "success": True,
+            "balance": float(company_wallet.balance),
+            "currency": company_wallet.currency,
+            "total_platform_revenue": float(total_company_fee),
+            "total_sales_volume": float(total_sales_volume),
+            "total_cashback_distributed": float(total_cashback_given),
+            "total_redemptions_count": len(redeemed_qrs),
+            "recent_transactions": items,
+        }
+
