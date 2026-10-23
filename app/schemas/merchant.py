@@ -106,6 +106,11 @@ class MerchantProfileResponse(BaseModel):
     creator: Optional[MerchantCreatorSummary] = None
     created_by: Optional[MerchantCreatorSummary] = None
     is_active: bool = True
+    can_create_promotions: bool = False
+    promotion_access: bool = False
+    cashback_percent: Optional[float] = 3.0
+    company_fee_percent: Optional[float] = 2.0
+    total_deduction_percent: Optional[float] = 5.0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -174,6 +179,9 @@ class MerchantOnboardingRequest(BaseModel):
     status: Optional[str] = Field("PENDING", max_length=50)
     services: Optional[List[str]] = Field(default_factory=list)
     service_timing: Optional[str] = Field("General Store Hours")
+    cashback_percent: Optional[float] = Field(3.0)
+    company_fee_percent: Optional[float] = Field(2.0)
+    total_deduction_percent: Optional[float] = Field(5.0)
 
     @model_validator(mode="before")
     @classmethod
@@ -407,6 +415,12 @@ class MerchantUpdateRequest(BaseModel):
     services: Optional[List[str]] = None
     service_timing: Optional[str] = None
     status: Optional[str] = None
+    approval_status: Optional[str] = None
+    can_create_promotions: Optional[bool] = None
+    promotion_access: Optional[bool] = None
+    cashback_percent: Optional[float] = None
+    company_fee_percent: Optional[float] = None
+    total_deduction_percent: Optional[float] = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -451,4 +465,31 @@ class MerchantVerifyOTPLoginRequest(BaseModel):
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
+
+
+class PromoAccessRequestCreate(BaseModel):
+    merchant_id: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class PromoAccessRequestResponse(BaseModel):
+    id: int
+    merchant_id: int
+    user_id: Optional[int] = None
+    merchant_name: str
+    owner_name: Optional[str] = None
+    phone: Optional[str] = None
+    category: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    reason: Optional[str] = None
+    status: str = "PENDING"
+    rejection_reason: Optional[str] = None
+    reviewed_by_id: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 

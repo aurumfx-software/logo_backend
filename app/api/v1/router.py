@@ -15,6 +15,8 @@ from app.api.v1.endpoints import (
     promotion,
     report,
     user,
+    product,
+    wallet,
 )
 
 api_router = APIRouter()
@@ -22,6 +24,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(customer.router)
+api_router.include_router(product.router)
 api_router.include_router(user.router)
 api_router.include_router(merchant.router)
 api_router.include_router(category.router)
@@ -35,3 +38,4 @@ api_router.include_router(complaint.router)
 api_router.include_router(content.router)
 api_router.include_router(geography.router)
 api_router.include_router(report.router)
+api_router.include_router(wallet.router)

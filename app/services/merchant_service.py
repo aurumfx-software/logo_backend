@@ -4,6 +4,7 @@ import uuid
 import re
 import difflib
 from typing import Any, Dict, List, Optional, Tuple
+from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -66,8 +67,112 @@ def _process_video_list(videos: Optional[List[str]]) -> List[str]:
     return result
 
 
+KERALA_DISTRICT_ALIASES = {
+    "thiruvananthapuram": [
+        "thiruvananthapuram", "thiruvanathapuram", "thiruvanandapuram", "trivandrum", "trivandram",
+        "tvm", "nedumangad", "neyyattinkara", "attingal", "varkala", "kovalam", "kazhakkoottam",
+        "pattom", "parassala", "poovar", "kattakkada", "vithura", "aryanad", "vellanad", "kilimanoor",
+        "cheeranikkara", "kollamkavu", "valicode", "technopark", "statue", "palayam", "thampanoor"
+    ],
+    "kollam": [
+        "kollam", "quilon", "karunagappally", "punalur", "kottarakkara", "paravur", "chathannoor", "kundara"
+    ],
+    "pathanamthitta": [
+        "pathanamthitta", "pathanamtitta", "pta", "adoor", "thiruvalla", "ranni", "pandalam", "kozhencherry", "konni"
+    ],
+    "alappuzha": [
+        "alappuzha", "alapuzha", "alleppey", "alleppy", "alp", "kayamkulam", "cherthala", "mavelikkara", "haripad", "ambalappuzha", "kandalloor"
+    ],
+    "kottayam": [
+        "kottayam", "ktm", "changanassery", "changanasseri", "pala", "ettumanoor", "vaikom", "kanjirappally"
+    ],
+    "idukki": [
+        "idukki", "iduki", "munnar", "thodupuzha", "kattappana", "adimali", "nedumkandam", "peermade"
+    ],
+    "ernakulam": [
+        "ernakulam", "ernaklam", "ernkulam", "kochi", "cochin", "kochii", "edappally", "edapally", "palarivattom",
+        "kaloor", "aluva", "aluvva", "angamaly", "fort kochi", "vyttila", "kakkanad", "tripunithura",
+        "kadavanthra", "panampilly", "marine drive", "thevara", "kalamassery", "perumbavoor", "muvattupuzha"
+    ],
+    "thrissur": [
+        "thrissur", "trichur", "trissur", "thrissr", "thrisur", "guruvayur", "chalakudy", "kodungallur",
+        "irinjalakuda", "irinjallakuda", "kunnamkulam", "wadakkanchery", "athirappilly", "kechery"
+    ],
+    "palakkad": [
+        "palakkad", "palghat", "ottapalam", "shoranur", "shornur", "mannarkkad", "chittur", "alathur", "cherpulassery", "pattambi"
+    ],
+    "malappuram": [
+        "malappuram", "malapuram", "mlp", "manjeri", "perinthalmanna", "tirur", "kottakkal", "ponnani",
+        "nilambur", "kondotty", "valanchery", "edapal", "parappanangadi"
+    ],
+    "kozhikode": [
+        "kozhikode", "kozhikod", "kozhikkode", "calicut", "clt", "sm street", "mavoor", "mavoor road",
+        "mananchira", "feroke", "vadakara", "vatakara", "koyilandy", "ramanattukara", "balussery",
+        "thamarassery", "omassery", "malaparamba", "east hill", "kakkodi", "kunnamangalam"
+    ],
+    "wayanad": [
+        "wayanad", "waynad", "kalpetta", "sulthan bathery", "bathery", "mananthavady", "vythiri", "meppadi"
+    ],
+    "kannur": [
+        "kannur", "cannanore", "payyanur", "payyannur", "payannur", "thalassery", "tellicherry",
+        "taliparamba", "mattannur", "iritty", "peringome", "koothuparamba", "pilathara", "kuthuparamba",
+        "chakkarakkal", "alakode", "dharmasala", "cherupuzha", "padiyotuchal"
+    ],
+    "kasaragod": [
+        "kasaragod", "kasargod", "kasargode", "ksd", "kanhangad", "bekal", "trikaripur", "nileshwar",
+        "uppala", "manjeshwar", "cheruvathur", "cheemeni", "vellarikundu", "parappa"
+    ],
+}
+
+CANONICAL_DISTRICT_NAMES = {
+    "thiruvananthapuram": "Thiruvananthapuram",
+    "kollam": "Kollam",
+    "pathanamthitta": "Pathanamthitta",
+    "alappuzha": "Alappuzha",
+    "kottayam": "Kottayam",
+    "idukki": "Idukki",
+    "ernakulam": "Ernakulam",
+    "thrissur": "Thrissur",
+    "palakkad": "Palakkad",
+    "malappuram": "Malappuram",
+    "kozhikode": "Kozhikode",
+    "wayanad": "Wayanad",
+    "kannur": "Kannur",
+    "kasaragod": "Kasaragod",
+}
+
+
 class MerchantService:
     """Service handling merchant registration, profile management, and discovery."""
+
+    @staticmethod
+    def resolve_canonical_district(merchant: MerchantProfile) -> str:
+        city = (merchant.city or "").lower()
+        loc = (merchant.location or "").lower()
+        addr = (merchant.address or "").lower()
+        raw_dist = (merchant.district or "").lower()
+
+        # 1. City / location check (most accurate)
+        for dist_key, aliases in KERALA_DISTRICT_ALIASES.items():
+            for alias in aliases:
+                if alias in city or alias in loc:
+                    return CANONICAL_DISTRICT_NAMES[dist_key]
+
+        # 2. Address check
+        for dist_key, aliases in KERALA_DISTRICT_ALIASES.items():
+            for alias in aliases:
+                if alias in addr:
+                    return CANONICAL_DISTRICT_NAMES[dist_key]
+
+        # 3. Raw district check (strip agency tags)
+        cleaned_dist = re.sub(r'^(digi\s*global\s*info\s*-\s*|vinod\s*-\s*|nisar\s*-\s*|taliparamba\s*bineesh\s*|dinil\s*alakode\s*)', '', raw_dist, flags=re.I)
+        cleaned_dist = re.sub(r'(-praveen|-koramangala)$', '', cleaned_dist, flags=re.I).strip()
+        for dist_key, aliases in KERALA_DISTRICT_ALIASES.items():
+            for alias in aliases:
+                if alias in cleaned_dist or alias == cleaned_dist:
+                    return CANONICAL_DISTRICT_NAMES[dist_key]
+
+        return merchant.district or "Kerala"
 
     @staticmethod
     def build_merchant_response(merchant: MerchantProfile) -> MerchantProfileResponse:
@@ -84,12 +189,25 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
+        can_promo = bool(getattr(merchant, "can_create_promotions", False))
+        resp.can_create_promotions = can_promo
+        resp.promotion_access = can_promo
         if merchant.user_code:
             resp.user_code = merchant.user_code
         elif creator_summary:
             resp.user_code = creator_summary.user_code
         resp.creator = creator_summary
         resp.created_by = creator_summary
+
+        # Normalize district to genuine Kerala canonical district
+        resp.district = MerchantService.resolve_canonical_district(merchant)
+
+        # Clean city name (strip (N)/(S) and agency prefixes)
+        if resp.city:
+            clean_c = re.sub(r'^(digi\s*global\s*info\s*-\s*|vinod\s*-\s*|nisar\s*-\s*)', '', resp.city, flags=re.I).strip()
+            clean_c = re.sub(r'\s*\([NSns]\)$', '', clean_c).strip()
+            resp.city = clean_c or resp.district
+
         return resp
 
     @staticmethod
@@ -334,6 +452,9 @@ class MerchantService:
             is_verified=is_verified_val,
             is_active=True,
             onboarded_by_id=effective_user_id,
+            cashback_percent=Decimal(str(data.cashback_percent if data.cashback_percent is not None else 3.0)),
+            company_fee_percent=Decimal(str(data.company_fee_percent if data.company_fee_percent is not None else 2.0)),
+            total_deduction_percent=Decimal(str(data.total_deduction_percent if data.total_deduction_percent is not None else 5.0)),
         )
         db.add(merchant)
         db.commit()
@@ -553,7 +674,7 @@ class MerchantService:
         q = db.query(MerchantProfile).join(User, MerchantProfile.user_id == User.id)
 
         # Scoped access or explicit filter:
-        if user_code:
+        if user_code and not str(user_code).strip().upper().startswith("ADM"):
             q = q.filter(
                 (MerchantProfile.user_code == user_code.strip())
                 | (User.user_code == user_code.strip())
@@ -587,12 +708,28 @@ class MerchantService:
 
         if location:
             loc_clean = location.strip()
-            q = q.filter(
-                (MerchantProfile.location.ilike(f"%{loc_clean}%"))
-                | (MerchantProfile.city.ilike(f"%{loc_clean}%"))
-                | (MerchantProfile.district.ilike(f"%{loc_clean}%"))
-                | (MerchantProfile.address.ilike(f"%{loc_clean}%"))
-            )
+            loc_lower = loc_clean.lower()
+            matched_aliases = None
+            for dist_key, aliases in KERALA_DISTRICT_ALIASES.items():
+                if loc_lower == dist_key or loc_lower == CANONICAL_DISTRICT_NAMES[dist_key].lower() or loc_lower in aliases:
+                    matched_aliases = aliases
+                    break
+
+            if matched_aliases:
+                loc_conditions = []
+                for alias in matched_aliases:
+                    loc_conditions.append(MerchantProfile.district.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.city.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.location.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.address.ilike(f"%{alias}%"))
+                q = q.filter(or_(*loc_conditions))
+            else:
+                q = q.filter(
+                    (MerchantProfile.location.ilike(f"%{loc_clean}%"))
+                    | (MerchantProfile.city.ilike(f"%{loc_clean}%"))
+                    | (MerchantProfile.district.ilike(f"%{loc_clean}%"))
+                    | (MerchantProfile.address.ilike(f"%{loc_clean}%"))
+                )
 
         all_candidates = q.order_by(MerchantProfile.created_at.desc()).all()
 
@@ -754,6 +891,15 @@ class MerchantService:
             merchant.owner = data.contact_person.strip()
             merchant.owner_name = data.contact_person.strip()
 
+        # Keep linked user's name in sync
+        if merchant.user_id:
+            user_rec = db.query(User).filter(User.id == merchant.user_id).first()
+            if user_rec:
+                if merchant.owner_name:
+                    user_rec.name = merchant.owner_name
+                elif merchant.business_name:
+                    user_rec.name = merchant.business_name
+
         # Categories
         if data.categories is not None:
             merchant.categories = data.categories
@@ -863,6 +1009,30 @@ class MerchantService:
             elif merchant.status in ("REJECTED", "SUSPENDED", "INACTIVE"):
                 merchant.is_active = False
 
+        if getattr(data, "approval_status", None) is not None:
+            merchant.approval_status = data.approval_status.strip().upper()
+            if merchant.approval_status == "APPROVED":
+                merchant.is_active = True
+                merchant.is_verified = True
+            elif merchant.approval_status == "REJECTED":
+                merchant.is_active = False
+
+        if getattr(data, "can_create_promotions", None) is not None:
+            merchant.can_create_promotions = bool(data.can_create_promotions)
+        elif getattr(data, "promotion_access", None) is not None:
+            merchant.can_create_promotions = bool(data.promotion_access)
+
+        if getattr(data, "cashback_percent", None) is not None:
+            merchant.cashback_percent = Decimal(str(data.cashback_percent))
+        if getattr(data, "company_fee_percent", None) is not None:
+            merchant.company_fee_percent = Decimal(str(data.company_fee_percent))
+        if getattr(data, "total_deduction_percent", None) is not None:
+            merchant.total_deduction_percent = Decimal(str(data.total_deduction_percent))
+        elif getattr(data, "cashback_percent", None) is not None or getattr(data, "company_fee_percent", None) is not None:
+            cb = merchant.cashback_percent if merchant.cashback_percent is not None else Decimal("3.0")
+            cf = merchant.company_fee_percent if merchant.company_fee_percent is not None else Decimal("2.0")
+            merchant.total_deduction_percent = cb + cf
+
         db.commit()
         db.refresh(merchant)
         return merchant
@@ -895,6 +1065,7 @@ class MerchantService:
         db: Session,
         category: Optional[str] = None,
         location: Optional[str] = None,
+        district: Optional[str] = None,
         status: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
@@ -904,7 +1075,7 @@ class MerchantService:
         query = db.query(MerchantProfile)
 
         # Scoped access or explicit filter:
-        if user_code:
+        if user_code and not str(user_code).strip().upper().startswith("ADM"):
             uc = user_code.strip()
             query = query.filter(
                 (MerchantProfile.user_code.ilike(f"%{uc}%"))
@@ -916,8 +1087,35 @@ class MerchantService:
                 | (MerchantProfile.onboarded_by_id == current_user.id)
             )
 
-        if location:
-            query = query.filter(MerchantProfile.location.ilike(f"%{location}%"))
+        # Smart Kerala Location & District filtering
+        matched_dist_key = None
+        target_loc = (district or location or "").strip()
+        if target_loc and target_loc.lower() not in ("all", "all kerala"):
+            loc_lower = target_loc.lower()
+            matched_aliases = None
+            for dist_key, aliases in KERALA_DISTRICT_ALIASES.items():
+                if loc_lower == dist_key or loc_lower == CANONICAL_DISTRICT_NAMES[dist_key].lower() or loc_lower in aliases:
+                    matched_aliases = aliases
+                    matched_dist_key = dist_key
+                    break
+
+            if matched_aliases:
+                loc_conditions = []
+                for alias in matched_aliases:
+                    loc_conditions.append(MerchantProfile.district.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.city.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.location.ilike(f"%{alias}%"))
+                    loc_conditions.append(MerchantProfile.address.ilike(f"%{alias}%"))
+                query = query.filter(or_(*loc_conditions))
+            else:
+                query = query.filter(
+                    or_(
+                        MerchantProfile.location.ilike(f"%{target_loc}%"),
+                        MerchantProfile.city.ilike(f"%{target_loc}%"),
+                        MerchantProfile.district.ilike(f"%{target_loc}%"),
+                        MerchantProfile.address.ilike(f"%{target_loc}%"),
+                    )
+                )
 
         # Status filtering
         if status and status.strip().lower() != "all":
@@ -978,6 +1176,12 @@ class MerchantService:
         query = query.order_by(MerchantProfile.created_at.desc(), MerchantProfile.id.desc())
 
         results = query.offset(skip).limit(limit).all()
+
+        if matched_dist_key:
+            results = [
+                m for m in results
+                if MerchantService.resolve_canonical_district(m).lower() == matched_dist_key
+            ]
 
         if category:
             cat_clean = category.strip().lower()

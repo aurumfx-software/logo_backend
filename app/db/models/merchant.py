@@ -65,7 +65,12 @@ class MerchantProfile(Base):
     landmark = Column(String(255), nullable=True)
     is_verified = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    can_create_promotions = Column(Boolean, default=False, nullable=False)
     rejection_reason = Column(String(500), nullable=True)
+
+    cashback_percent = Column(Numeric(5, 2), default=3.0, nullable=True)
+    company_fee_percent = Column(Numeric(5, 2), default=2.0, nullable=True)
+    total_deduction_percent = Column(Numeric(5, 2), default=5.0, nullable=True)
 
     approved_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
@@ -158,3 +163,36 @@ def sync_merchant_fields_and_user_codes(session, flush_context, instances):
                 m.user_code = f"MRH {max_num + 1}"
             except Exception:
                 m.user_code = "MRH 1"
+
+
+class PromoAccessRequest(Base):
+    __tablename__ = "promo_access_requests"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    merchant_id = Column(Integer, ForeignKey("merchant_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    merchant_name = Column(String(255), nullable=False)
+    owner_name = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
+    category = Column(String(100), nullable=True)
+    city = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    reason = Column(Text, nullable=True)
+    status = Column(String(50), default="PENDING", nullable=False, index=True)
+    rejection_reason = Column(String(255), nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    merchant = relationship("MerchantProfile", backref="promo_access_requests")
+
