@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
@@ -27,6 +28,113 @@ from app.services.otp_service import OTPService
 
 class AuthService:
     """Service handling registration, authentication, token rotation, and password reset."""
+
+    @staticmethod
+    def normalize_phone(phone: str) -> str:
+        cleaned = re.sub(r"[\s\-()]", "", phone.strip())
+        if cleaned.startswith("+91"):
+            cleaned = cleaned[3:]
+        elif cleaned.startswith("91") and len(cleaned) > 10:
+            cleaned = cleaned[2:]
+        return cleaned
+
+    @staticmethod
+    def _find_user_for_customer_login(
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> User:
+        user = None
+        if email:
+            user = db.query(User).filter(User.email == email.strip().lower()).first()
+        elif phone:
+            normalized = AuthService.normalize_phone(phone)
+            user = db.query(User).filter(User.phone == normalized).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No customer account found with this email or phone.",
+            )
+        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please use the admin portal to sign in.",
+            )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive. Please contact support.",
+            )
+        return user
+
+    @staticmethod
+    def customer_login_identifier(email: Optional[str], phone: Optional[str]) -> str:
+        if email:
+            return email.strip().lower()
+        return AuthService.normalize_phone(phone or "")
+
+    @staticmethod
+    def send_customer_login_otp(
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> Optional[str]:
+        user = AuthService._find_user_for_customer_login(db, email=email, phone=phone)
+        identifier = AuthService.customer_login_identifier(email, phone or user.phone)
+        plain_otp, _ = OTPService.create_otp(
+            db=db,
+            identifier=identifier,
+            purpose=OTPPurpose.CUSTOMER_LOGIN,
+        )
+        return plain_otp
+
+    @staticmethod
+    def verify_customer_login_otp(
+        db: Session,
+        otp: str,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> TokenResponse:
+        identifier = AuthService.customer_login_identifier(email, phone)
+        OTPService.verify_otp(
+            db=db,
+            identifier=identifier,
+            otp=otp,
+            purpose=OTPPurpose.CUSTOMER_LOGIN,
+        )
+        user = AuthService._find_user_for_customer_login(db, email=email, phone=phone)
+        user.last_active = datetime.now(timezone.utc)
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
+        return AuthService.generate_token_pair(user)
+
+    @staticmethod
+    def authenticate_user_by_phone(db: Session, phone: str, password: str) -> User:
+        normalized = AuthService.normalize_phone(phone)
+        user = db.query(User).filter(User.phone == normalized).first()
+        if not user or not user.password_hash:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid phone or password.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please use the admin portal to sign in.",
+            )
+        if not verify_password(password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid phone or password.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is inactive. Please contact support.",
+            )
+        user.last_active = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(user)
+        return user
 
     @staticmethod
     def register_user(db: Session, user_data: UserRegisterRequest) -> User:

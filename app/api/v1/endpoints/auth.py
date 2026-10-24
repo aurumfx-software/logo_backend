@@ -11,6 +11,8 @@ from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
     AvatarUploadResponse,
+    CustomerLoginOTPSendRequest,
+    CustomerLoginOTPVerifyRequest,
     ForgotPasswordRequest,
     GenericMessageResponse,
     RefreshTokenRequest,
@@ -21,6 +23,7 @@ from app.schemas.auth import (
     SendOTPResponse,
     TokenResponse,
     UserLoginRequest,
+    UserPhoneLoginRequest,
     UserProfileUpdateRequest,
     UserRegisterRequest,
     VerifyOTPRequest,
@@ -63,6 +66,62 @@ def login(
 ) -> TokenResponse:
     user = AuthService.authenticate_user(db=db, login_data=login_data)
     return AuthService.generate_token_pair(user)
+
+
+@router.post(
+    "/login/phone",
+    response_model=TokenResponse,
+    summary="Customer quick login with phone + password",
+    description="Mobile customer sign-in using registered phone number and password.",
+)
+def login_with_phone(
+    login_data: UserPhoneLoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    user = AuthService.authenticate_user_by_phone(
+        db=db, phone=login_data.phone, password=login_data.password
+    )
+    return AuthService.generate_token_pair(user)
+
+
+@router.post(
+    "/login/send-otp",
+    response_model=SendOTPResponse,
+    summary="Customer OTP login — send code",
+    description=(
+        "Sends a 6-digit OTP to the customer's registered email or phone. "
+        "Use for mobile OTP Login tab / Login with OTP."
+    ),
+)
+def customer_login_send_otp(
+    req: CustomerLoginOTPSendRequest,
+    db: Session = Depends(get_db),
+) -> SendOTPResponse:
+    plain_otp = AuthService.send_customer_login_otp(
+        db=db, email=req.email, phone=req.phone
+    )
+    target = req.email or req.phone or "your account"
+    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    return SendOTPResponse(
+        message=f"OTP sent to {target}. Please check your messages.",
+        expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
+        dev_otp=dev_otp,
+    )
+
+
+@router.post(
+    "/login/verify-otp",
+    response_model=TokenResponse,
+    summary="Customer OTP login — verify code and get JWT",
+    description="Verifies OTP and returns access + refresh tokens for the customer app.",
+)
+def customer_login_verify_otp(
+    req: CustomerLoginOTPVerifyRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    return AuthService.verify_customer_login_otp(
+        db=db, otp=req.otp, email=req.email, phone=req.phone
+    )
 
 
 @router.post(

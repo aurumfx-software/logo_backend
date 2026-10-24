@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.db.models.user import UserRole
 from app.db.models.otp import OTPPurpose
 
@@ -76,6 +76,66 @@ class UserRegisterRequest(UserBase):
 
 class UserLoginRequest(UserBase):
     password: str = Field(..., json_schema_extra={"example": "TestPassword123"})
+
+
+class UserPhoneLoginRequest(BaseModel):
+    """Customer quick sign-in with mobile number + password."""
+    phone: str = Field(..., min_length=10, max_length=15, json_schema_extra={"example": "9876543210"})
+    password: str = Field(..., min_length=6, json_schema_extra={"example": "TestPassword123"})
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        cleaned = re.sub(r"[\s\-()]", "", v.strip())
+        if cleaned.startswith("+91"):
+            cleaned = cleaned[3:]
+        elif cleaned.startswith("91") and len(cleaned) > 10:
+            cleaned = cleaned[2:]
+        if not cleaned.isdigit() or len(cleaned) < 10:
+            raise ValueError("Invalid phone number")
+        return cleaned
+
+
+class CustomerLoginOTPSendRequest(BaseModel):
+    """Send OTP for customer mobile login (email or phone)."""
+    email: Optional[str] = Field(None, json_schema_extra={"example": "customer@example.com"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        cleaned = re.sub(r"[\s\-()]", "", str(v).strip())
+        if cleaned.startswith("+91"):
+            cleaned = cleaned[3:]
+        elif cleaned.startswith("91") and len(cleaned) > 10:
+            cleaned = cleaned[2:]
+        if not cleaned.isdigit() or len(cleaned) < 10:
+            raise ValueError("Invalid phone number")
+        return cleaned
+
+    @model_validator(mode="after")
+    def require_email_or_phone(self) -> "CustomerLoginOTPSendRequest":
+        if not self.email and not self.phone:
+            raise ValueError("Provide either email or phone")
+        if self.email and self.phone:
+            raise ValueError("Provide only one of email or phone")
+        return self
+
+
+class CustomerLoginOTPVerifyRequest(CustomerLoginOTPSendRequest):
+    otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
 
 
 class SafeUserResponse(BaseModel):

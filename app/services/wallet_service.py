@@ -23,6 +23,7 @@ from app.db.models.wallet import (
 from app.schemas.wallet import (
     SaleQRCreateRequest,
     SaleQRCreateResponse,
+    SaleQRMerchantStatusResponse,
     SaleQRPreviewResponse,
     SaleRedeemResponse,
     WalletLedgerEntryResponse,
@@ -433,6 +434,93 @@ class WalletService:
             cashback_percent=sale_qr.cashback_percent,
             company_fee_percent=sale_qr.company_fee_percent,
             total_deduction_percent=sale_qr.total_deduction_percent,
+        )
+
+    @staticmethod
+    def _assert_merchant_owns_sale_qr(sale_qr: MerchantSaleQR, merchant_user: User) -> None:
+        if sale_qr.merchant_user_id == merchant_user.id:
+            return
+        profile = sale_qr.merchant_profile
+        if profile and profile.user_id == merchant_user.id:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this sale QR.",
+        )
+
+    @staticmethod
+    def get_merchant_sale_qr_status(
+        db: Session, merchant_user: User, token: str
+    ) -> SaleQRMerchantStatusResponse:
+        sale_qr = db.query(MerchantSaleQR).filter(MerchantSaleQR.token == token).first()
+        if not sale_qr:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sale QR not found.")
+
+        WalletService._assert_merchant_owns_sale_qr(sale_qr, merchant_user)
+
+        now = datetime.now(timezone.utc)
+        if sale_qr.status == SaleQRStatus.PENDING and _as_utc(sale_qr.expires_at) < now:
+            sale_qr.status = SaleQRStatus.EXPIRED
+            db.commit()
+            db.refresh(sale_qr)
+
+        sale_amount = WalletService._money(sale_qr.sale_amount)
+        total_cb = WalletService._percent_of(sale_amount, settings.CASHBACK_TOTAL_PERCENT)
+        user_cb = WalletService._percent_of(sale_amount, settings.CASHBACK_USER_PERCENT)
+        company_fee = WalletService._percent_of(sale_amount, settings.CASHBACK_COMPANY_PERCENT)
+
+        merchant = sale_qr.merchant_profile
+        business_name = merchant.business_name if merchant else "Merchant"
+
+        expires_at = _as_utc(sale_qr.expires_at)
+        seconds_left: Optional[int] = None
+        if sale_qr.status == SaleQRStatus.PENDING and expires_at > now:
+            seconds_left = max(0, int((expires_at - now).total_seconds()))
+
+        is_redeemed = sale_qr.status == SaleQRStatus.REDEEMED
+        is_expired = sale_qr.status == SaleQRStatus.EXPIRED
+        is_pending = sale_qr.status == SaleQRStatus.PENDING
+
+        merchant_wallet = WalletService.ensure_wallet_for_user(db, sale_qr.merchant_user_id)
+        db.refresh(merchant_wallet)
+
+        merchant_debit = total_cb if is_redeemed else None
+        txn_group = sale_qr.wallet_transaction_group_id if is_redeemed else None
+
+        if is_redeemed:
+            message = "Cashback redeemed — transaction complete."
+        elif is_expired:
+            message = "Sale QR has expired. Generate a new QR."
+        else:
+            message = "Waiting for customer to scan and redeem."
+
+        qr_payload = None
+        if is_pending:
+            qr_payload = (
+                f"logo://wallet/redeem?token={sale_qr.token}"
+                f"&amount={sale_amount}&merchant={business_name}"
+            )
+
+        return SaleQRMerchantStatusResponse(
+            message=message,
+            token=sale_qr.token,
+            status=sale_qr.status,
+            sale_amount=sale_amount,
+            currency=sale_qr.currency or settings.WALLET_CURRENCY,
+            merchant_business_name=business_name,
+            expires_at=sale_qr.expires_at,
+            redeemed_at=sale_qr.redeemed_at,
+            is_redeemed=is_redeemed,
+            is_expired=is_expired,
+            is_pending=is_pending,
+            seconds_until_expiry=seconds_left,
+            estimated_cashback_total=total_cb,
+            estimated_user_cashback=user_cb,
+            estimated_company_fee=company_fee,
+            merchant_debit=merchant_debit,
+            transaction_group_id=txn_group,
+            merchant_wallet_balance=WalletService._money(merchant_wallet.balance),
+            qr_payload=qr_payload,
         )
 
     @staticmethod

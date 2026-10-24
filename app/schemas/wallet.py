@@ -114,6 +114,31 @@ class SaleQRPreviewResponse(BaseModel):
     total_deduction_percent: Optional[Decimal] = None
 
 
+class SaleQRMerchantStatusResponse(BaseModel):
+    """Poll this from the merchant QR screen to detect customer redemption."""
+
+    success: bool = True
+    message: str
+    token: str
+    status: SaleQRStatus
+    sale_amount: Decimal
+    currency: str = "INR"
+    merchant_business_name: str
+    expires_at: datetime
+    redeemed_at: Optional[datetime] = None
+    is_redeemed: bool = False
+    is_expired: bool = False
+    is_pending: bool = False
+    seconds_until_expiry: Optional[int] = None
+    estimated_cashback_total: Decimal
+    estimated_user_cashback: Decimal
+    estimated_company_fee: Decimal
+    merchant_debit: Optional[Decimal] = None
+    transaction_group_id: Optional[str] = None
+    merchant_wallet_balance: Decimal
+    qr_payload: Optional[str] = None
+
+
 class SaleRedeemRequest(BaseModel):
     token: str = Field(..., min_length=8, max_length=64)
 
