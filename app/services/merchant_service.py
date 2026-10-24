@@ -494,6 +494,19 @@ class MerchantService:
             db.query(MerchantProfile).filter(MerchantProfile.user_id == user_id).first()
         )
         if not merchant:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                merchant = (
+                    db.query(MerchantProfile)
+                    .filter(
+                        (MerchantProfile.user_id == user_id)
+                        | (MerchantProfile.onboarded_by_id == user_id)
+                        | (MerchantProfile.phone == user.phone)
+                    )
+                    .order_by(MerchantProfile.id.desc())
+                    .first()
+                )
+        if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Merchant profile not found for this account.",
@@ -1081,10 +1094,11 @@ class MerchantService:
                 (MerchantProfile.user_code.ilike(f"%{uc}%"))
                 | (MerchantProfile.onboarded_by.has(User.user_code.ilike(f"%{uc}%")))
             )
-        elif current_user and current_user.role == UserRole.FIELD_STAFF:
+        elif current_user and current_user.role in (UserRole.FIELD_STAFF, UserRole.MERCHANT, UserRole.CUSTOMER):
             query = query.filter(
                 (MerchantProfile.user_id == current_user.id)
                 | (MerchantProfile.onboarded_by_id == current_user.id)
+                | (MerchantProfile.phone == current_user.phone)
             )
 
         # Smart Kerala Location & District filtering

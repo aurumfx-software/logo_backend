@@ -9,6 +9,7 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
     FIELD_STAFF = "FIELD_STAFF"
     CUSTOMER = "CUSTOMER"
+    MERCHANT = "MERCHANT"
 
     @classmethod
     def _missing_(cls, value):
@@ -22,6 +23,8 @@ class UserRole(str, enum.Enum):
                 return cls.ADMIN
             if norm in ("FIELDSTAFF", "FIELD_STAFF", "STAFF"):
                 return cls.FIELD_STAFF
+            if norm in ("MERCHANT", "MERCH", "VENDOR", "SELLER"):
+                return cls.MERCHANT
         return None
 
 
@@ -55,6 +58,9 @@ class User(Base):
     profile_picture = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
+    can_sell_products = Column(Boolean, default=False, nullable=False)
+    is_subscriber = Column(Boolean, default=False, nullable=False)
+    subscription_plan = Column(String(50), default="500_SELLER", nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

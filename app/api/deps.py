@@ -110,7 +110,7 @@ require_field_staff_or_admin = require_role(
 )
 require_customer = require_role(UserRole.CUSTOMER)
 require_any_authenticated = require_role(
-    UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.FIELD_STAFF, UserRole.CUSTOMER
+    UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.FIELD_STAFF, UserRole.CUSTOMER, UserRole.MERCHANT
 )
 
 

@@ -35,6 +35,8 @@ from app.schemas.merchant import (
     MerchantStatsResponse,
     MerchantUpdateRequest,
     MerchantVerifyOTPLoginRequest,
+    PromoAccessRequestCreate,
+    PromoAccessRequestResponse,
     ServiceCountItem,
 )
 from app.schemas.response import (
@@ -43,10 +45,12 @@ from app.schemas.response import (
     list_response,
     success_response,
 )
+from app.db.models.merchant import MerchantProfile, PromoAccessRequest
 from app.schemas.customer import NearbyMerchantsResponse
 from app.services.admin_service import AdminService
 from app.services.merchant_service import MerchantService
 from app.services.customer_service import CustomerService
+from app.services.notification_service import NotificationService
 from app.services.storage_service import storage_service
 
 
@@ -117,6 +121,17 @@ def onboard_merchant(
     user, merchant = MerchantService.onboard_merchant(
         db=db, data=data, onboarded_by=current_user
     )
+    try:
+        NotificationService.notify_admins(
+            db=db,
+            title="New Merchant Registration Request",
+            message=f"New store application submitted for '{merchant.business_name}' ({merchant.city or 'Kerala'}).",
+            type="MERCHANT_REGISTRATION",
+            data={"merchant_id": merchant.id, "business_name": merchant.business_name},
+        )
+    except Exception as err:
+        print("Admin notification error on merchant onboard:", err)
+
     return MerchantOnboardingResponse(
         message="Merchant onboarded successfully",
         merchant=MerchantService.build_merchant_response(merchant),
@@ -314,9 +329,16 @@ def get_my_merchants(
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
-    merchants = MerchantService.list_merchants(
-        db=db, current_user=current_user, limit=200
+    query = (
+        db.query(MerchantProfile)
+        .filter(
+            (MerchantProfile.user_id == current_user.id)
+            | (MerchantProfile.onboarded_by_id == current_user.id)
+            | (MerchantProfile.phone == current_user.phone)
+        )
+        .order_by(MerchantProfile.id.desc())
     )
+    merchants = query.limit(200).all()
     return [MerchantService.build_merchant_response(m) for m in merchants]
 
 
@@ -457,6 +479,7 @@ def upload_merchant_photos(
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
+    district: Optional[str] = Query(None, description="Filter by Kerala district"),
     status: Optional[str] = Query(None, description="Filter by status: approved, active, pending, rejected, all"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
@@ -468,6 +491,7 @@ def list_merchants(
         db=db,
         category=category,
         location=location,
+        district=district,
         status=status,
         skip=skip,
         limit=limit,
@@ -825,3 +849,117 @@ def merchant_login_verify_otp(
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     return MerchantService.verify_login_otp(db=db, email=req.email, otp=req.otp)
+
+
+@router.post(
+    "/{merchant_id}/request-promo-access",
+    response_model=StandardResponse[PromoAccessRequestResponse],
+    summary="Merchant requests promotion access",
+    description="Allows a merchant to request promotion creation access from administrators.",
+)
+@router.post(
+    "/request-promo-access",
+    response_model=StandardResponse[PromoAccessRequestResponse],
+    summary="Merchant requests promotion access (alias)",
+)
+def request_promotion_access(
+    merchant_id: Optional[int] = None,
+    data: Optional[PromoAccessRequestCreate] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    target_id = merchant_id or (data.merchant_id if data else None)
+    if not target_id and current_user:
+        merch_profile = db.query(MerchantProfile).filter(MerchantProfile.user_id == current_user.id).first()
+        if merch_profile:
+            target_id = merch_profile.id
+
+    if not target_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Merchant ID is required to request promotion access.",
+        )
+
+    merchant = db.query(MerchantProfile).filter(MerchantProfile.id == target_id).first()
+    if not merchant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Merchant with ID {target_id} not found.",
+        )
+
+    if merchant.can_create_promotions:
+        existing_req = (
+            db.query(PromoAccessRequest)
+            .filter(PromoAccessRequest.merchant_id == target_id)
+            .order_by(PromoAccessRequest.created_at.desc())
+            .first()
+        )
+        if not existing_req:
+            existing_req = PromoAccessRequest(
+                merchant_id=merchant.id,
+                user_id=current_user.id if current_user else merchant.user_id,
+                merchant_name=merchant.business_name,
+                owner_name=merchant.owner_name or merchant.owner,
+                phone=merchant.phone or merchant.contact_number,
+                category=merchant.category,
+                city=merchant.city,
+                district=merchant.district,
+                reason="Promotion access enabled",
+                status="APPROVED",
+            )
+            db.add(existing_req)
+            db.commit()
+            db.refresh(existing_req)
+        return success_response(
+            data=PromoAccessRequestResponse.model_validate(existing_req),
+            message="Promotion creation access is already active for this merchant.",
+        )
+
+    pending_req = (
+        db.query(PromoAccessRequest)
+        .filter(PromoAccessRequest.merchant_id == target_id, PromoAccessRequest.status == "PENDING")
+        .first()
+    )
+    if pending_req:
+        return success_response(
+            data=PromoAccessRequestResponse.model_validate(pending_req),
+            message="A promotion access request is already pending review with administrators.",
+        )
+
+    user_id = current_user.id if current_user else merchant.user_id
+    req = PromoAccessRequest(
+        merchant_id=merchant.id,
+        user_id=user_id,
+        merchant_name=merchant.business_name,
+        owner_name=merchant.owner_name or merchant.owner,
+        phone=merchant.phone or merchant.contact_number,
+        category=merchant.category,
+        city=merchant.city,
+        district=merchant.district,
+        reason=(data.reason.strip() if data and data.reason else "Merchant requested promotion access via portal"),
+        status="PENDING",
+    )
+    db.add(req)
+    db.commit()
+    db.refresh(req)
+
+    try:
+        NotificationService.notify_admins(
+            db=db,
+            title="New Promotion Access Request",
+            message=f"Merchant '{merchant.business_name}' ({merchant.city or 'Kannur'}) requested promotion access.",
+            type="PROMO_ACCESS_REQUEST",
+            data={
+                "request_id": req.id,
+                "merchant_id": merchant.id,
+                "business_name": merchant.business_name,
+            },
+        )
+    except Exception as err:
+        print("Admin notification error on promo access request:", err)
+
+    return success_response(
+        data=PromoAccessRequestResponse.model_validate(req),
+        message=f"Promotion access request submitted successfully for '{merchant.business_name}'.",
+    )
+

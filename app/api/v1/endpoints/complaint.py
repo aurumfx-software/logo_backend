@@ -30,16 +30,18 @@ def list_complaints(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Service Quality, Order Issue)"),
     priority: Optional[str] = Query(None, description="Filter by priority (high, medium, low)"),
     search: Optional[str] = Query(None, description="Search by subject, user, merchant, category, complaint_code"),
+    merchant: Optional[str] = Query(None, description="Filter by merchant name"),
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user_flexible),
 ):
-    """List complaints with flexible status, category, priority, and text search filters."""
+    """List complaints with flexible status, category, priority, merchant, and text search filters."""
     complaints = ComplaintService.get_all(
         db,
         status_filter=status,
         search=search,
         category=category,
         priority=priority,
+        merchant=merchant,
     )
     return list_response(
         data=[ComplaintResponse.model_validate(c) for c in complaints],
@@ -154,6 +156,31 @@ def update_complaint_status(
     return success_response(
         data=ComplaintResponse.model_validate(complaint),
         message=f"Complaint status updated to {payload.status} successfully",
+    )
+
+
+@router.post("/{complaint_id}/reply", response_model=StandardResponse[ComplaintResponse], summary="Reply to complaint")
+@router.patch("/{complaint_id}/reply", response_model=StandardResponse[ComplaintResponse], summary="Reply to complaint (PATCH alias)")
+def reply_to_complaint(
+    complaint_id: int,
+    payload: ComplaintStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user_flexible),
+):
+    """
+    Send official admin reply to a complaint.
+    Updates the admin_response field and optionally updates status ('in-progress' or 'resolved').
+    """
+    status_val = payload.status if payload.status else "in-progress"
+    complaint = ComplaintService.update_status(
+        db,
+        complaint_id=complaint_id,
+        status_val=status_val,
+        admin_response=payload.admin_response,
+    )
+    return success_response(
+        data=ComplaintResponse.model_validate(complaint),
+        message="Reply sent to complaint successfully",
     )
 
 

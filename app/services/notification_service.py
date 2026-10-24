@@ -111,3 +111,31 @@ class NotificationService:
             )
         db.delete(notification)
         db.commit()
+
+    @staticmethod
+    def notify_admins(
+        db: Session,
+        title: str,
+        message: str,
+        type: str = "INFO",
+        data: Optional[Dict[str, Any]] = None,
+    ) -> List[Notification]:
+        from app.db.models.user import User, UserRole
+        admins = db.query(User).filter(User.role.in_([UserRole.SUPER_ADMIN, UserRole.ADMIN])).all()
+        created = []
+        for admin in admins:
+            notif = Notification(
+                user_id=admin.id,
+                title=title.strip(),
+                message=message.strip(),
+                type=type.strip(),
+                data=data,
+                is_read=False,
+            )
+            db.add(notif)
+            created.append(notif)
+        db.commit()
+        for notif in created:
+            db.refresh(notif)
+        return created
+

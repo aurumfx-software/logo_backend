@@ -1,4 +1,5 @@
 import math
+import re
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 from fastapi import HTTPException, status
@@ -13,9 +14,11 @@ from app.core.security import (
 )
 from app.db.models.user import User, UserRole
 from app.db.models.merchant import MerchantProfile
+from app.db.models.merchant_favorite import CustomerMerchantFavorite
 from app.schemas.customer import (
     CustomerRegisterRequest,
     CustomerLoginRequest,
+    CustomerPhoneLoginRequest,
     CustomerLocationUpdateRequest,
     NearbyMerchantItem,
 )
@@ -38,31 +41,171 @@ def calculate_haversine_distance(lat1: float, lon1: float, lat2: float, lon2: fl
 
 class CustomerService:
     @staticmethod
-    def register_customer(db: Session, data: CustomerRegisterRequest) -> Tuple[User, str, str]:
-        clean_email = data.email.strip().lower()
+    def _build_merchant_item(m: MerchantProfile, distance_km: Optional[float] = None) -> NearbyMerchantItem:
+        photos = list(m.merchant_photos or [])
+        if m.photo_1 and m.photo_1 not in photos:
+            photos.insert(0, m.photo_1)
 
-        # 1. Check existing email
-        if db.query(User).filter(User.email == clean_email).first():
+        categories_list = list(m.categories or [])
+        if m.category and m.category not in categories_list:
+            categories_list.insert(0, m.category)
+
+        return NearbyMerchantItem(
+            id=m.id,
+            user_code=m.user_code,
+            business_name=m.business_name,
+            category=m.category or (categories_list[0] if categories_list else "Retail"),
+            categories=categories_list,
+            owner=m.owner or m.owner_name or "Business Owner",
+            phone=m.phone or m.contact_number,
+            whatsapp=m.whatsapp or m.phone or m.contact_number,
+            email=m.email,
+            district=m.district,
+            city=m.city,
+            location=m.location or m.city,
+            address=m.address or f"{m.city or ''}, {m.district or ''}",
+            latitude=float(m.latitude) if m.latitude is not None else None,
+            longitude=float(m.longitude) if m.longitude is not None else None,
+            distance_km=distance_km,
+            rating=float(m.rating) if m.rating is not None else 4.5,
+            reviews_count=m.reviews_count or 0,
+            photo_1=m.photo_1 or (photos[0] if photos else None),
+            merchant_photos=photos,
+            video_url=m.video_url,
+            services=list(m.services or []),
+            service_timing=m.service_timing or "General Store Hours",
+            status=m.status or "APPROVED",
+        )
+
+    @staticmethod
+    def phone_or_quick_login(db: Session, data: CustomerPhoneLoginRequest) -> Tuple[User, str, str]:
+        """
+        Instant OTP-free phone login and auto-registration for Customer Web & Mobile App.
+        """
+        digits = re.sub(r"[^0-9]", "", data.phone.strip())
+        if not digits or len(digits) < 7:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email address already exists.",
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Please enter a valid phone number with at least 7 digits.",
             )
+        local_10 = digits[-10:] if len(digits) >= 10 else digits
 
-        # 2. Check existing phone if provided
+        # Search existing user by phone variations
+        user = (
+            db.query(User)
+            .filter(
+                or_(
+                    User.phone == digits,
+                    User.phone == f"+91{local_10}",
+                    User.phone == f"+91 {local_10}",
+                    User.phone == local_10,
+                    User.phone.like(f"%{local_10}"),
+                )
+            )
+            .first()
+        )
+
+        if user:
+            # Update user info if newly provided
+            if data.name and data.name.strip() and (not user.name or user.name.startswith("Customer (")):
+                user.name = data.name.strip()
+            if data.district and data.district.strip() and not user.district:
+                user.district = data.district.strip()
+            if data.city and data.city.strip() and not user.city:
+                user.city = data.city.strip()
+            if data.location and data.location.strip() and not user.location:
+                user.location = data.location.strip()
+            if data.latitude is not None and user.latitude is None:
+                user.latitude = data.latitude
+            if data.longitude is not None and user.longitude is None:
+                user.longitude = data.longitude
+
+            user.last_active = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(user)
+        else:
+            # Auto-register new Customer account
+            clean_name = data.name.strip() if data.name and data.name.strip() else f"Customer ({local_10[-4:]})"
+            fallback_email = f"customer_{local_10}@logokerala.in"
+            counter = 1
+            while db.query(User).filter(User.email == fallback_email).first():
+                fallback_email = f"customer_{local_10}_{counter}@logokerala.in"
+                counter += 1
+
+            dummy_pass = hash_password(f"LogoCust@{local_10[-4:]}#98")
+
+            user = User(
+                name=clean_name,
+                email=fallback_email,
+                phone=f"+91 {local_10}",
+                password=dummy_pass,
+                password_hash=dummy_pass,
+                role=UserRole.CUSTOMER,
+                district=data.district.strip() if data.district else "Kannur",
+                city=data.city.strip() if data.city else "Payyanur",
+                location=data.location.strip() if data.location else None,
+                latitude=data.latitude,
+                longitude=data.longitude,
+                status="ACTIVE",
+                is_active=True,
+                is_verified=True,
+                send_email=False,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+        role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+        access_token = create_access_token(user_id=user.id, role=role_str)
+        refresh_token = create_refresh_token(user_id=user.id, role=role_str)
+
+        return user, access_token, refresh_token
+
+    @staticmethod
+    def register_customer(db: Session, data: CustomerRegisterRequest) -> Tuple[User, str, str]:
+        # Clean phone
         clean_phone = data.phone.strip() if data.phone else None
+        local_10 = None
         if clean_phone:
-            if db.query(User).filter(User.phone == clean_phone).first():
+            digits = re.sub(r"[^0-9]", "", clean_phone)
+            local_10 = digits[-10:] if len(digits) >= 10 else digits
+            existing_phone_user = db.query(User).filter(
+                or_(
+                    User.phone == clean_phone,
+                    User.phone == local_10,
+                    User.phone == f"+91 {local_10}",
+                    User.phone == f"+91{local_10}",
+                )
+            ).first()
+            if existing_phone_user:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="An account with this phone number already exists.",
+                    detail="An account with this phone number already exists. Please log in.",
                 )
 
-        hashed = hash_password(data.password)
+        # Clean email or auto-generate fallback
+        if data.email and data.email.strip():
+            clean_email = data.email.strip().lower()
+            if db.query(User).filter(User.email == clean_email).first():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email address already exists.",
+                )
+        else:
+            ref_num = local_10 or str(int(datetime.now().timestamp()))
+            clean_email = f"customer_{ref_num}@logokerala.in"
+            counter = 1
+            while db.query(User).filter(User.email == clean_email).first():
+                clean_email = f"customer_{ref_num}_{counter}@logokerala.in"
+                counter += 1
+
+        raw_pass = data.password if data.password and data.password.strip() else (f"Logo@{local_10[-4:]}" if local_10 else "Customer@123")
+        hashed = hash_password(raw_pass)
 
         new_user = User(
             name=data.name.strip(),
             email=clean_email,
-            phone=clean_phone,
+            phone=f"+91 {local_10}" if local_10 else clean_phone,
             password=hashed,
             password_hash=hashed,
             role=UserRole.CUSTOMER,
@@ -87,6 +230,7 @@ class CustomerService:
         refresh_token = create_refresh_token(user_id=new_user.id, role=role_str)
 
         return new_user, access_token, refresh_token
+
 
     @staticmethod
     def login_customer(db: Session, data: CustomerLoginRequest) -> Tuple[User, str, str]:
@@ -304,3 +448,109 @@ class CustomerService:
             },
             "merchants": items,
         }
+
+    @staticmethod
+    def toggle_merchant_favorite(db: Session, user: User, merchant_id: int) -> Tuple[bool, List[int]]:
+        """
+        Toggle merchant in customer's favorites list.
+        """
+        merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+        if not merchant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Merchant with ID {merchant_id} not found.",
+            )
+
+        existing = (
+            db.query(CustomerMerchantFavorite)
+            .filter(
+                CustomerMerchantFavorite.user_id == user.id,
+                CustomerMerchantFavorite.merchant_id == merchant_id,
+            )
+            .first()
+        )
+
+        if existing:
+            db.delete(existing)
+            db.commit()
+            is_fav = False
+        else:
+            new_fav = CustomerMerchantFavorite(user_id=user.id, merchant_id=merchant_id)
+            db.add(new_fav)
+            db.commit()
+            is_fav = True
+
+        all_fav_ids = [
+            r[0]
+            for r in db.query(CustomerMerchantFavorite.merchant_id)
+            .filter(CustomerMerchantFavorite.user_id == user.id)
+            .all()
+        ]
+        return is_fav, all_fav_ids
+
+    @staticmethod
+    def sync_merchant_favorites(db: Session, user: User, merchant_ids: List[int]) -> List[int]:
+        """
+        Merge local guest wishlist into customer's cloud account.
+        """
+        existing_ids = set(
+            r[0]
+            for r in db.query(CustomerMerchantFavorite.merchant_id)
+            .filter(CustomerMerchantFavorite.user_id == user.id)
+            .all()
+        )
+
+        if merchant_ids:
+            valid_merchants = (
+                db.query(MerchantProfile.id)
+                .filter(MerchantProfile.id.in_(merchant_ids))
+                .all()
+            )
+            valid_ids = {r[0] for r in valid_merchants}
+
+            for m_id in valid_ids:
+                if m_id not in existing_ids:
+                    new_fav = CustomerMerchantFavorite(user_id=user.id, merchant_id=m_id)
+                    db.add(new_fav)
+                    existing_ids.add(m_id)
+
+            db.commit()
+
+        return sorted(list(existing_ids))
+
+    @staticmethod
+    def get_user_merchant_favorites(db: Session, user: User) -> Tuple[List[int], List[NearbyMerchantItem]]:
+        """
+        Retrieve all merchant favorites for the customer.
+        """
+        fav_records = (
+            db.query(CustomerMerchantFavorite)
+            .filter(CustomerMerchantFavorite.user_id == user.id)
+            .order_by(CustomerMerchantFavorite.created_at.desc())
+            .all()
+        )
+        fav_ids = [f.merchant_id for f in fav_records]
+        if not fav_ids:
+            return [], []
+
+        merchants = db.query(MerchantProfile).filter(MerchantProfile.id.in_(fav_ids)).all()
+        merchant_map = {m.id: m for m in merchants}
+
+        items: List[NearbyMerchantItem] = []
+        for fid in fav_ids:
+            if fid in merchant_map:
+                items.append(CustomerService._build_merchant_item(merchant_map[fid]))
+
+        return fav_ids, items
+
+    @staticmethod
+    def clear_user_merchant_favorites(db: Session, user: User) -> bool:
+        """
+        Clear all saved favorites for the customer.
+        """
+        db.query(CustomerMerchantFavorite).filter(
+            CustomerMerchantFavorite.user_id == user.id
+        ).delete()
+        db.commit()
+        return True
+

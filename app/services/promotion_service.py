@@ -72,6 +72,8 @@ class PromotionService:
             thumbnail_url=data.thumbnail_url,
             target_url=data.target_url,
             description=data.description,
+            merchant_id=data.merchant_id,
+            merchant_name=data.merchant_name,
         )
         db.add(promo)
         db.commit()
@@ -113,10 +115,82 @@ class PromotionService:
             promo.target_url = data.target_url
         if data.description is not None:
             promo.description = data.description
+        if data.merchant_id is not None:
+            promo.merchant_id = data.merchant_id
+        if data.merchant_name is not None:
+            promo.merchant_name = data.merchant_name
+        if data.rejection_reason is not None:
+            promo.rejection_reason = data.rejection_reason
 
         db.commit()
         db.refresh(promo)
         return promo
+
+    @staticmethod
+    def approve(db: Session, promo_id: int) -> Promotion:
+        promo = PromotionService.get_by_id(db, promo_id)
+        promo.status = "active"
+        promo.rejection_reason = None
+        db.commit()
+        db.refresh(promo)
+        return promo
+
+    @staticmethod
+    def reject(db: Session, promo_id: int, reason: Optional[str] = None) -> Promotion:
+        promo = PromotionService.get_by_id(db, promo_id)
+        promo.status = "rejected"
+        promo.rejection_reason = reason or "Promotion rejected by administration."
+        db.commit()
+        db.refresh(promo)
+        return promo
+
+    @staticmethod
+    def get_public_active(
+        db: Session,
+        search: Optional[str] = None,
+        placement: Optional[str] = None,
+    ) -> List[Promotion]:
+        from app.db.models.merchant import MerchantProfile
+
+        query = db.query(Promotion).filter(
+            or_(Promotion.status == "active", Promotion.status == "approved")
+        )
+        if placement:
+            query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
+        if search:
+            s = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Promotion.title.ilike(s),
+                    Promotion.category.ilike(s),
+                    Promotion.placement.ilike(s),
+                    Promotion.location.ilike(s),
+                )
+            )
+
+        candidates = query.order_by(Promotion.id.desc()).all()
+        valid_promos = []
+
+        # Cache merchant check
+        merchant_cache = {}
+
+        for p in candidates:
+            if p.merchant_id:
+                if p.merchant_id not in merchant_cache:
+                    m = db.query(MerchantProfile).filter(MerchantProfile.id == p.merchant_id).first()
+                    merchant_cache[p.merchant_id] = m
+                merch = merchant_cache[p.merchant_id]
+                # Conditions: 1. Merchant approved, 2. Merchant promotion access ON
+                if not merch:
+                    continue
+                if str(merch.approval_status).upper() != "APPROVED" and str(merch.status).upper() != "APPROVED":
+                    continue
+                if not getattr(merch, "can_create_promotions", False):
+                    continue
+
+            valid_promos.append(p)
+
+        return valid_promos
 
     @staticmethod
     def delete(db: Session, promo_id: int) -> bool:

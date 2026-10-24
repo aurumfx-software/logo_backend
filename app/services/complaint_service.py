@@ -16,6 +16,7 @@ class ComplaintService:
         search: Optional[str] = None,
         category: Optional[str] = None,
         priority: Optional[str] = None,
+        merchant: Optional[str] = None,
     ) -> List[Complaint]:
         query = db.query(Complaint)
         if status_filter and status_filter.lower() != "all":
@@ -24,6 +25,8 @@ class ComplaintService:
             query = query.filter(Complaint.category.ilike(f"%{category}%"))
         if priority and priority.lower() != "all":
             query = query.filter(Complaint.priority == priority.lower())
+        if merchant and merchant.lower() != "all":
+            query = query.filter(Complaint.merchant.ilike(f"%{merchant}%"))
         if search:
             s = f"%{search}%"
             query = query.filter(

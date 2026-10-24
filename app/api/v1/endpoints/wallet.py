@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, get_admin_user_flexible
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.wallet import (
@@ -137,3 +137,15 @@ def admin_adjust_wallet(
         transaction_group_id=group_id,
         transaction_type=txn_type,
     )
+
+
+@router.get(
+    "/company/overview",
+    summary="Admin: get company platform wallet balance, revenue and ledger entries",
+)
+def get_company_wallet_overview(
+    admin_user: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    return WalletService.get_company_wallet_overview(db=db)
+

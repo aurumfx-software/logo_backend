@@ -27,7 +27,11 @@ from app.schemas.merchant import (
     MerchantRejectRequest,
     MerchantStatsResponse,
     MerchantUpdateRequest,
+    PromoAccessRequestResponse,
 )
+from app.db.models.merchant import MerchantProfile, PromoAccessRequest
+from app.db.models.notification import Notification
+from app.schemas.notification import NotificationResponse
 from app.schemas.response import (
     StandardListResponse,
     StandardResponse,
@@ -38,6 +42,8 @@ from app.services.activity_log_service import ActivityLogService
 from app.services.admin_service import AdminService
 from app.services.logo_service import LogoService
 from app.services.merchant_service import MerchantService
+from app.services.notification_service import NotificationService
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/admin", tags=["Admin Operations"])
 
@@ -507,6 +513,86 @@ def reject_merchant(
     )
 
 
+@router.patch(
+    "/merchants/{merchant_id}/promotion-access",
+    response_model=StandardResponse[MerchantProfileResponse],
+    summary="Toggle promotion access for a merchant",
+    description="Enables or disables a merchant's ability to create and manage promotions. Enforced in UI and backend.",
+)
+@router.put(
+    "/merchants/{merchant_id}/promotion-access",
+    response_model=StandardResponse[MerchantProfileResponse],
+    summary="Toggle promotion access for a merchant (PUT alias)",
+)
+def toggle_merchant_promotion_access(
+    merchant_id: int,
+    data: dict,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+) -> StandardResponse[MerchantProfileResponse]:
+    merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    enabled = bool(
+        data.get("can_create_promotions")
+        if "can_create_promotions" in data
+        else data.get("promotion_access", False)
+    )
+    merchant.can_create_promotions = enabled
+    db.commit()
+    db.refresh(merchant)
+
+    now = datetime.now(timezone.utc)
+    if not enabled:
+        # Revoke existing promo requests for this merchant so it reverts to locked and can be re-requested
+        db.query(PromoAccessRequest).filter(
+            PromoAccessRequest.merchant_id == merchant.id,
+            PromoAccessRequest.status.in_(["APPROVED", "PENDING"])
+        ).update({"status": "REVOKED", "updated_at": now})
+        db.commit()
+
+        if merchant.user_id:
+            try:
+                NotificationService.create_notification(
+                    db=db,
+                    user_id=merchant.user_id,
+                    title="Promotion Access Disabled",
+                    message="Promotion creation privileges have been turned OFF by Logo Admin.",
+                    type="PROMO_ACCESS_REVOKED",
+                    data={"merchant_id": merchant.id, "can_create_promotions": False},
+                )
+            except Exception as err:
+                print("Notification error on promo revoke:", err)
+    else:
+        # If toggled ON, mark pending promo request as APPROVED
+        db.query(PromoAccessRequest).filter(
+            PromoAccessRequest.merchant_id == merchant.id,
+            PromoAccessRequest.status == "PENDING"
+        ).update({
+            "status": "APPROVED",
+            "reviewed_by_id": current_admin.id if current_admin else None,
+            "reviewed_at": now,
+            "updated_at": now
+        })
+        db.commit()
+
+        if merchant.user_id:
+            try:
+                NotificationService.create_notification(
+                    db=db,
+                    user_id=merchant.user_id,
+                    title="Promotion Access Enabled! ⚡",
+                    message="Logo Admin has enabled promotion publishing for your business.",
+                    type="PROMO_ACCESS_APPROVED",
+                    data={"merchant_id": merchant.id, "can_create_promotions": True},
+                )
+            except Exception as err:
+                print("Notification error on promo enable:", err)
+
+    status_str = "enabled" if enabled else "disabled"
+    return success_response(
+        data=MerchantService.build_merchant_response(merchant),
+        message=f"Promotion access {status_str} for '{merchant.business_name}'",
+    )
+
 
 @router.put(
     "/merchants/{merchant_id}",
@@ -598,3 +684,202 @@ def get_activity_log_actions(
         data=actions,
         message="Action types retrieved successfully",
     )
+
+
+# --- Promo Access Requests Management ---
+
+@router.get(
+    "/merchants/promo-access-requests",
+    response_model=StandardListResponse[PromoAccessRequestResponse],
+    summary="List merchant promo access requests",
+    description="Returns all promotion access requests submitted by merchants.",
+)
+def list_promo_access_requests(
+    status: Optional[str] = Query(None, description="Filter by status: pending, approved, rejected, all"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    query = db.query(PromoAccessRequest)
+    if status and status.lower() != "all":
+        query = query.filter(PromoAccessRequest.status == status.upper())
+
+    total = query.count()
+    items = (
+        query.order_by(
+            PromoAccessRequest.status == "PENDING",  # Pending first
+            PromoAccessRequest.created_at.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    page = (skip // limit) + 1 if limit > 0 else 1
+    return list_response(
+        data=[PromoAccessRequestResponse.model_validate(r) for r in items],
+        total_items=total,
+        page=page,
+        page_size=limit,
+        message=f"Retrieved {len(items)} promo access request(s)",
+    )
+
+
+@router.post(
+    "/merchants/promo-access-requests/{request_id}/approve",
+    response_model=StandardResponse[PromoAccessRequestResponse],
+    summary="Approve merchant promo access request",
+)
+def approve_promo_access_request(
+    request_id: int,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    req = db.query(PromoAccessRequest).filter(PromoAccessRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail=f"Request #{request_id} not found.")
+
+    req.status = "APPROVED"
+    req.reviewed_by_id = current_admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+
+    # Enable promotion creation access on merchant
+    merchant = db.query(MerchantProfile).filter(MerchantProfile.id == req.merchant_id).first()
+    if merchant:
+        merchant.can_create_promotions = True
+
+    db.commit()
+    db.refresh(req)
+
+    # Notify merchant user
+    try:
+        if req.user_id:
+            NotificationService.create_notification(
+                db=db,
+                user_id=req.user_id,
+                title="Promotion Access Approved! 🎉",
+                message=f"Your promotion creation access for '{req.merchant_name}' has been approved by admin. You can now create and submit promotions!",
+                type="PROMO_ACCESS_APPROVED",
+                data={"merchant_id": req.merchant_id, "request_id": req.id},
+            )
+    except Exception as err:
+        print("Notification error on promo access approve:", err)
+
+    return success_response(
+        data=PromoAccessRequestResponse.model_validate(req),
+        message=f"Promotion access approved for '{req.merchant_name}'",
+    )
+
+
+@router.post(
+    "/merchants/promo-access-requests/{request_id}/reject",
+    response_model=StandardResponse[PromoAccessRequestResponse],
+    summary="Reject merchant promo access request",
+)
+def reject_promo_access_request(
+    request_id: int,
+    data: Optional[dict] = None,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    req = db.query(PromoAccessRequest).filter(PromoAccessRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail=f"Request #{request_id} not found.")
+
+    reason = (data or {}).get("reason") if isinstance(data, dict) else "Promotion access request declined by administration."
+    req.status = "REJECTED"
+    req.rejection_reason = reason
+    req.reviewed_by_id = current_admin.id
+    req.reviewed_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(req)
+
+    # Notify merchant user
+    try:
+        if req.user_id:
+            NotificationService.create_notification(
+                db=db,
+                user_id=req.user_id,
+                title="Promotion Access Request Update",
+                message=f"Your promotion access request for '{req.merchant_name}' was declined: {reason}",
+                type="PROMO_ACCESS_REJECTED",
+                data={"merchant_id": req.merchant_id, "request_id": req.id},
+            )
+    except Exception as err:
+        print("Notification error on promo access reject:", err)
+
+    return success_response(
+        data=PromoAccessRequestResponse.model_validate(req),
+        message=f"Promotion access rejected for '{req.merchant_name}'",
+    )
+
+
+# --- Admin Notifications ---
+
+@router.get(
+    "/notifications",
+    summary="Get all admin notifications",
+)
+def get_admin_notifications(
+    limit: int = Query(30, ge=1, le=100),
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Notification).filter(Notification.user_id == current_admin.id)
+    unread_count = query.filter(Notification.is_read == False).count()
+    items = query.order_by(Notification.created_at.desc()).limit(limit).all()
+
+    return {
+        "success": True,
+        "unread_count": unread_count,
+        "total": len(items),
+        "notifications": [
+            {
+                "id": n.id,
+                "title": n.title,
+                "message": n.message,
+                "type": n.type,
+                "is_read": n.is_read,
+                "data": n.data,
+                "created_at": n.created_at.isoformat() if n.created_at else None,
+            }
+            for n in items
+        ],
+    }
+
+
+@router.patch(
+    "/notifications/{notification_id}/read",
+    summary="Mark admin notification as read",
+)
+def mark_admin_notification_read(
+    notification_id: int,
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    notif = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_admin.id,
+    ).first()
+    if notif:
+        notif.is_read = True
+        db.commit()
+    return {"success": True, "message": "Notification marked as read"}
+
+
+@router.post(
+    "/notifications/mark-all-read",
+    summary="Mark all admin notifications as read",
+)
+def mark_all_admin_notifications_read(
+    current_admin: User = Depends(get_admin_user_flexible),
+    db: Session = Depends(get_db),
+):
+    db.query(Notification).filter(
+        Notification.user_id == current_admin.id,
+        Notification.is_read == False,
+    ).update({Notification.is_read: True})
+    db.commit()
+    return {"success": True, "message": "All notifications marked as read"}
+

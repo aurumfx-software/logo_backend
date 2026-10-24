@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -1022,7 +1022,17 @@ class AdminService:
             )
 
         total = query.count()
-        merchants = query.order_by(MerchantProfile.created_at.desc()).offset(skip).limit(limit).all()
+        order_clause = [
+            case(
+                (MerchantProfile.approval_status.ilike("PENDING"), 0),
+                (MerchantProfile.status.ilike("PENDING"), 0),
+                else_=1,
+            ),
+            MerchantProfile.updated_at.desc(),
+            MerchantProfile.created_at.desc(),
+            MerchantProfile.id.desc(),
+        ]
+        merchants = query.order_by(*order_clause).offset(skip).limit(limit).all()
         items = [cls._build_registration_request_item(m) for m in merchants]
 
         return RegistrationRequestsResponse(

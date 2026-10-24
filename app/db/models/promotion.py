@@ -24,6 +24,9 @@ class Promotion(Base):
     thumbnail_url = Column(String(500), nullable=True)
     target_url = Column(String(500), nullable=True)
     description = Column(Text, nullable=True)
+    merchant_id = Column(Integer, nullable=True, index=True)
+    merchant_name = Column(String(255), nullable=True)
+    rejection_reason = Column(String(500), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

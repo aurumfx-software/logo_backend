@@ -20,6 +20,8 @@ class PromotionCreateRequest(BaseModel):
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
 
 
 class PromotionUpdateRequest(BaseModel):
@@ -39,6 +41,9 @@ class PromotionUpdateRequest(BaseModel):
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
 
 class PromotionResponse(BaseModel):
@@ -60,6 +65,9 @@ class PromotionResponse(BaseModel):
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
+    rejection_reason: Optional[str] = None
     created_at: Optional[datetime] = None
 
     class Config:

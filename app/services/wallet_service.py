@@ -287,14 +287,40 @@ class WalletService:
     @staticmethod
     def _merchant_for_user(db: Session, user: User, merchant_profile_id: Optional[int]) -> MerchantProfile:
         merchant = None
+        # 1. If merchant_profile_id provided, verify if it belongs to user
         if merchant_profile_id:
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(
+                    MerchantProfile.id == merchant_profile_id,
+                    (
+                        (MerchantProfile.user_id == user.id)
+                        | (MerchantProfile.onboarded_by_id == user.id)
+                        | (MerchantProfile.phone == user.phone)
+                    ),
+                )
+                .first()
+            )
+
+        # 2. If not matched, fetch user's own merchant profile
+        if not merchant:
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(
+                    (MerchantProfile.user_id == user.id)
+                    | (MerchantProfile.onboarded_by_id == user.id)
+                    | (MerchantProfile.phone == user.phone)
+                )
+                .order_by(MerchantProfile.id.desc())
+                .first()
+            )
+
+        # 3. If user doesn't own a merchant, but merchant_profile_id was specified (admin/tester)
+        if not merchant and merchant_profile_id:
             merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_profile_id).first()
-        
+
+        # 4. Fallback to latest merchant
         if not merchant:
-            merchant = db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).order_by(MerchantProfile.id.asc()).first()
-        
-        if not merchant:
-            # Fallback to most recent merchant so admin/testers are never blocked
             merchant = db.query(MerchantProfile).order_by(MerchantProfile.id.desc()).first()
 
         if not merchant:
@@ -337,17 +363,8 @@ class WalletService:
         user_cb = WalletService._percent_of(sale_amount, float(user_pct))
         company_fee = WalletService._money(merchant_debit - user_cb)
 
-        # Insufficient Balance Check
+        # Ensure merchant wallet exists
         merchant_wallet = WalletService.ensure_wallet_for_user(db, merchant_user.id)
-        if WalletService._money(merchant_wallet.balance) < merchant_debit:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Insufficient wallet balance (₹{merchant_wallet.balance:.2f}). "
-                    f"Required ₹{merchant_debit:.2f} ({total_pct}% cashback deduction) to generate this Sale QR. "
-                    f"Please recharge your wallet balance before issuing cashback."
-                ),
-            )
 
         sale_qr = MerchantSaleQR(
             merchant_profile_id=merchant.id,
@@ -458,6 +475,14 @@ class WalletService:
 
         sale_amount = WalletService._money(sale_qr.sale_amount)
 
+        # Quick pre-lock check on customer wallet balance
+        user_wallet = WalletService.ensure_wallet_for_user(db, customer.id)
+        if user_wallet.balance < sale_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient wallet balance. Your balance is ₹{user_wallet.balance:.2f}, but the bill is ₹{sale_amount:.2f}. Please recharge your wallet to complete payment.",
+            )
+
         # Use frozen rates and amounts if present
         if (
             sale_qr.merchant_debit_amount is not None
@@ -479,18 +504,19 @@ class WalletService:
             company_fee = WalletService._money(merchant_debit - user_cb)
 
         merchant_wallet = WalletService.ensure_wallet_for_user(db, sale_qr.merchant_user_id)
-        user_wallet = WalletService.ensure_wallet_for_user(db, customer.id)
         company_wallet = WalletService.get_company_wallet(db)
         db.flush()
 
         group_id = str(uuid.uuid4())
         merchant_name = sale_qr.merchant_profile.business_name if sale_qr.merchant_profile else "Merchant"
+        customer_display_name = getattr(customer, "name", None) or getattr(customer, "phone", "Customer")
+
         txn = WalletTransaction(
             group_id=group_id,
             transaction_type=WalletTransactionType.CASHBACK_REDEMPTION,
-            amount=merchant_debit,
+            amount=sale_amount,
             currency=getattr(settings, "WALLET_CURRENCY", "INR"),
-            description=f"Cashback redemption for sale at {merchant_name} (Bill: ₹{sale_amount})",
+            description=f"Bill payment at {merchant_name} (₹{sale_amount}) with cashback",
             initiated_by_user_id=customer.id,
             reference_id=sale_qr.token,
         )
@@ -501,18 +527,39 @@ class WalletService:
         locked_user = WalletService._lock_wallet(db, user_wallet.id)
         locked_company = WalletService._lock_wallet(db, company_wallet.id)
 
+        # Strict balance check while locked to prevent race conditions
+        if locked_user.balance < sale_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient wallet balance. Your balance is ₹{locked_user.balance:.2f}, but the bill is ₹{sale_amount:.2f}. Please recharge your wallet to complete payment.",
+            )
+
         user_rate_str = f"{sale_qr.cashback_percent}%" if sale_qr.cashback_percent else "3%"
         company_rate_str = f"{sale_qr.company_fee_percent}%" if sale_qr.company_fee_percent else "2%"
+        net_merchant_credit = WalletService._money(sale_amount - merchant_debit)
 
+        # Double-entry ledger:
+        # 1. Customer Pays Full Bill: DEBIT customer sale_amount
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked_user,
+            WalletLedgerDirection.DEBIT,
+            sale_amount,
+            counterparty_wallet_id=locked_merchant.id,
+            note=f"Bill payment for purchase at {merchant_name}",
+        )
+        # 2. Merchant receives net settlement: CREDIT merchant (sale_amount - total deduction)
         WalletService._apply_ledger_line(
             db,
             txn,
             locked_merchant,
-            WalletLedgerDirection.DEBIT,
-            merchant_debit,
+            WalletLedgerDirection.CREDIT,
+            net_merchant_credit,
             counterparty_wallet_id=locked_user.id,
-            note=f"Cashback deduction on sale of ₹{sale_amount} ({user_rate_str} user + {company_rate_str} platform)",
+            note=f"Payment received from {customer_display_name} (Bill ₹{sale_amount} - ₹{merchant_debit} deduction)",
         )
+        # 3. Customer gets instant cashback: CREDIT customer user_cb
         WalletService._apply_ledger_line(
             db,
             txn,
@@ -520,8 +567,9 @@ class WalletService:
             WalletLedgerDirection.CREDIT,
             user_cb,
             counterparty_wallet_id=locked_merchant.id,
-            note=f"{user_rate_str} cashback on purchase from {merchant_name}",
+            note=f"{user_rate_str} cashback on purchase at {merchant_name}",
         )
+        # 4. Company platform fee: CREDIT company company_fee
         WalletService._apply_ledger_line(
             db,
             txn,
@@ -533,7 +581,6 @@ class WalletService:
         )
 
         # Record directly into dedicated Company Platform Wallet Ledger table
-        customer_display_name = getattr(customer, "name", None) or getattr(customer, "phone", "Customer")
         co_ledger_entry = CompanyPlatformWalletLedger(
             transaction_type="PLATFORM_FEE",
             direction="CREDIT",
@@ -564,8 +611,51 @@ class WalletService:
         db.commit()
         db.refresh(locked_user)
 
+        # Send instant in-app notifications
+        from app.services.notification_service import NotificationService
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        try:
+            NotificationService.create_notification(
+                db=db,
+                user_id=sale_qr.merchant_user_id,
+                title="Payment Received",
+                message=f"Received ₹{net_merchant_credit} from {customer_display_name} ({customer.phone}) for bill ₹{sale_amount} (Cashback: ₹{user_cb}, Fee: ₹{company_fee}).",
+                type="PAYMENT_RECEIVED",
+                data={
+                    "sale_qr_token": sale_qr.token,
+                    "sale_amount": str(sale_amount),
+                    "net_credited": str(net_merchant_credit),
+                    "cashback_given": str(user_cb),
+                    "customer_name": customer_display_name,
+                    "customer_phone": customer.phone,
+                    "group_id": group_id,
+                },
+            )
+        except Exception as e:
+            _logger.error(f"Error sending merchant notification: {e}")
+
+        try:
+            NotificationService.create_notification(
+                db=db,
+                user_id=customer.id,
+                title="Payment & Cashback Successful",
+                message=f"Paid ₹{sale_amount} at {merchant_name}. ₹{user_cb} instant cashback credited to your wallet!",
+                type="CASHBACK_RECEIVED",
+                data={
+                    "sale_qr_token": sale_qr.token,
+                    "sale_amount": str(sale_amount),
+                    "cashback_amount": str(user_cb),
+                    "merchant_name": merchant_name,
+                    "group_id": group_id,
+                },
+            )
+        except Exception as e:
+            _logger.error(f"Error sending customer notification: {e}")
+
         return SaleRedeemResponse(
-            message=f"₹{user_cb} Cashback credited to your wallet from {merchant_name}!",
+            message=f"Payment of ₹{sale_amount} to {merchant_name} successful! ₹{user_cb} cashback credited to your wallet.",
             transaction_group_id=group_id,
             merchant_business_name=merchant_name,
             sale_amount=sale_amount,
