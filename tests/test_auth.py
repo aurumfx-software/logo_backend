@@ -447,3 +447,76 @@ def test_missing_bearer_token(client: TestClient):
     assert response.status_code == 401
 
 
+def test_customer_otp_login_with_email(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Customer OTP",
+            "email": "customer.otp@example.com",
+            "phone": "9988776655",
+            "password": "CustomerPass123",
+        },
+    )
+    send_res = client.post(
+        "/api/v1/auth/login/send-otp",
+        json={"email": "customer.otp@example.com"},
+    )
+    assert send_res.status_code == 200
+    dev_otp = send_res.json().get("dev_otp")
+    assert dev_otp
+
+    token_res = client.post(
+        "/api/v1/auth/login/verify-otp",
+        json={"email": "customer.otp@example.com", "otp": dev_otp},
+    )
+    assert token_res.status_code == 200
+    body = token_res.json()
+    assert body["access_token"]
+    assert body["refresh_token"]
+    assert body["user"]["email"] == "customer.otp@example.com"
+
+
+def test_customer_otp_login_with_phone(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Phone Customer",
+            "email": "phone.customer@example.com",
+            "phone": "9876512345",
+            "password": "CustomerPass123",
+        },
+    )
+    send_res = client.post(
+        "/api/v1/auth/login/send-otp",
+        json={"phone": "+919876512345"},
+    )
+    assert send_res.status_code == 200
+    dev_otp = send_res.json().get("dev_otp")
+    assert dev_otp
+
+    token_res = client.post(
+        "/api/v1/auth/login/verify-otp",
+        json={"phone": "9876512345", "otp": dev_otp},
+    )
+    assert token_res.status_code == 200
+    assert token_res.json()["user"]["phone"] == "9876512345"
+
+
+def test_customer_phone_password_quick_login(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Quick Login User",
+            "email": "quick.login@example.com",
+            "phone": "9765432109",
+            "password": "QuickPass123",
+        },
+    )
+    res = client.post(
+        "/api/v1/auth/login/phone",
+        json={"phone": "9765432109", "password": "QuickPass123"},
+    )
+    assert res.status_code == 200
+    assert res.json()["access_token"]
+
+

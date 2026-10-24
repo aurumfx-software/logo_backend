@@ -9,6 +9,7 @@ from app.schemas.wallet import (
     AdminWalletAdjustResponse,
     SaleQRCreateRequest,
     SaleQRCreateResponse,
+    SaleQRMerchantStatusResponse,
     SaleQRPreviewResponse,
     SaleRedeemRequest,
     SaleRedeemResponse,
@@ -83,6 +84,26 @@ def create_sale_qr(
     db: Session = Depends(get_db),
 ) -> SaleQRCreateResponse:
     return WalletService.create_sale_qr(db=db, merchant_user=current_user, payload=payload)
+
+
+@router.get(
+    "/sales/qr/{token}/status",
+    response_model=SaleQRMerchantStatusResponse,
+    summary="Merchant: poll sale QR payment status",
+    description=(
+        "For the merchant QR screen: call every 2–3 seconds while waiting for payment. "
+        "When is_redeemed is true, show success and stop polling. "
+        "Includes wallet balance and countdown (seconds_until_expiry)."
+    ),
+)
+def merchant_sale_qr_status(
+    token: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SaleQRMerchantStatusResponse:
+    return WalletService.get_merchant_sale_qr_status(
+        db=db, merchant_user=current_user, token=token
+    )
 
 
 @router.get(

@@ -126,6 +126,60 @@ def test_sale_qr_cashback_split(client: TestClient, db_session: Session):
     )
     assert dup_res.status_code == 400
 
+    status_res = client.get(
+        f"/api/v1/wallet/sales/qr/{token}/status",
+        headers=merchant_headers,
+    )
+    assert status_res.status_code == 200
+    status_body = status_res.json()
+    assert status_body["is_redeemed"] is True
+    assert status_body["status"] == "REDEEMED"
+    assert status_body["merchant_wallet_balance"] == "950.00"
+    assert status_body["transaction_group_id"]
+
+
+def test_merchant_qr_status_pending_then_redeemed(client: TestClient, db_session: Session):
+    merchant_user = _create_merchant(db_session, "statusmerchant@example.com")
+    customer = _create_user(db_session, "statuscustomer@example.com", "Customer")
+    admin = _create_user(db_session, "statusadmin@example.com", "Admin", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": merchant_user.id, "amount": "500.00", "operation": "credit"},
+    )
+
+    merchant_headers = _auth_headers(client, merchant_user.email, "Password123!")
+    qr_res = client.post(
+        "/api/v1/wallet/sales/qr",
+        headers=merchant_headers,
+        json={"sale_amount": "200.00", "expires_in_minutes": 5},
+    )
+    token = qr_res.json()["token"]
+
+    pending = client.get(
+        f"/api/v1/wallet/sales/qr/{token}/status",
+        headers=merchant_headers,
+    )
+    assert pending.status_code == 200
+    assert pending.json()["is_pending"] is True
+    assert pending.json()["is_redeemed"] is False
+    assert pending.json()["qr_payload"]
+
+    customer_headers = _auth_headers(client, customer.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/sales/redeem",
+        headers=customer_headers,
+        json={"token": token},
+    )
+
+    done = client.get(
+        f"/api/v1/wallet/sales/qr/{token}/status",
+        headers=merchant_headers,
+    )
+    assert done.json()["is_redeemed"] is True
+    assert done.json()["merchant_debit"] == "10.00"
+
 
 def test_insufficient_merchant_balance_blocks_redeem(client: TestClient, db_session: Session):
     merchant_user = _create_merchant(db_session, "poormerchant@example.com")
