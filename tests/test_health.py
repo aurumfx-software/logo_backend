@@ -23,3 +23,19 @@ def test_cors_preflight_allows_browser_origin(client: TestClient):
         "http://localhost:5173",
         "*",
     )
+
+
+def test_cors_preflight_sslip_frontend_port(client: TestClient):
+    origin = "https://168.144.18.149.sslip.io:8443"
+    response = client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization, content-type",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
+    allow_headers = (response.headers.get("access-control-allow-headers") or "").lower()
+    assert "authorization" in allow_headers

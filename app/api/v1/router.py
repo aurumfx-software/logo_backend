@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     logo,
     merchant,
     notification,
+    promotion,
     user,
     wallet,
 )
@@ -21,6 +22,7 @@ api_router.include_router(customer.router)
 api_router.include_router(user.router)
 api_router.include_router(merchant.router)
 api_router.include_router(category.router)
+api_router.include_router(promotion.router)
 api_router.include_router(category.router, prefix="/field-staff", tags=["Field Staff Categories"])
 api_router.include_router(logo.router)
 api_router.include_router(favorite.router)

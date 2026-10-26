@@ -8,11 +8,16 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     API_V1_STR: str = "/api/v1"
 
-    # CORS — comma-separated origins, or "*" for any origin (credentials disabled with "*")
+    # CORS — comma-separated origins, or "*" to use CORS_ORIGIN_REGEX (recommended for sslip + dev ports).
     CORS_ORIGINS: str = "*"
     CORS_ALLOW_CREDENTIALS: bool = True
-    # Optional regex for dev origins (localhost / LAN). Empty string disables.
-    CORS_ORIGIN_REGEX: str = r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$"
+    # Used when CORS_ORIGINS is "*": allows localhost/LAN and *.sslip.io with any port (e.g. :8443 frontend).
+    CORS_ORIGIN_REGEX: str = (
+        r"^https?://("
+        r"(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?"
+        r"|([\w.-]*\d+(?:\.\d+){3}\.sslip\.io)(:\d+)?"
+        r")$"
+    )
 
     # Database parameters loaded strictly from .env
     DB_USER: str = "postgres"

@@ -15,7 +15,14 @@ import app.db.models  # Ensure all SQLAlchemy models are registered
 
 def _cors_settings() -> dict:
     raw = (settings.CORS_ORIGINS or "*").strip()
+    origin_regex = (settings.CORS_ORIGIN_REGEX or "").strip() or None
     if raw == "*":
+        if origin_regex:
+            return {
+                "allow_origins": [],
+                "allow_origin_regex": origin_regex,
+                "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
+            }
         return {
             "allow_origins": ["*"],
             "allow_origin_regex": None,
@@ -24,7 +31,7 @@ def _cors_settings() -> dict:
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     return {
         "allow_origins": origins,
-        "allow_origin_regex": settings.CORS_ORIGIN_REGEX or None,
+        "allow_origin_regex": origin_regex,
         "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
     }
 
