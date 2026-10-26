@@ -1,4 +1,5 @@
 import re
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
@@ -15,6 +16,7 @@ from app.core.security import (
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
+    CustomerRegisterRequest,
     RefreshTokenRequest,
     ResetPasswordRequest,
     SafeUserResponse,
@@ -151,6 +153,65 @@ class AuthService:
         db.commit()
         db.refresh(user)
         return user
+
+    @staticmethod
+    def _unique_customer_email(db: Session, phone: str, preferred: Optional[str] = None) -> str:
+        if preferred:
+            clean = preferred.strip().lower()
+            existing = db.query(User).filter(User.email == clean).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A user with this email already exists.",
+                )
+            return clean
+        base = f"customer_{phone}@logo.customer"
+        if not db.query(User).filter(User.email == base).first():
+            return base
+        for _ in range(5):
+            candidate = f"customer_{phone}_{secrets.token_hex(3)}@logo.customer"
+            if not db.query(User).filter(User.email == candidate).first():
+                return candidate
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate a unique account email.",
+        )
+
+    @staticmethod
+    def register_customer(db: Session, data: CustomerRegisterRequest) -> TokenResponse:
+        phone = AuthService.normalize_phone(data.phone)
+        existing_phone = db.query(User).filter(User.phone == phone).first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this phone number already exists.",
+            )
+
+        clean_email = AuthService._unique_customer_email(db, phone, data.email)
+        hashed_pwd = hash_password(data.password)
+
+        new_user = User(
+            name=data.name.strip(),
+            email=clean_email,
+            phone=phone,
+            password=hashed_pwd,
+            password_hash=hashed_pwd,
+            role=UserRole.FIELD_STAFF,
+            district=data.district.strip(),
+            city=data.city.strip(),
+            regions=[],
+            module_access=[],
+            send_email=False,
+            status="ACTIVE",
+            is_active=True,
+            is_verified=False,
+        )
+        db.add(new_user)
+        db.flush()
+        WalletService.ensure_wallet_for_user(db, new_user.id)
+        db.commit()
+        db.refresh(new_user)
+        return AuthService.generate_token_pair(new_user)
 
     @staticmethod
     def register_user(db: Session, user_data: UserRegisterRequest) -> User:

@@ -138,6 +138,43 @@ class CustomerLoginOTPVerifyRequest(CustomerLoginOTPSendRequest):
     otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
 
 
+class CustomerRegisterRequest(BaseModel):
+    """Logo App customer (mobile) registration — stored in users table."""
+
+    name: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Anjali Nair"})
+    phone: str = Field(..., min_length=10, max_length=15, json_schema_extra={"example": "9876543210"})
+    password: str = Field(..., min_length=6, max_length=100, json_schema_extra={"example": "SecurePass1"})
+    district: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Ernakulam"})
+    city: str = Field(..., min_length=2, max_length=100, json_schema_extra={"example": "Kochi"})
+    email: Optional[str] = Field(
+        None,
+        description="Optional; if omitted a unique placeholder email is generated for login.",
+        json_schema_extra={"example": "anjali@gmail.com"},
+    )
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        cleaned = re.sub(r"[\s\-()]", "", v.strip())
+        if cleaned.startswith("+91"):
+            cleaned = cleaned[3:]
+        elif cleaned.startswith("91") and len(cleaned) > 10:
+            cleaned = cleaned[2:]
+        if not cleaned.isdigit() or len(cleaned) < 10:
+            raise ValueError("Invalid phone number")
+        return cleaned
+
+
 class SafeUserResponse(BaseModel):
     id: int
     user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "ADM_1"})
@@ -178,6 +215,16 @@ class AvatarUploadResponse(BaseModel):
 class RegisterResponse(BaseModel):
     message: str
     user: SafeUserResponse
+
+
+class CustomerRegisterResponse(BaseModel):
+    message: str
+    user: SafeUserResponse
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user_code: Optional[str] = None
+    role: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
