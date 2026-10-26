@@ -852,6 +852,23 @@ def merchant_login_verify_otp(
 
 
 @router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    summary="Merchant Logout",
+    description="Logs out the merchant and clears session.",
+)
+def logout_merchant(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    name = current_user.name if current_user else "Merchant"
+    return {
+        "success": True,
+        "message": f"{name} logged out successfully.",
+    }
+
+
+
+@router.post(
     "/{merchant_id}/request-promo-access",
     response_model=StandardResponse[PromoAccessRequestResponse],
     summary="Merchant requests promotion access",

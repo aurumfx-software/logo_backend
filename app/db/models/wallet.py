@@ -37,6 +37,7 @@ class WalletTransactionType(str, enum.Enum):
     CASHBACK_REDEMPTION = "CASHBACK_REDEMPTION"
     ADMIN_CREDIT = "ADMIN_CREDIT"
     ADMIN_DEBIT = "ADMIN_DEBIT"
+    WALLET_TOPUP = "WALLET_TOPUP"
 
 
 class WalletLedgerDirection(str, enum.Enum):

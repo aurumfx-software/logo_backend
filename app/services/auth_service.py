@@ -2,6 +2,7 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 import jwt
 
@@ -42,6 +43,33 @@ class AuthService:
         return cleaned
 
     @staticmethod
+    def find_user_by_phone(db: Session, phone: str) -> Optional[User]:
+        """Look up a user by phone (exact, normalized, +91 prefix, or last 10 digits)."""
+        normalized = AuthService.normalize_phone(phone)
+        user = db.query(User).filter(
+            or_(
+                User.phone == normalized,
+                User.phone == f"+91 {normalized}",
+                User.phone == f"+91{normalized}",
+                User.phone == phone.strip(),
+            )
+        ).first()
+        if user:
+            return user
+        if len(normalized) >= 10:
+            tail = normalized[-10:]
+            user = (
+                db.query(User)
+                .filter(User.phone.isnot(None), User.phone.like(f"%{tail}"))
+                .first()
+            )
+        return user
+
+    @staticmethod
+    def _stored_password_hash(user: User) -> Optional[str]:
+        return user.password_hash or user.password
+
+    @staticmethod
     def _find_user_for_customer_login(
         db: Session, email: Optional[str] = None, phone: Optional[str] = None
     ) -> User:
@@ -49,8 +77,7 @@ class AuthService:
         if email:
             user = db.query(User).filter(User.email == email.strip().lower()).first()
         elif phone:
-            normalized = AuthService.normalize_phone(phone)
-            user = db.query(User).filter(User.phone == normalized).first()
+            user = AuthService.find_user_by_phone(db, phone)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -110,9 +137,9 @@ class AuthService:
 
     @staticmethod
     def authenticate_user_by_phone(db: Session, phone: str, password: str) -> User:
-        normalized = AuthService.normalize_phone(phone)
-        user = db.query(User).filter(User.phone == normalized).first()
-        if not user or not user.password_hash:
+        user = AuthService.find_user_by_phone(db, phone)
+        pwd_hash = AuthService._stored_password_hash(user) if user else None
+        if not user or not pwd_hash:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid phone or password.",
@@ -123,7 +150,7 @@ class AuthService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Please use the admin portal to sign in.",
             )
-        if not verify_password(password, user.password_hash):
+        if not verify_password(password, pwd_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid phone or password.",

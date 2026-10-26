@@ -28,6 +28,8 @@ from app.schemas.wallet import (
     SaleRedeemResponse,
     WalletLedgerEntryResponse,
     WalletResponse,
+    WalletTopUpRequest,
+    WalletTopUpResponse,
     WalletTransferRequest,
     WalletTransferResponse,
 )
@@ -893,4 +895,80 @@ class WalletService:
             "total_redemptions_count": len(redeemed_qrs),
             "recent_transactions": items,
         }
+
+    @staticmethod
+    def top_up_wallet(
+        db: Session,
+        user: User,
+        payload: WalletTopUpRequest,
+    ) -> WalletTopUpResponse:
+        amount = WalletService._money(payload.amount)
+        if amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Amount must be greater than zero.",
+            )
+
+        target_wallet = WalletService.ensure_wallet_for_user(db, user.id)
+        db.flush()
+
+        group_id = str(uuid.uuid4())
+        ref_id = payload.reference_id or f"TOPUP_{group_id[:8].upper()}"
+        pay_method = (payload.payment_method or "UPI").strip().upper()
+        note = payload.note or f"Wallet top-up via {pay_method}"
+
+        txn = WalletTransaction(
+            group_id=group_id,
+            transaction_type=WalletTransactionType.WALLET_TOPUP,
+            amount=amount,
+            currency=getattr(settings, "WALLET_CURRENCY", "INR"),
+            description=note,
+            initiated_by_user_id=user.id,
+            reference_id=ref_id,
+        )
+        db.add(txn)
+        db.flush()
+
+        locked = WalletService._lock_wallet(db, target_wallet.id)
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked,
+            WalletLedgerDirection.CREDIT,
+            amount,
+            note=note,
+        )
+
+        db.commit()
+        db.refresh(locked)
+
+        try:
+            from app.services.notification_service import NotificationService
+            NotificationService.create_notification(
+                db=db,
+                user_id=user.id,
+                title="Wallet Top-Up Successful",
+                message=f"₹{amount} credited to your wallet via {pay_method}. New balance: ₹{locked.balance}.",
+                type="WALLET_TOPUP",
+                data={
+                    "amount": str(amount),
+                    "new_balance": str(locked.balance),
+                    "payment_method": pay_method,
+                    "reference_id": ref_id,
+                    "group_id": group_id,
+                },
+            )
+        except Exception:
+            pass
+
+        return WalletTopUpResponse(
+            success=True,
+            message=f"Successfully added ₹{amount:.2f} to wallet via {pay_method}.",
+            wallet=WalletService.wallet_to_response(locked),
+            transaction_group_id=group_id,
+            amount_credited=amount,
+            new_balance=WalletService._money(locked.balance),
+            payment_method=pay_method,
+        )
+
 

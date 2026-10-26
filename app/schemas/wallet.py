@@ -174,3 +174,26 @@ class AdminWalletAdjustResponse(BaseModel):
     wallet: WalletResponse
     transaction_group_id: str
     transaction_type: WalletTransactionType
+
+
+class WalletTopUpRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0, le=100000, description="Amount to add to wallet in INR")
+    payment_method: str = Field(default="UPI", description="Payment method: UPI, CARD, NETBANKING, CASH")
+    reference_id: Optional[str] = Field(None, max_length=128, description="External transaction ID or payment reference")
+    note: Optional[str] = Field(None, max_length=500, description="Optional note")
+
+    @field_validator("amount")
+    @classmethod
+    def round_amount(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+
+class WalletTopUpResponse(BaseModel):
+    success: bool = True
+    message: str
+    wallet: WalletResponse
+    transaction_group_id: str
+    amount_credited: Decimal
+    new_balance: Decimal
+    payment_method: str
+

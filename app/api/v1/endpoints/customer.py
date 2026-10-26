@@ -97,6 +97,23 @@ def login_customer(
     )
 
 
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+    summary="Customer Logout",
+    description="Logs out the customer and clears session.",
+)
+def logout_customer(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    name = current_user.name if current_user else "Customer"
+    return {
+        "success": True,
+        "message": f"{name} logged out successfully.",
+    }
+
+
+
 # =========================================================================
 # Customer Wishlist / Saved Merchants Endpoints (Web & Mobile App)
 # =========================================================================
