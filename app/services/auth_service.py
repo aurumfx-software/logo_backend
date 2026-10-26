@@ -40,6 +40,40 @@ class AuthService:
         return cleaned
 
     @staticmethod
+    def _stored_password_hash(user: User) -> Optional[str]:
+        return user.password_hash or user.password
+
+    @staticmethod
+    def _ensure_customer_login_allowed(user: User) -> None:
+        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please use the admin portal to sign in.",
+            )
+        status_val = (getattr(user, "status", None) or "ACTIVE").upper()
+        if status_val == "INACTIVE" or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive. Please contact support.",
+            )
+
+    @staticmethod
+    def find_user_by_phone(db: Session, phone: str) -> Optional[User]:
+        """Look up a row in users by phone (normalized + last-10-digit fallback)."""
+        normalized = AuthService.normalize_phone(phone)
+        user = db.query(User).filter(User.phone == normalized).first()
+        if user:
+            return user
+        if len(normalized) >= 10:
+            tail = normalized[-10:]
+            user = (
+                db.query(User)
+                .filter(User.phone.isnot(None), User.phone.like(f"%{tail}"))
+                .first()
+            )
+        return user
+
+    @staticmethod
     def _find_user_for_customer_login(
         db: Session, email: Optional[str] = None, phone: Optional[str] = None
     ) -> User:
@@ -47,23 +81,13 @@ class AuthService:
         if email:
             user = db.query(User).filter(User.email == email.strip().lower()).first()
         elif phone:
-            normalized = AuthService.normalize_phone(phone)
-            user = db.query(User).filter(User.phone == normalized).first()
+            user = AuthService.find_user_by_phone(db, phone)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No customer account found with this email or phone.",
             )
-        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please use the admin portal to sign in.",
-            )
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is inactive. Please contact support.",
-            )
+        AuthService._ensure_customer_login_allowed(user)
         return user
 
     @staticmethod
@@ -108,29 +132,20 @@ class AuthService:
 
     @staticmethod
     def authenticate_user_by_phone(db: Session, phone: str, password: str) -> User:
-        normalized = AuthService.normalize_phone(phone)
-        user = db.query(User).filter(User.phone == normalized).first()
-        if not user or not user.password_hash:
+        user = AuthService.find_user_by_phone(db, phone)
+        pwd_hash = AuthService._stored_password_hash(user) if user else None
+        if not user or not pwd_hash:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid phone or password.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please use the admin portal to sign in.",
-            )
-        if not verify_password(password, user.password_hash):
+        AuthService._ensure_customer_login_allowed(user)
+        if not verify_password(password, pwd_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid phone or password.",
                 headers={"WWW-Authenticate": "Bearer"},
-            )
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User account is inactive. Please contact support.",
             )
         user.last_active = datetime.now(timezone.utc)
         db.commit()
