@@ -40,6 +40,7 @@ def create_token(
         "exp": expire,
         "iat": now,
         "type": token_type,
+        "jti": secrets.token_urlsafe(16),
     })
     encoded_jwt = jwt.encode(
         to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM

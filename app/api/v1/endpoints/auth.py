@@ -1,10 +1,13 @@
 import os
 import shutil
 import uuid
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_role, require_admin
+from app.api.deps import get_current_user, require_role, require_admin, security_scheme
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
@@ -15,6 +18,8 @@ from app.schemas.auth import (
     CustomerLoginOTPVerifyRequest,
     ForgotPasswordRequest,
     GenericMessageResponse,
+    LogoutRequest,
+    LogoutResponse,
     RefreshTokenRequest,
     RegisterResponse,
     ResetPasswordRequest,
@@ -139,19 +144,30 @@ def refresh_token(
 
 @router.post(
     "/logout",
-    response_model=GenericMessageResponse,
+    response_model=LogoutResponse,
     summary="Logout user",
     description=(
-        "Handles user logout. In this trial implementation with stateless JWTs, "
-        "the client should discard the token. In production, tokens can be added to a server-side "
-        "revocation blocklist."
+        "Identifies the user from the Bearer access token, revokes access (and optional "
+        "refresh) tokens server-side, sets users.logged_out_at, and logs USER_LOGOUT."
     ),
 )
 def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
     current_user: User = Depends(get_current_user),
-) -> GenericMessageResponse:
-    return GenericMessageResponse(
-        message=f"User {current_user.email} successfully logged out."
+    body: Optional[LogoutRequest] = Body(None),
+    db: Session = Depends(get_db),
+) -> LogoutResponse:
+    refresh = body.refresh_token if body else None
+    logged_out_at = AuthService.logout_user(
+        db=db,
+        user=current_user,
+        access_token=credentials.credentials,
+        refresh_token=refresh,
+    )
+    return LogoutResponse(
+        message=f"User {current_user.email} successfully logged out.",
+        user_id=current_user.id,
+        logged_out_at=logged_out_at,
     )
 
 

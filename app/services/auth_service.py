@@ -1,3 +1,4 @@
+import hashlib
 import re
 import secrets
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.models.otp import OTPPurpose
+from app.db.models.revoked_token import RevokedToken
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
     CustomerRegisterRequest,
@@ -372,8 +374,100 @@ class AuthService:
                 detail="User inactive or no longer exists.",
             )
 
+        if AuthService.is_token_revoked(
+            db, payload, token_request.refresh_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token has been revoked. Please login again.",
+            )
+
         # Generate new token pair
         return AuthService.generate_token_pair(user)
+
+    @staticmethod
+    def _token_jti(payload: Dict, raw_token: str) -> str:
+        jti = payload.get("jti")
+        if jti:
+            return str(jti)
+        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def is_token_revoked(db: Session, payload: Dict, raw_token: str) -> bool:
+        jti = AuthService._token_jti(payload, raw_token)
+        return (
+            db.query(RevokedToken).filter(RevokedToken.jti == jti).first() is not None
+        )
+
+    @staticmethod
+    def _revoke_raw_token(
+        db: Session,
+        user_id: int,
+        raw_token: str,
+        payload: Dict,
+        token_type: str,
+    ) -> None:
+        jti = AuthService._token_jti(payload, raw_token)
+        if db.query(RevokedToken).filter(RevokedToken.jti == jti).first():
+            return
+        exp = payload.get("exp")
+        if exp:
+            expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+        else:
+            expires_at = datetime.now(timezone.utc)
+        db.add(
+            RevokedToken(
+                jti=jti,
+                user_id=user_id,
+                token_type=token_type,
+                expires_at=expires_at,
+            )
+        )
+
+    @staticmethod
+    def logout_user(
+        db: Session,
+        user: User,
+        access_token: str,
+        refresh_token: Optional[str] = None,
+    ) -> datetime:
+        now = datetime.now(timezone.utc)
+
+        try:
+            access_payload = decode_token(access_token)
+            if access_payload.get("type") == "access":
+                AuthService._revoke_raw_token(
+                    db, user.id, access_token, access_payload, "access"
+                )
+        except jwt.InvalidTokenError:
+            pass
+
+        if refresh_token:
+            try:
+                refresh_payload = decode_token(refresh_token)
+                if refresh_payload.get("type") == "refresh":
+                    AuthService._revoke_raw_token(
+                        db, user.id, refresh_token, refresh_payload, "refresh"
+                    )
+            except jwt.InvalidTokenError:
+                pass
+
+        user.logged_out_at = now
+        user.last_active = now
+
+        from app.services.activity_log_service import ActivityLogService
+
+        ActivityLogService.log_activity(
+            db=db,
+            action="USER_LOGOUT",
+            entity_type="USER",
+            entity_id=user.id,
+            user_id=user.id,
+            details={"email": user.email, "phone": user.phone},
+        )
+        db.commit()
+        db.refresh(user)
+        return now
 
     @staticmethod
     def request_password_reset(db: Session, email: str) -> Optional[str]:

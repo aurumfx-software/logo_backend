@@ -229,12 +229,24 @@ def test_logout_endpoint(client: TestClient):
     })
     token = login_res.json()["access_token"]
 
+    refresh = login_res.json()["refresh_token"]
     response = client.post(
         "/api/v1/auth/logout",
         headers={"Authorization": f"Bearer {token}"},
+        json={"refresh_token": refresh},
     )
     assert response.status_code == 200
-    assert "successfully logged out" in response.json()["message"].lower()
+    body = response.json()
+    assert "successfully logged out" in body["message"].lower()
+    assert body["user_id"] > 0
+    assert body["logged_out_at"]
+
+    me_res = client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_res.status_code == 401
+    assert "revoked" in me_res.json()["detail"].lower()
 
 
 # 10. OTP generation and verification

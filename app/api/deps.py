@@ -7,6 +7,7 @@ import jwt
 from app.core.security import decode_token
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
+from app.services.auth_service import AuthService
 
 # HTTP Bearer scheme with automatic Swagger UI integration
 security_scheme = HTTPBearer(auto_error=True)
@@ -38,6 +39,13 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Provided token is not an access token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if AuthService.is_token_revoked(db, payload, token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked. Please login again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

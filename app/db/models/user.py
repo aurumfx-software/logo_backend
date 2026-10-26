@@ -44,6 +44,7 @@ class User(Base):
     send_email = Column(Boolean, default=False, nullable=False)
     status = Column(String(50), default="ACTIVE", nullable=False)
     last_active = Column(DateTime(timezone=True), nullable=True)
+    logged_out_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(50), nullable=True)
     address = Column(String(500), nullable=True)
     profile_picture = Column(String(500), nullable=True)

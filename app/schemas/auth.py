@@ -275,5 +275,19 @@ class ResetPasswordRequest(UserBase):
     new_password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "NewPassword123"})
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = Field(
+        None,
+        description="Optional refresh token to revoke on logout",
+    )
+
+
+class LogoutResponse(BaseModel):
+    success: bool = True
+    message: str
+    user_id: int
+    logged_out_at: datetime
+
+
 class GenericMessageResponse(BaseModel):
     message: str
