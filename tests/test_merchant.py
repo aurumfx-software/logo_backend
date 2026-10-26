@@ -128,3 +128,39 @@ def test_list_and_filter_merchants(client: TestClient):
     res = client.get("/api/v1/merchants")
     assert res.status_code == 200
     assert isinstance(res.json(), list)
+
+
+def test_list_merchants_by_category_column(client: TestClient, db_session):
+    from app.db.models.merchant import MerchantProfile
+    from app.db.models.user import User
+    from app.core.security import hash_password
+
+    user = User(
+        name="Advocate Owner",
+        email="advocate.shop@example.com",
+        password_hash=hash_password("Pass12345!"),
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    merchant = MerchantProfile(
+        user_id=user.id,
+        business_name="Legal Aid Office",
+        category="Advocates",
+        categories=["Advocates"],
+        location="Kochi",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(merchant)
+    db_session.commit()
+
+    res = client.get("/api/v1/merchants?category=Advocates&limit=500")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) >= 1
+    assert any(m["business_name"] == "Legal Aid Office" for m in data)

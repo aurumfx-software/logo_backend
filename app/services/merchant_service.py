@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 from fastapi import HTTPException, status
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -19,6 +20,33 @@ from app.services.otp_service import OTPService
 
 class MerchantService:
     """Service handling merchant registration, profile management, and discovery."""
+
+    @staticmethod
+    def _merchant_matches_category(merchant: MerchantProfile, category: str) -> bool:
+        cat_clean = category.strip().lower()
+        if not cat_clean:
+            return True
+        if merchant.category and cat_clean in merchant.category.strip().lower():
+            return True
+        if merchant.category and merchant.category.strip().lower() == cat_clean:
+            return True
+        for c in merchant.categories or []:
+            label = str(c).strip().lower()
+            if cat_clean in label or label == cat_clean:
+                return True
+        return False
+
+    @staticmethod
+    def _apply_category_sql_filter(query, category: Optional[str]):
+        if not category or not category.strip():
+            return query
+        pattern = f"%{category.strip()}%"
+        return query.filter(
+            or_(
+                MerchantProfile.category.ilike(pattern),
+                cast(MerchantProfile.categories, String).ilike(pattern),
+            )
+        )
 
     @staticmethod
     def build_merchant_response(merchant: MerchantProfile) -> MerchantProfileResponse:
@@ -440,7 +468,11 @@ class MerchantService:
                 (MerchantProfile.user_code == user_code.strip())
                 | (User.user_code == user_code.strip())
             )
-        elif current_user and current_user.role == UserRole.FIELD_STAFF:
+        elif (
+            not public_only
+            and current_user
+            and current_user.role == UserRole.FIELD_STAFF
+        ):
             q = q.filter(
                 (MerchantProfile.user_id == current_user.id)
                 | (MerchantProfile.onboarded_by_id == current_user.id)
@@ -451,8 +483,8 @@ class MerchantService:
                 | (MerchantProfile.onboarded_by_id == user_id)
             )
 
-        if public_only and not current_user and not user_code and not user_id:
-            # Public discovery: only active users and approved merchants
+        if public_only and not user_code and not user_id:
+            # Public discovery (guest or customer app): approved, active merchants only
             q = q.filter(
                 MerchantProfile.is_active == True,
                 User.is_active == True,
@@ -489,10 +521,9 @@ class MerchantService:
             ]
 
         if category:
-            cat_clean = category.strip().lower()
             filtered = [
                 m for m in filtered
-                if any(cat_clean in str(c).lower() for c in (m.categories or []))
+                if MerchantService._merchant_matches_category(m, category)
             ]
 
         if query:
@@ -738,35 +769,31 @@ class MerchantService:
         limit: int = 50,
         current_user: Optional[User] = None,
         user_code: Optional[str] = None,
+        scope_to_current_user: bool = False,
     ) -> List[MerchantProfile]:
-        query = db.query(MerchantProfile)
-
-        # Scoped access or explicit filter:
-        if user_code:
-            uc = user_code.strip()
-            query = query.filter(
-                (MerchantProfile.user_code.ilike(f"%{uc}%"))
-                | (MerchantProfile.onboarded_by.has(User.user_code.ilike(f"%{uc}%")))
-            )
-        elif current_user and current_user.role == UserRole.FIELD_STAFF:
-            query = query.filter(
-                (MerchantProfile.user_id == current_user.id)
-                | (MerchantProfile.onboarded_by_id == current_user.id)
-            )
-
-        if location:
-            query = query.filter(MerchantProfile.location.ilike(f"%{location}%"))
-        results = query.offset(skip).limit(limit).all()
-
-        if category:
-            cat_clean = category.strip().lower()
-            results = [
-                m
-                for m in results
-                if any(cat_clean in c.lower() for c in (m.categories or []))
-            ]
-
-        return results
+        """
+        GET /merchants: public approved catalog for guests and customers; optional filters.
+        Field staff without user_code see merchants they created or onboarded (any approval status).
+        scope_to_current_user=True for GET /my-merchants.
+        """
+        field_staff_browse = (
+            not scope_to_current_user
+            and not user_code
+            and current_user is not None
+            and current_user.role == UserRole.FIELD_STAFF
+        )
+        scoped = scope_to_current_user or field_staff_browse
+        items, _ = MerchantService.search_merchants(
+            db=db,
+            category=category,
+            location=location,
+            skip=skip,
+            limit=limit,
+            public_only=not scoped,
+            current_user=current_user if scoped else None,
+            user_code=user_code,
+        )
+        return items
 
     # ── OTP Login ───────────────────────────────────────────────────────────
 

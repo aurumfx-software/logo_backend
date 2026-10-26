@@ -320,7 +320,10 @@ def get_my_merchants(
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
     merchants = MerchantService.list_merchants(
-        db=db, current_user=current_user, limit=200
+        db=db,
+        current_user=current_user,
+        limit=200,
+        scope_to_current_user=True,
     )
     return [MerchantService.build_merchant_response(m) for m in merchants]
 
@@ -419,14 +422,14 @@ def upload_merchant_photos(
     "",
     response_model=List[MerchantProfileResponse],
     summary="Discover & list merchants",
-    description="Public endpoint to list registered merchants, optionally filtered by category or location. Scoped to creator when authenticated as Field Staff.",
+    description="Public catalog of approved merchants; filter by category or location. Customers and guests always see the full approved catalog. Field staff see only merchants they created or onboarded unless user_code is provided.",
 )
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=500),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
