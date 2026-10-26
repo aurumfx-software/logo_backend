@@ -13,6 +13,22 @@ from app.db.database import Base, engine
 import app.db.models  # Ensure all SQLAlchemy models are registered
 
 
+def _cors_settings() -> dict:
+    raw = (settings.CORS_ORIGINS or "*").strip()
+    if raw == "*":
+        return {
+            "allow_origins": ["*"],
+            "allow_origin_regex": None,
+            "allow_credentials": False,
+        }
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return {
+        "allow_origins": origins,
+        "allow_origin_regex": settings.CORS_ORIGIN_REGEX or None,
+        "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure all tables exist in PostgreSQL (pgAdmin) on application start
@@ -30,13 +46,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware
+# CORS must not combine allow_origins=["*"] with allow_credentials=True (browser blocks preflight).
+_cors = _cors_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors["allow_origins"],
+    allow_origin_regex=_cors["allow_origin_regex"],
+    allow_credentials=_cors["allow_credentials"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Standardized Error Exception Handlers

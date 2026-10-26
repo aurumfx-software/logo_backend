@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     API_V1_STR: str = "/api/v1"
 
+    # CORS — comma-separated origins, or "*" for any origin (credentials disabled with "*")
+    CORS_ORIGINS: str = "*"
+    CORS_ALLOW_CREDENTIALS: bool = True
+    # Optional regex for dev origins (localhost / LAN). Empty string disables.
+    CORS_ORIGIN_REGEX: str = r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$"
+
     # Database parameters loaded strictly from .env
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
