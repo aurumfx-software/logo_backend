@@ -1,5 +1,18 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, event, text
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    text,
+)
 from sqlalchemy.orm import Session, relationship
 from app.db.database import Base
 
@@ -86,6 +99,30 @@ class MerchantProfile(Base):
     user = relationship("User", foreign_keys=[user_id], backref="merchant_profiles")
     approved_by = relationship("User", foreign_keys=[approved_by_id])
     onboarded_by = relationship("User", foreign_keys=[onboarded_by_id])
+
+
+class MerchantFavorite(Base):
+    __tablename__ = "merchant_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "merchant_profile_id", name="uq_user_merchant_favorite"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    merchant_profile_id = Column(
+        Integer,
+        ForeignKey("merchant_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", backref="favorite_merchants")
+    merchant_profile = relationship("MerchantProfile", backref="favorited_by")
 
 
 @event.listens_for(Session, "before_flush")
