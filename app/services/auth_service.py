@@ -15,6 +15,8 @@ from app.core.security import (
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
+    CustomerRegisterRequest,
+    CustomerRegisterResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
     SafeUserResponse,
@@ -24,6 +26,7 @@ from app.schemas.auth import (
     UserRegisterRequest,
 )
 from app.services.otp_service import OTPService
+from app.services.wallet_service import WalletService
 
 
 class AuthService:
@@ -135,6 +138,60 @@ class AuthService:
         db.commit()
         db.refresh(user)
         return user
+
+    @staticmethod
+    def register_customer(db: Session, data: CustomerRegisterRequest) -> TokenResponse:
+        phone_norm = AuthService.normalize_phone(data.phone)
+        existing_phone = db.query(User).filter(User.phone == phone_norm).first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this mobile number already exists. Please sign in.",
+            )
+
+        clean_email: str
+        if data.email:
+            clean_email = data.email.strip().lower()
+            existing_email = db.query(User).filter(User.email == clean_email).first()
+            if existing_email:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email address already exists. Please sign in or use another email.",
+                )
+        else:
+            clean_email = f"{phone_norm}@customer.logoapp.local"
+            suffix = 1
+            while db.query(User).filter(User.email == clean_email).first():
+                clean_email = f"{phone_norm}_{suffix}@customer.logoapp.local"
+                suffix += 1
+
+        hashed_pwd = hash_password(data.password)
+        new_user = User(
+            name=data.name.strip(),
+            email=clean_email,
+            phone=phone_norm,
+            password=hashed_pwd,
+            password_hash=hashed_pwd,
+            role=UserRole.CUSTOMER,
+            district=data.district.strip() if data.district else None,
+            city=data.city.strip() if data.city else None,
+            address=f"{data.city.strip() if data.city else ''}, {data.district.strip() if data.district else ''}, Kerala",
+            regions=[],
+            module_access=[],
+            send_email=False,
+            status="ACTIVE",
+            is_active=True,
+            is_verified=False,
+        )
+        db.add(new_user)
+        db.flush()
+        try:
+            WalletService.ensure_wallet_for_user(db, new_user.id)
+        except Exception:
+            pass
+        db.commit()
+        db.refresh(new_user)
+        return AuthService.generate_token_pair(new_user)
 
     @staticmethod
     def register_user(db: Session, user_data: UserRegisterRequest) -> User:
