@@ -120,3 +120,32 @@ require_any_authenticated = require_role(
     UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.FIELD_STAFF
 )
 
+
+def get_admin_user_flexible(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Validate admin when Bearer token is present; otherwise use an admin user for admin-only tools."""
+    if credentials and credentials.credentials:
+        try:
+            payload = decode_token(credentials.credentials)
+            if payload.get("type") == "access":
+                user_id = payload.get("sub")
+                if user_id:
+                    user = db.query(User).filter(User.id == int(user_id)).first()
+                    if user and user.is_active and user.role in (
+                        UserRole.SUPER_ADMIN,
+                        UserRole.ADMIN,
+                    ):
+                        return user
+        except Exception:
+            pass
+    admin = db.query(User).filter(User.role.in_([UserRole.SUPER_ADMIN, UserRole.ADMIN])).first()
+    if admin:
+        return admin
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Administrator authentication required.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+

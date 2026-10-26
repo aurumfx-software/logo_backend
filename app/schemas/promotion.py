@@ -1,30 +1,74 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
+from pydantic import BaseModel, Field
 
-from pydantic import BaseModel, ConfigDict, Field
+
+class PromotionCreateRequest(BaseModel):
+    title: str = Field(..., min_length=2, max_length=255)
+    category: Optional[str] = "Solar & Electricals"
+    type: Optional[str] = "Featured"  # Featured, Sponsored, Banner, Promotion
+    placement: Optional[str] = "Home Top"
+    location: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: Optional[str] = "active"
+    impressions: Optional[int] = 0
+    clicks: Optional[int] = 0
+    image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = "image"  # image, video
+    thumbnail_url: Optional[str] = None
+    target_url: Optional[str] = None
+    description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
+
+
+class PromotionUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    category: Optional[str] = None
+    type: Optional[str] = None
+    placement: Optional[str] = None
+    location: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    status: Optional[str] = None
+    impressions: Optional[int] = None
+    clicks: Optional[int] = None
+    image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    target_url: Optional[str] = None
+    description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
 
 class PromotionResponse(BaseModel):
     id: int
-    title: str
-    subtitle: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
-    link_url: Optional[str] = None
-    discount_label: Optional[str] = None
     promo_code: Optional[str] = None
-    merchant_profile_id: Optional[int] = None
+    title: str
+    category: Optional[str] = None
+    type: str
+    placement: Optional[str] = None
+    location: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
     status: str
-    is_active: bool
-    start_at: Optional[datetime] = None
-    end_at: Optional[datetime] = None
-    priority: int = 0
-    created_at: datetime
-    updated_at: datetime
+    impressions: int
+    clicks: int
+    image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    media_type: Optional[str] = "image"
+    thumbnail_url: Optional[str] = None
+    target_url: Optional[str] = None
+    description: Optional[str] = None
+    merchant_id: Optional[int] = None
+    merchant_name: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    created_at: Optional[datetime] = None
 
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PromotionListResponse(BaseModel):
-    items: List[PromotionResponse]
-    total: int
+    class Config:
+        from_attributes = True

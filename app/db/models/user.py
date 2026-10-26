@@ -50,6 +50,8 @@ class User(Base):
     profile_picture = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
+    can_sell_products = Column(Boolean, default=False, nullable=False)
+    is_subscriber = Column(Boolean, default=False, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

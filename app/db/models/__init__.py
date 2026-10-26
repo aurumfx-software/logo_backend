@@ -5,6 +5,7 @@ from app.db.models.logo import LogoCategory, LogoStatus, Logo, LogoFavorite
 from app.db.models.notification import Notification
 from app.db.models.activity_log import ActivityLog
 from app.db.models.revoked_token import RevokedToken
+from app.db.models.product import CustomerProduct, ProductOrder
 from app.db.models.promotion import Promotion
 from app.db.models.wallet import (
     MerchantSaleQR,
@@ -25,6 +26,8 @@ __all__ = [
     "MerchantProfile",
     "MerchantFavorite",
     "Promotion",
+    "CustomerProduct",
+    "ProductOrder",
     "LogoCategory",
     "LogoStatus",
     "Logo",
