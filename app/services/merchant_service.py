@@ -1,7 +1,7 @@
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import String, cast, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import String, cast, exists, or_, select
+from sqlalchemy.orm import Session, joinedload, load_only
 
 from app.core.security import hash_password
 from app.db.models.merchant import MerchantProfile
@@ -20,6 +20,38 @@ from app.services.otp_service import OTPService
 
 class MerchantService:
     """Service handling merchant registration, profile management, and discovery."""
+
+    _USER_LOAD_ONLY = (
+        User.id,
+        User.user_code,
+        User.name,
+        User.email,
+        User.phone,
+        User.role,
+        User.is_active,
+    )
+
+    @staticmethod
+    def _coerce_str_list(value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(x) for x in value if x is not None and str(x).strip()]
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            if text.startswith("[") and text.endswith("]"):
+                return [text]
+            return [part.strip() for part in text.split(",") if part.strip()]
+        return [str(value)]
+
+    @staticmethod
+    def _merchant_list_options():
+        return (
+            joinedload(MerchantProfile.user).load_only(*MerchantService._USER_LOAD_ONLY),
+            joinedload(MerchantProfile.onboarded_by).load_only(*MerchantService._USER_LOAD_ONLY),
+        )
 
     @staticmethod
     def _merchant_matches_category(merchant: MerchantProfile, category: str) -> bool:
@@ -50,6 +82,15 @@ class MerchantService:
 
     @staticmethod
     def build_merchant_response(merchant: MerchantProfile) -> MerchantProfileResponse:
+        merchant.categories = MerchantService._coerce_str_list(merchant.categories)
+        merchant.services = MerchantService._coerce_str_list(merchant.services)
+        merchant.merchant_photos = MerchantService._coerce_str_list(merchant.merchant_photos)
+        merchant.merchant_videos = MerchantService._coerce_str_list(merchant.merchant_videos)
+        merchant.verification_documents = MerchantService._coerce_str_list(
+            merchant.verification_documents
+        )
+        merchant.key_highlights = MerchantService._coerce_str_list(merchant.key_highlights)
+
         creator_user = merchant.onboarded_by or merchant.user
         creator_summary = None
         if creator_user:
@@ -57,8 +98,8 @@ class MerchantService:
             creator_summary = MerchantCreatorSummary(
                 id=creator_user.id,
                 user_code=creator_user.user_code,
-                name=creator_user.name,
-                email=creator_user.email,
+                name=creator_user.name or "Unknown",
+                email=creator_user.email or "",
                 phone=creator_user.phone,
                 role=role_str,
             )
@@ -460,13 +501,16 @@ class MerchantService:
         user_id: Optional[int] = None,
         user_code: Optional[str] = None,
     ) -> Tuple[List[MerchantProfile], int]:
-        q = db.query(MerchantProfile).join(User, MerchantProfile.user_id == User.id)
+        q = db.query(MerchantProfile).options(*MerchantService._merchant_list_options())
 
         # Scoped access or explicit filter:
         if user_code:
+            code = user_code.strip()
             q = q.filter(
-                (MerchantProfile.user_code == user_code.strip())
-                | (User.user_code == user_code.strip())
+                (MerchantProfile.user_code == code)
+                | MerchantProfile.user_id.in_(
+                    select(User.id).where(User.user_code == code)
+                )
             )
         elif (
             not public_only
@@ -484,11 +528,14 @@ class MerchantService:
             )
 
         if public_only and not user_code and not user_id:
-            # Public discovery (guest or customer app): approved, active merchants only
+            active_owner = exists().where(
+                User.id == MerchantProfile.user_id,
+                User.is_active == True,
+            )
             q = q.filter(
                 MerchantProfile.is_active == True,
-                User.is_active == True,
                 MerchantProfile.approval_status == "APPROVED",
+                active_owner,
             )
         else:
             if approval_status:
@@ -530,12 +577,12 @@ class MerchantService:
             kw = query.strip().lower()
             filtered = [
                 m for m in filtered
-                if kw in m.business_name.lower()
+                if kw in (m.business_name or "").lower()
                 or (m.owner_name and kw in m.owner_name.lower())
-                or kw in m.location.lower()
+                or kw in (m.location or "").lower()
                 or (m.city and kw in m.city.lower())
                 or (m.district and kw in m.district.lower())
-                or kw in m.address.lower()
+                or kw in (m.address or "").lower()
                 or any(kw in str(s).lower() for s in (m.services or []))
                 or any(kw in str(c).lower() for c in (m.categories or []))
             ]
