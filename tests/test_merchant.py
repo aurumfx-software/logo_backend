@@ -23,7 +23,8 @@ def test_merchant_registration_success(client: TestClient):
     data = response.json()
     assert data["message"] == "Merchant registered successfully"
     assert data["user"]["email"] == "rajesh.merchant@example.com"
-    assert data["user"]["role"] == "FIELD_STAFF"
+    assert data["user"]["role"] == "MERCHANT"
+    assert data["merchant"]["user_id"] == data["user"]["id"]
     assert data["user"]["phone"] == "9876543999"
     assert data["user"]["address"] == "Door No 14/204, Toll Junction, Edappally, Kochi - 682024"
 

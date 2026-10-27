@@ -200,7 +200,10 @@ class MerchantService:
         creator_summary = None
         if include_creator:
             try:
-                creator_user = merchant.onboarded_by or merchant.user
+                if merchant.onboarded_by_id:
+                    creator_user = merchant.onboarded_by
+                else:
+                    creator_user = merchant.user
             except Exception:
                 creator_user = None
         if creator_user:
@@ -246,13 +249,13 @@ class MerchantService:
                 detail="An account with this contact number already exists.",
             )
 
-        # 1. Create User with MERCHANT role
+        # 1. Create login account in users table (merchant owner)
         user = User(
             name=data.name.strip(),
             email=clean_email,
             phone=data.contact_number,
             password_hash=hash_password(data.password),
-            role=UserRole.FIELD_STAFF,
+            role=UserRole.MERCHANT,
             address=data.address,
             profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
             is_active=True,
@@ -262,17 +265,22 @@ class MerchantService:
         db.commit()
         db.refresh(user)
 
-        # 2. Create Merchant Profile
+        # 2. Create business profile in merchant_profiles (linked by user_id)
         merchant = MerchantProfile(
             user_id=user.id,
             user_code=user.user_code,
             business_name=data.business_name.strip(),
+            owner_name=data.name.strip(),
+            owner=data.name.strip(),
             categories=data.categories,
+            category=data.categories[0] if data.categories else None,
             location=data.location.strip(),
             services=data.services,
             service_timing=data.service_timing.strip(),
             merchant_photos=data.merchant_photos or [],
             contact_number=data.contact_number.strip(),
+            phone=data.contact_number.strip(),
+            email=clean_email,
             address=data.address.strip(),
             is_verified=False,
             approval_status="PENDING",
@@ -345,39 +353,43 @@ class MerchantService:
                 user = phone_user
 
         if not user:
-            if creator_user and not clean_email:
-                user = creator_user
-            else:
-                random_pw = secrets.token_urlsafe(12)
-                gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
-                if db.query(User).filter(User.email == gen_email).first():
-                    gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
+            owner_name = (data.owner_name or data.owner or data.business_name or "Business Owner").strip()
+            random_pw = secrets.token_urlsafe(12)
+            gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
+            if db.query(User).filter(User.email == gen_email).first():
+                gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
 
-                user = User(
-                    name=data.owner_name.strip(),
-                    email=gen_email,
-                    phone=clean_phone,
-                    password_hash=hash_password(random_pw),
-                    role=UserRole.FIELD_STAFF,
-                    address=data.address.strip(),
-                    profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
-                    is_active=True,
-                    is_verified=False,
-                )
-                db.add(user)
-                db.commit()
-                db.refresh(user)
+            user = User(
+                name=owner_name,
+                email=gen_email,
+                phone=clean_phone,
+                password_hash=hash_password(random_pw),
+                role=UserRole.MERCHANT,
+                address=data.address.strip() if data.address else None,
+                district=district,
+                city=city,
+                profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
+                is_active=True,
+                is_verified=False,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif user.role not in (UserRole.MERCHANT, UserRole.SUPER_ADMIN, UserRole.ADMIN):
+            user.role = UserRole.MERCHANT
+            db.commit()
+            db.refresh(user)
 
-        # 6. Create Merchant Profile
-        effective_user_id = creator_user_id if creator_user_id else user.id
+        # 6. Create merchant_profiles row — always linked to owner user (users table)
         category_val = data.category or (categories[0] if categories else None)
         owner_val = data.owner or data.owner_name
 
         merchant_user_code = data.user_code if (data.user_code and data.user_code.startswith("MRH")) else None
 
         merchant = MerchantProfile(
-            user_id=effective_user_id,
-            user_code=merchant_user_code,
+            user_id=user.id,
+            user_code=merchant_user_code or user.user_code,
+            onboarded_by_id=creator_user_id,
             business_name=data.business_name.strip(),
             owner=owner_val.strip() if owner_val else "Business Owner",
             category=category_val,
@@ -417,7 +429,7 @@ class MerchantService:
             service_timing=data.service_timing or "General Store Hours",
             is_verified=False,
             is_active=True,
-            onboarded_by_id=effective_user_id,
+            approval_status="PENDING",
         )
         db.add(merchant)
         db.commit()
@@ -429,7 +441,7 @@ class MerchantService:
             action="MERCHANT_ONBOARDED",
             entity_type="MERCHANT",
             entity_id=merchant.id,
-            user_id=effective_user_id,
+            user_id=user.id,
             details={
                 "business_name": merchant.business_name,
                 "district": merchant.district,
@@ -622,11 +634,11 @@ class MerchantService:
         # Scoped access or explicit filter:
         if user_code:
             code = user_code.strip()
+            staff_user_ids = select(User.id).where(User.user_code == code)
             q = q.filter(
                 (MerchantProfile.user_code == code)
-                | MerchantProfile.user_id.in_(
-                    select(User.id).where(User.user_code == code)
-                )
+                | (MerchantProfile.onboarded_by_id.in_(staff_user_ids))
+                | MerchantProfile.user_id.in_(staff_user_ids)
             )
         elif (
             not public_only

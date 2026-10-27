@@ -56,8 +56,7 @@ ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
     status_code=status.HTTP_201_CREATED,
     summary="Register a new merchant",
     description=(
-        "Registers a merchant account with role FIELD_STAFF, business name, categories, "
-        "location, services, service timing, photos, contact number, and address."
+        "Creates a merchant owner in users (role MERCHANT) and a business profile in merchant_profiles."
     ),
 )
 def register_merchant(

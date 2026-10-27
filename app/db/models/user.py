@@ -8,11 +8,14 @@ class UserRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
     ADMIN = "ADMIN"
     FIELD_STAFF = "FIELD_STAFF"
+    MERCHANT = "MERCHANT"
 
     @classmethod
     def _missing_(cls, value):
         if isinstance(value, str):
             norm = value.strip().upper().replace(" ", "_").replace("-", "_")
+            if norm in ("MERCHANT", "MERCHANTS", "SHOP", "SHOP_OWNER"):
+                return cls.MERCHANT
             if norm in ("PUBLIC_USER", "PUBLICUSER", "USER", "FIELDSTAFF"):
                 return cls.FIELD_STAFF
             if norm in ("SUPERADMIN", "SUPER_ADMIN"):

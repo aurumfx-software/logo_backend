@@ -404,7 +404,8 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     res1 = client.post("/api/v1/merchants/onboard", json=payload_m1, headers=staff_headers)
     assert res1.status_code == 201
     m1 = res1.json()["merchant"]
-    assert m1["user_id"] == staff.id
+    assert m1["user_id"] != staff.id
+    assert m1["onboarded_by_id"] == staff.id
     assert m1["user_code"].startswith("MRH")
     assert m1["creator"] is not None
     assert m1["creator"]["id"] == staff.id
@@ -427,7 +428,8 @@ def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClien
     res2 = client.post("/api/v1/merchants/onboard", json=payload_m2, headers=staff_headers)
     assert res2.status_code == 201
     m2 = res2.json()["merchant"]
-    assert m2["user_id"] == staff.id
+    assert m2["user_id"] != staff.id
+    assert m2["onboarded_by_id"] == staff.id
     assert m2["user_code"].startswith("MRH")
     assert m2["creator"]["id"] == staff.id
     assert m2["creator"]["user_code"] == staff.user_code
