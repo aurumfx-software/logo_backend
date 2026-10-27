@@ -1,6 +1,6 @@
 from typing import Any, List, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import String, cast, exists, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, joinedload, load_only
 
 from app.core.security import hash_password
@@ -9,6 +9,7 @@ from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
 from app.schemas.merchant import (
     MerchantCreatorSummary,
+    MerchantLinkedUser,
     MerchantOnboardingRequest,
     MerchantProfileResponse,
     MerchantRegisterRequest,
@@ -81,7 +82,96 @@ class MerchantService:
         )
 
     @staticmethod
-    def build_merchant_response(merchant: MerchantProfile) -> MerchantProfileResponse:
+    def load_linked_users(db: Session, user_ids: set) -> dict:
+        """Batch-load owner users with only stable columns (avoids schema drift on users table)."""
+        if not user_ids:
+            return {}
+        rows = (
+            db.query(
+                User.id,
+                User.user_code,
+                User.name,
+                User.email,
+                User.phone,
+                User.profile_picture,
+                User.district,
+                User.city,
+            )
+            .filter(User.id.in_(user_ids))
+            .all()
+        )
+        return {row.id: row for row in rows}
+
+    @staticmethod
+    def merge_linked_user(
+        resp: MerchantProfileResponse,
+        user_row: Any,
+    ) -> MerchantProfileResponse:
+        if not user_row:
+            return resp
+        linked = MerchantLinkedUser(
+            id=user_row.id,
+            user_code=user_row.user_code,
+            name=user_row.name or "Unknown",
+            email=user_row.email,
+            phone=user_row.phone,
+            profile_picture=user_row.profile_picture,
+            district=user_row.district,
+            city=user_row.city,
+        )
+        resp.user = linked
+        if not resp.owner_name:
+            resp.owner_name = linked.name
+        if not resp.owner:
+            resp.owner = linked.name
+        if not resp.email:
+            resp.email = linked.email
+        if not resp.phone:
+            resp.phone = linked.phone
+        if not resp.contact_number:
+            resp.contact_number = linked.phone
+        if not resp.district and linked.district:
+            resp.district = linked.district
+        if not resp.city and linked.city:
+            resp.city = linked.city
+        if not resp.user_code and linked.user_code:
+            resp.user_code = linked.user_code
+        return resp
+
+    @staticmethod
+    def build_merchant_list_responses(
+        db: Session,
+        merchants: List[MerchantProfile],
+        merge_users: bool = True,
+        include_creator: bool = False,
+    ) -> List[MerchantProfileResponse]:
+        linked_map = {}
+        if merge_users and merchants:
+            linked_map = MerchantService.load_linked_users(
+                db, {m.user_id for m in merchants if m.user_id}
+            )
+        results: List[MerchantProfileResponse] = []
+        for merchant in merchants:
+            try:
+                resp = MerchantService.build_merchant_response(
+                    merchant,
+                    include_creator=include_creator,
+                )
+                if merge_users:
+                    resp = MerchantService.merge_linked_user(
+                        resp, linked_map.get(merchant.user_id)
+                    )
+                results.append(resp)
+            except Exception:
+                continue
+        return results
+
+    @staticmethod
+    def build_merchant_response(
+        merchant: MerchantProfile,
+        include_creator: bool = True,
+        linked_user: Any = None,
+    ) -> MerchantProfileResponse:
         merchant.categories = MerchantService._coerce_str_list(merchant.categories)
         merchant.services = MerchantService._coerce_str_list(merchant.services)
         merchant.merchant_photos = MerchantService._coerce_str_list(merchant.merchant_photos)
@@ -90,9 +180,29 @@ class MerchantService:
             merchant.verification_documents
         )
         merchant.key_highlights = MerchantService._coerce_str_list(merchant.key_highlights)
+        if merchant.rating is not None:
+            try:
+                merchant.rating = float(merchant.rating)
+            except (TypeError, ValueError):
+                merchant.rating = 0.0
+        if merchant.latitude is not None:
+            try:
+                merchant.latitude = float(merchant.latitude)
+            except (TypeError, ValueError):
+                merchant.latitude = None
+        if merchant.longitude is not None:
+            try:
+                merchant.longitude = float(merchant.longitude)
+            except (TypeError, ValueError):
+                merchant.longitude = None
 
-        creator_user = merchant.onboarded_by or merchant.user
+        creator_user = None
         creator_summary = None
+        if include_creator:
+            try:
+                creator_user = merchant.onboarded_by or merchant.user
+            except Exception:
+                creator_user = None
         if creator_user:
             role_str = creator_user.role.value if hasattr(creator_user.role, "value") else str(creator_user.role)
             creator_summary = MerchantCreatorSummary(
@@ -110,6 +220,8 @@ class MerchantService:
             resp.user_code = creator_summary.user_code
         resp.creator = creator_summary
         resp.created_by = creator_summary
+        if linked_user is not None:
+            resp = MerchantService.merge_linked_user(resp, linked_user)
         return resp
 
     @staticmethod
@@ -501,7 +613,11 @@ class MerchantService:
         user_id: Optional[int] = None,
         user_code: Optional[str] = None,
     ) -> Tuple[List[MerchantProfile], int]:
-        q = db.query(MerchantProfile).options(*MerchantService._merchant_list_options())
+        public_catalog = public_only and not user_code and not user_id
+        if public_catalog:
+            q = db.query(MerchantProfile)
+        else:
+            q = db.query(MerchantProfile).options(*MerchantService._merchant_list_options())
 
         # Scoped access or explicit filter:
         if user_code:
@@ -527,15 +643,10 @@ class MerchantService:
                 | (MerchantProfile.onboarded_by_id == user_id)
             )
 
-        if public_only and not user_code and not user_id:
-            active_owner = exists().where(
-                User.id == MerchantProfile.user_id,
-                User.is_active == True,
-            )
+        if public_catalog:
             q = q.filter(
                 MerchantProfile.is_active == True,
-                MerchantProfile.approval_status == "APPROVED",
-                active_owner,
+                func.upper(MerchantProfile.approval_status) == "APPROVED",
             )
         else:
             if approval_status:

@@ -168,3 +168,40 @@ def test_list_merchants_by_category_column(client: TestClient, db_session):
     data = res.json()
     assert len(data) >= 1
     assert any(m["business_name"] == "Legal Aid Office" for m in data)
+
+
+def test_list_merchants_merges_linked_user(client: TestClient, db_session):
+    from app.db.models.merchant import MerchantProfile
+    from app.db.models.user import User
+    from app.core.security import hash_password
+
+    user = User(
+        name="Shop Owner",
+        email="owner@shop.example.com",
+        phone="9876543210",
+        password_hash=hash_password("Pass12345!"),
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    merchant = MerchantProfile(
+        user_id=user.id,
+        business_name="Merged Shop",
+        categories=["Retail"],
+        location="Kochi",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(merchant)
+    db_session.commit()
+
+    res = client.get("/api/v1/merchants?limit=500")
+    assert res.status_code == 200
+    row = next(m for m in res.json() if m["business_name"] == "Merged Shop")
+    assert row["user"]["email"] == "owner@shop.example.com"
+    assert row["owner_name"] == "Shop Owner"
+    assert row["contact_number"] == "9876543210"

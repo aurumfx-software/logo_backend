@@ -1,6 +1,8 @@
 import re
 from typing import Any, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.db.models.merchant import MerchantProfile
 from app.schemas.auth import SafeUserResponse
 
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
@@ -49,6 +51,21 @@ class MerchantCreatorSummary(BaseModel):
     email: str
     phone: Optional[str] = None
     role: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MerchantLinkedUser(BaseModel):
+    """Account linked via merchant_profiles.user_id (owner / login user)."""
+
+    id: int
+    user_code: Optional[str] = None
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    profile_picture: Optional[str] = None
+    district: Optional[str] = None
+    city: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -105,9 +122,18 @@ class MerchantProfileResponse(BaseModel):
     onboarded_by_id: Optional[int] = None
     creator: Optional[MerchantCreatorSummary] = None
     created_by: Optional[MerchantCreatorSummary] = None
+    user: Optional[MerchantLinkedUser] = None
     is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def merchant_columns_only(cls, data: Any) -> Any:
+        # Avoid ORM relationship `MerchantProfile.user` filling response field `user`.
+        if isinstance(data, MerchantProfile):
+            return {column.name: getattr(data, column.name) for column in MerchantProfile.__table__.columns}
+        return data
 
 
 class MerchantOnboardingRequest(BaseModel):

@@ -9,7 +9,12 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
 
     # CORS — comma-separated origins, or "*" to use CORS_ORIGIN_REGEX (recommended for sslip + dev ports).
-    CORS_ORIGINS: str = "*"
+    CORS_ORIGINS: str = (
+        "https://168.144.18.149.sslip.io:8443,"
+        "https://168.144.18.149.sslip.io,"
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173"
+    )
     CORS_ALLOW_CREDENTIALS: bool = True
     # Used when CORS_ORIGINS is "*": allows localhost/LAN and *.sslip.io with any port (e.g. :8443 frontend).
     CORS_ORIGIN_REGEX: str = (

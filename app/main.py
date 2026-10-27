@@ -81,6 +81,23 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return JSON (so CORSMiddleware can attach headers) instead of plain-text 500."""
+    if isinstance(exc, HTTPException):
+        raise exc
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "success": False,
+            "message": "Internal server error",
+            "detail": str(exc),
+            "data": None,
+            "errors": [str(exc)],
+        },
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = exc.errors()

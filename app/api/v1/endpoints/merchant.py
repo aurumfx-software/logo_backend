@@ -432,16 +432,28 @@ def list_merchants(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
-    merchants = MerchantService.list_merchants(
+    try:
+        merchants = MerchantService.list_merchants(
+            db=db,
+            category=category,
+            location=location,
+            skip=skip,
+            limit=limit,
+            current_user=None,
+            user_code=user_code,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to load merchants: {exc}",
+        ) from exc
+
+    return MerchantService.build_merchant_list_responses(
         db=db,
-        category=category,
-        location=location,
-        skip=skip,
-        limit=limit,
-        current_user=None,
-        user_code=user_code,
+        merchants=merchants,
+        merge_users=True,
+        include_creator=False,
     )
-    return [MerchantService.build_merchant_response(m) for m in merchants]
 
 
 @router.get(
