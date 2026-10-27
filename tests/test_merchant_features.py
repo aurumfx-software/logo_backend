@@ -510,11 +510,11 @@ def test_field_staff_merchant_scoping(client: TestClient, db_session: Session):
     assert m_a_id in my_a_ids
     assert m_b_id not in my_a_ids
 
+    # Public GET /merchants is the same for guests and logged-in users (approved catalog only)
     list_a = client.get("/api/v1/merchants", headers=headers_a)
     assert list_a.status_code == 200
-    list_a_ids = [m["id"] for m in list_a.json()]
-    assert m_a_id in list_a_ids
-    assert m_b_id not in list_a_ids
+    list_guest = client.get("/api/v1/merchants")
+    assert list_guest.status_code == 200
 
     # Staff B lists merchants -> sees only Merchant B
     my_b = client.get("/api/v1/merchants/my-merchants", headers=headers_b)

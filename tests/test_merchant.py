@@ -129,6 +129,10 @@ def test_list_and_filter_merchants(client: TestClient):
     assert res.status_code == 200
     assert isinstance(res.json(), list)
 
+    res_limit = client.get("/api/v1/merchants?limit=500")
+    assert res_limit.status_code == 200
+    assert isinstance(res_limit.json(), list)
+
 
 def test_list_merchants_by_category_column(client: TestClient, db_session):
     from app.db.models.merchant import MerchantProfile

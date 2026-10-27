@@ -772,17 +772,10 @@ class MerchantService:
         scope_to_current_user: bool = False,
     ) -> List[MerchantProfile]:
         """
-        GET /merchants: public approved catalog for guests and customers; optional filters.
-        Field staff without user_code see merchants they created or onboarded (any approval status).
-        scope_to_current_user=True for GET /my-merchants.
+        Public approved catalog for GET /merchants (guest or any logged-in user).
+        scope_to_current_user=True only for GET /my-merchants (field staff / owner list).
         """
-        field_staff_browse = (
-            not scope_to_current_user
-            and not user_code
-            and current_user is not None
-            and current_user.role == UserRole.FIELD_STAFF
-        )
-        scoped = scope_to_current_user or field_staff_browse
+        scoped = scope_to_current_user
         items, _ = MerchantService.search_merchants(
             db=db,
             category=category,

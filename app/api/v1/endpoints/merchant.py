@@ -422,7 +422,7 @@ def upload_merchant_photos(
     "",
     response_model=List[MerchantProfileResponse],
     summary="Discover & list merchants",
-    description="Public catalog of approved merchants; filter by category or location. Customers and guests always see the full approved catalog. Field staff see only merchants they created or onboarded unless user_code is provided.",
+    description="Public catalog of approved merchants. No login required. Optional filters: category, location, user_code.",
 )
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
@@ -430,7 +430,6 @@ def list_merchants(
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
-    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
     merchants = MerchantService.list_merchants(
@@ -439,7 +438,7 @@ def list_merchants(
         location=location,
         skip=skip,
         limit=limit,
-        current_user=current_user,
+        current_user=None,
         user_code=user_code,
     )
     return [MerchantService.build_merchant_response(m) for m in merchants]
