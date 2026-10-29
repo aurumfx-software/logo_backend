@@ -26,6 +26,7 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
     summary="List current user notifications",
     description="Returns notifications for the authenticated user, optionally filtered by read status with pagination.",
 )
+
 def get_my_notifications(
     is_read: Optional[bool] = Query(None, description="Filter by read status (true/false)"),
     skip: int = Query(0, ge=0),

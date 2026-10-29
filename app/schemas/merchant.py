@@ -124,6 +124,7 @@ class MerchantProfileResponse(BaseModel):
     created_by: Optional[MerchantCreatorSummary] = None
     user: Optional[MerchantLinkedUser] = None
     is_active: bool = True
+    has_password: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -167,6 +168,13 @@ class MerchantOnboardingRequest(BaseModel):
     whatsapp: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "9876543210"})
     landline: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "0484234567"})
     email: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "owner@business.com"})
+    password: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=100,
+        description="Optional merchant login password (omit for onboarded merchants without login yet)",
+        json_schema_extra={"example": "MerchantPass123"},
+    )
 
     # Social & Web links
     website: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://example.com"})
@@ -420,8 +428,27 @@ class MerchantUpdateRequest(BaseModel):
     services: Optional[List[str]] = None
     service_timing: Optional[str] = None
     status: Optional[str] = None
+    password: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=100,
+        description="Set or update merchant login password",
+    )
 
     model_config = ConfigDict(extra="ignore")
+
+
+class MerchantLoginRequest(BaseModel):
+    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+    password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "MerchantPass123"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
 
 
 class MerchantPhotosUploadResponse(BaseModel):

@@ -21,6 +21,7 @@ from app.schemas.merchant import (
     MerchantDiscoveryMetaResponse,
     MerchantLoginOTPRequest,
     MerchantLoginOTPResponse,
+    MerchantLoginRequest,
     MerchantMediaUploadResponse,
     MerchantOnboardingRequest,
     MerchantOnboardingResponse,
@@ -726,6 +727,30 @@ def delete_merchant_by_id(
 ) -> GenericMessageResponse:
     MerchantService.delete_merchant(db=db, merchant_id=merchant_id)
     return GenericMessageResponse(message=f"Merchant {merchant_id} deleted successfully.")
+
+
+# ── Password Login ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Merchant login with email and password",
+    description=(
+        "Authenticates a merchant using the password stored on the merchant profile. "
+        "If no password is set, returns 403 with password_setup_required so the client "
+        "can guide the user through forgot-password / reset-password to create one."
+    ),
+)
+def merchant_login_with_password(
+    login_data: MerchantLoginRequest,
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    from app.schemas.auth import UserLoginRequest
+
+    return MerchantService.authenticate_merchant_login(
+        db=db,
+        login_data=UserLoginRequest(email=login_data.email, password=login_data.password),
+    )
 
 
 # ── OTP Login Flow ────────────────────────────────────────────────────────────

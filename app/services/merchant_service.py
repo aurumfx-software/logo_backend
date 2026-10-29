@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, joinedload, load_only
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.db.models.merchant import MerchantProfile
 from app.db.models.otp import OTPPurpose
 from app.db.models.user import User, UserRole
@@ -15,7 +15,7 @@ from app.schemas.merchant import (
     MerchantRegisterRequest,
     MerchantUpdateRequest,
 )
-from app.schemas.auth import TokenResponse
+from app.schemas.auth import TokenResponse, UserLoginRequest
 from app.services.otp_service import OTPService
 
 
@@ -31,6 +31,57 @@ class MerchantService:
         User.role,
         User.is_active,
     )
+
+    @staticmethod
+    def _password_setup_required_exception() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "MERCHANT_PASSWORD_NOT_SET",
+                "message": (
+                    "No merchant password is set. Use POST /api/v1/auth/forgot-password "
+                    "to receive an OTP, then POST /api/v1/auth/reset-password to create your password."
+                ),
+                "password_setup_required": True,
+            },
+        )
+
+    @staticmethod
+    def _set_merchant_password(merchant: MerchantProfile, plain_password: str) -> None:
+        hashed = hash_password(plain_password)
+        merchant.password_hash = hashed
+
+    @staticmethod
+    def resolve_merchant_by_email(
+        db: Session, email: str
+    ) -> Tuple[Optional[MerchantProfile], Optional[User]]:
+        clean_email = email.strip().lower()
+        merchant = (
+            db.query(MerchantProfile)
+            .filter(func.lower(MerchantProfile.email) == clean_email)
+            .first()
+        )
+        user: Optional[User] = None
+        if merchant:
+            user = db.query(User).filter(User.id == merchant.user_id).first()
+            return merchant, user
+
+        user = db.query(User).filter(User.email == clean_email).first()
+        if not user:
+            return None, None
+        merchant = (
+            db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
+        )
+        return merchant, user
+
+    @staticmethod
+    def sync_merchant_password_from_user(db: Session, user: User, plain_password: str) -> None:
+        merchants = db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).all()
+        if not merchants:
+            return
+        hashed = hash_password(plain_password)
+        for merchant in merchants:
+            merchant.password_hash = hashed
 
     @staticmethod
     def _coerce_str_list(value: Any) -> List[str]:
@@ -223,6 +274,7 @@ class MerchantService:
             resp.user_code = creator_summary.user_code
         resp.creator = creator_summary
         resp.created_by = creator_summary
+        resp.has_password = bool(merchant.password_hash)
         if linked_user is not None:
             resp = MerchantService.merge_linked_user(resp, linked_user)
         return resp
@@ -250,11 +302,12 @@ class MerchantService:
             )
 
         # 1. Create login account in users table (merchant owner)
+        hashed_pwd = hash_password(data.password)
         user = User(
             name=data.name.strip(),
             email=clean_email,
             phone=data.contact_number,
-            password_hash=hash_password(data.password),
+            password_hash=hashed_pwd,
             role=UserRole.MERCHANT,
             address=data.address,
             profile_picture=(data.merchant_photos[0] if data.merchant_photos else None),
@@ -282,6 +335,7 @@ class MerchantService:
             phone=data.contact_number.strip(),
             email=clean_email,
             address=data.address.strip(),
+            password_hash=hashed_pwd,
             is_verified=False,
             approval_status="PENDING",
             is_active=True,
@@ -386,6 +440,12 @@ class MerchantService:
 
         merchant_user_code = data.user_code if (data.user_code and data.user_code.startswith("MRH")) else None
 
+        merchant_password_hash = None
+        if getattr(data, "password", None):
+            merchant_password_hash = hash_password(data.password)
+            if user:
+                user.password_hash = merchant_password_hash
+
         merchant = MerchantProfile(
             user_id=user.id,
             user_code=merchant_user_code or user.user_code,
@@ -403,7 +463,8 @@ class MerchantService:
             phone=clean_phone or data.phone,
             whatsapp=data.whatsapp,
             landline=data.landline,
-            email=data.email,
+            email=data.email.strip().lower() if data.email else None,
+            password_hash=merchant_password_hash,
             website=data.website,
             facebook=data.facebook,
             instagram=data.instagram,
@@ -903,6 +964,12 @@ class MerchantService:
             elif merchant.status in ("REJECTED", "SUSPENDED", "INACTIVE"):
                 merchant.is_active = False
 
+        if data.password is not None:
+            MerchantService._set_merchant_password(merchant, data.password)
+            user = db.query(User).filter(User.id == merchant.user_id).first()
+            if user:
+                user.password_hash = merchant.password_hash
+
         db.commit()
         db.refresh(merchant)
         return merchant
@@ -958,6 +1025,47 @@ class MerchantService:
         )
         return items
 
+    # ── Password Login ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def authenticate_merchant_login(
+        db: Session, login_data: UserLoginRequest
+    ) -> TokenResponse:
+        from app.services.auth_service import AuthService
+
+        merchant, user = MerchantService.resolve_merchant_by_email(db, login_data.email)
+        if not merchant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No merchant account found with this email address.",
+            )
+
+        if not merchant.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Merchant account is inactive. Please contact support.",
+            )
+
+        if not merchant.password_hash:
+            raise MerchantService._password_setup_required_exception()
+
+        if not verify_password(login_data.password, merchant.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if not user:
+            user = db.query(User).filter(User.id == merchant.user_id).first()
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Merchant account is inactive. Please contact support.",
+            )
+
+        return AuthService.generate_token_pair(user)
+
     # ── OTP Login ───────────────────────────────────────────────────────────
 
     @staticmethod
@@ -969,22 +1077,15 @@ class MerchantService:
         Returns the plain OTP in development; None in production.
         """
         clean_email = email.strip().lower()
-        user = db.query(User).filter(User.email == clean_email).first()
+        merchant, user = MerchantService.resolve_merchant_by_email(db, clean_email)
 
-        if not user:
+        if not merchant or not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No account found with this email address.",
             )
 
-        merchant = db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
-        if not merchant:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="This account does not have an associated merchant profile.",
-            )
-
-        if not user.is_active:
+        if not user.is_active or not merchant.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Merchant account is inactive. Please contact support.",

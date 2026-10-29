@@ -299,19 +299,47 @@ class AuthService:
         clean_email = login_data.email.strip().lower()
         user = db.query(User).filter(User.email == clean_email).first()
 
-        if not user or not user.password_hash:
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        if not verify_password(login_data.password, user.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password.",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        from app.db.models.merchant import MerchantProfile
+        from app.services.merchant_service import MerchantService
+
+        merchant = (
+            db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
+        )
+        if merchant:
+            if not merchant.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Merchant account is inactive. Please contact support.",
+                )
+            if not merchant.password_hash:
+                raise MerchantService._password_setup_required_exception()
+            if not verify_password(login_data.password, merchant.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid email or password.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        else:
+            if not user.password_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid email or password.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            if not verify_password(login_data.password, user.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid email or password.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         if not user.is_active:
             raise HTTPException(
@@ -473,6 +501,10 @@ class AuthService:
     def request_password_reset(db: Session, email: str) -> Optional[str]:
         clean_email = email.strip().lower()
         user = db.query(User).filter(User.email == clean_email).first()
+        if not user:
+            from app.services.merchant_service import MerchantService
+
+            _, user = MerchantService.resolve_merchant_by_email(db, clean_email)
         dev_otp = None
         if user and user.is_active:
             plain_otp, _ = OTPService.create_otp(
@@ -503,4 +535,9 @@ class AuthService:
             )
 
         user.password_hash = hash_password(reset_data.new_password)
+        from app.services.merchant_service import MerchantService
+
+        MerchantService.sync_merchant_password_from_user(
+            db=db, user=user, plain_password=reset_data.new_password
+        )
         db.commit()

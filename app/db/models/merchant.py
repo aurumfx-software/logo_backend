@@ -45,6 +45,7 @@ class MerchantProfile(Base):
     whatsapp = Column(String(20), nullable=True)
     landline = Column(String(20), nullable=True)
     email = Column(String(255), nullable=True)
+    password_hash = Column(String(255), nullable=True)
 
     website = Column(String(255), nullable=True)
     facebook = Column(String(255), nullable=True)
