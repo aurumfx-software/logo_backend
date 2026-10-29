@@ -3,6 +3,7 @@ from app.api.v1.endpoints import (
     admin,
     auth,
     category,
+    complaint,
     customer,
     favorite,
     health,
@@ -33,6 +34,7 @@ api_router.include_router(category.router, prefix="/field-staff", tags=["Field S
 api_router.include_router(logo.router)
 api_router.include_router(favorite.router)
 api_router.include_router(notification.router)
+api_router.include_router(complaint.router)
 api_router.include_router(admin.router)
 api_router.include_router(wallet.router)
 api_router.include_router(wallet_payment.router)

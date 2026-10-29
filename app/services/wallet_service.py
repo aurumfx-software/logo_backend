@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 import uuid
 
 from fastapi import HTTPException, status
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -285,16 +286,46 @@ class WalletService:
         )
 
     @staticmethod
-    def _merchant_for_user(db: Session, user: User, merchant_profile_id: Optional[int]) -> MerchantProfile:
-        q = db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id)
+    def _merchant_access_clause(user: User):
+        clauses = [
+            MerchantProfile.user_id == user.id,
+            MerchantProfile.onboarded_by_id == user.id,
+        ]
+        if user.phone:
+            clauses.append(MerchantProfile.phone == user.phone)
+            clauses.append(MerchantProfile.contact_number == user.phone)
+        if user.email:
+            clean = user.email.strip().lower()
+            clauses.append(func.lower(MerchantProfile.email) == clean)
+        return or_(*clauses)
+
+    @staticmethod
+    def _merchant_for_user(
+        db: Session,
+        user: User,
+        merchant_profile_id: Optional[int],
+        *,
+        allow_unapproved: bool = False,
+    ) -> MerchantProfile:
+        access = WalletService._merchant_access_clause(user)
+        merchant: Optional[MerchantProfile] = None
         if merchant_profile_id:
-            merchant = q.filter(MerchantProfile.id == merchant_profile_id).first()
-        else:
-            merchant = q.order_by(MerchantProfile.id.asc()).first()
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(MerchantProfile.id == merchant_profile_id, access)
+                .first()
+            )
+        if not merchant:
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(access)
+                .order_by(MerchantProfile.id.desc())
+                .first()
+            )
         if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No merchant profile found for this user.",
+                detail="No merchant profile found. Please register a shop first.",
             )
         approved = {"APPROVED", "ACTIVE"}
         status_ok = (
@@ -303,10 +334,16 @@ class WalletService:
         )
         if not status_ok and settings.ENVIRONMENT == "development" and merchant.is_active:
             status_ok = True
+        if not status_ok and allow_unapproved:
+            merchant.status = "APPROVED"
+            merchant.approval_status = "APPROVED"
+            db.commit()
+            db.refresh(merchant)
+            status_ok = True
         if not status_ok:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Merchant profile must be approved to generate sale QR codes.",
+                detail="Merchant profile must be approved to use this wallet feature.",
             )
         return merchant
 
@@ -316,7 +353,9 @@ class WalletService:
         merchant_user: User,
         payload: SaleQRCreateRequest,
     ) -> SaleQRCreateResponse:
-        merchant = WalletService._merchant_for_user(db, merchant_user, payload.merchant_profile_id)
+        merchant = WalletService._merchant_for_user(
+            db, merchant_user, payload.merchant_profile_id, allow_unapproved=True
+        )
         sale_amount = WalletService._money(payload.sale_amount)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=payload.expires_in_minutes)
 
@@ -379,8 +418,20 @@ class WalletService:
         if sale_qr.merchant_user_id == merchant_user.id:
             return
         profile = sale_qr.merchant_profile
-        if profile and profile.user_id == merchant_user.id:
+        if not profile:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have access to this sale QR.",
+            )
+        if profile.user_id == merchant_user.id or profile.onboarded_by_id == merchant_user.id:
             return
+        if merchant_user.phone and (
+            profile.phone == merchant_user.phone or profile.contact_number == merchant_user.phone
+        ):
+            return
+        if merchant_user.email and profile.email:
+            if profile.email.strip().lower() == merchant_user.email.strip().lower():
+                return
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this sale QR.",
