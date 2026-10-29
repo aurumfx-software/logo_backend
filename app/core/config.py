@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     CASHBACK_COMPANY_PERCENT: float = 2.0
     SALE_QR_DEFAULT_EXPIRE_MINUTES: int = 30
 
+    # Razorpay (wallet top-up)
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    WALLET_TOPUP_MIN_AMOUNT: float = 100.0
+    WALLET_TOPUP_MAX_AMOUNT: float = 100000.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

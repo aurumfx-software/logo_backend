@@ -11,8 +11,10 @@ from app.api.v1.endpoints import (
     notification,
     product,
     promotion,
+    subscription,
     user,
     wallet,
+    wallet_payment,
     wallet_ws,
 )
 
@@ -26,10 +28,12 @@ api_router.include_router(user.router)
 api_router.include_router(merchant.router)
 api_router.include_router(category.router)
 api_router.include_router(promotion.router)
+api_router.include_router(subscription.router)
 api_router.include_router(category.router, prefix="/field-staff", tags=["Field Staff Categories"])
 api_router.include_router(logo.router)
 api_router.include_router(favorite.router)
 api_router.include_router(notification.router)
 api_router.include_router(admin.router)
 api_router.include_router(wallet.router)
+api_router.include_router(wallet_payment.router)
 api_router.include_router(wallet_ws.router)

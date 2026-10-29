@@ -80,6 +80,8 @@ class MerchantProfile(Base):
     is_verified = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     rejection_reason = Column(String(500), nullable=True)
+    can_create_promotions = Column(Boolean, default=True, nullable=False)
+    has_active_subscription = Column(Boolean, default=False, nullable=False)
 
     approved_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)

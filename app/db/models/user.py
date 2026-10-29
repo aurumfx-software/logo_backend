@@ -55,6 +55,7 @@ class User(Base):
     is_verified = Column(Boolean, default=False, nullable=False)
     can_sell_products = Column(Boolean, default=False, nullable=False)
     is_subscriber = Column(Boolean, default=False, nullable=False)
+    subscription_plan = Column(String(80), nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

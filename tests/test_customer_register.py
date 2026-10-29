@@ -56,3 +56,27 @@ def test_customer_register_duplicate_phone(client: TestClient):
     assert client.post("/api/v1/customer/register", json=payload).status_code == 201
     dup = client.post("/api/v1/customer/register", json=payload)
     assert dup.status_code == 409
+
+
+def test_customer_logout(client: TestClient):
+    reg = client.post(
+        "/api/v1/customer/register",
+        json={
+            "name": "Logout User",
+            "phone": "9000001122",
+            "password": "Pass1234",
+            "district": "Ernakulam",
+            "city": "Kochi",
+        },
+    )
+    assert reg.status_code == 201
+    token = reg.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    out = client.post("/api/v1/customer/logout", headers=headers)
+    assert out.status_code == 200
+    assert out.json()["success"] is True
+    assert "logged out" in out.json()["message"].lower()
+
+    me = client.get("/api/v1/auth/me", headers=headers)
+    assert me.status_code == 401

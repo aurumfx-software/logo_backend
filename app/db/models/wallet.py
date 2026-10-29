@@ -37,6 +37,13 @@ class WalletTransactionType(str, enum.Enum):
     CASHBACK_REDEMPTION = "CASHBACK_REDEMPTION"
     ADMIN_CREDIT = "ADMIN_CREDIT"
     ADMIN_DEBIT = "ADMIN_DEBIT"
+    WALLET_TOPUP = "WALLET_TOPUP"
+
+
+class WalletTopupStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    PAID = "PAID"
+    FAILED = "FAILED"
 
 
 class WalletLedgerDirection(str, enum.Enum):
@@ -173,3 +180,47 @@ class MerchantSaleQR(Base):
     merchant_profile = relationship("MerchantProfile", backref="sale_qrs")
     merchant_user = relationship("User", foreign_keys=[merchant_user_id])
     redeemed_by = relationship("User", foreign_keys=[redeemed_by_user_id])
+
+
+class WalletTopupOrder(Base):
+    """Razorpay order for adding money to a merchant/user wallet."""
+
+    __tablename__ = "wallet_topup_orders"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    merchant_profile_id = Column(
+        Integer,
+        ForeignKey("merchant_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    amount = Column(Numeric(18, 2), nullable=False)
+    amount_paise = Column(Integer, nullable=False)
+    currency = Column(String(3), default="INR", nullable=False)
+    receipt = Column(String(40), unique=True, nullable=False, index=True)
+    razorpay_order_id = Column(String(64), unique=True, nullable=False, index=True)
+    razorpay_payment_id = Column(String(64), unique=True, nullable=True, index=True)
+    status = Column(
+        Enum(WalletTopupStatus, name="wallet_topup_status", native_enum=False),
+        default=WalletTopupStatus.CREATED,
+        nullable=False,
+        index=True,
+    )
+    wallet_transaction_group_id = Column(String(36), nullable=True, index=True)
+    failure_reason = Column(String(500), nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    merchant_profile = relationship("MerchantProfile", backref="wallet_topups")

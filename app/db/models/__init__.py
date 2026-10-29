@@ -7,9 +7,12 @@ from app.db.models.activity_log import ActivityLog
 from app.db.models.revoked_token import RevokedToken
 from app.db.models.product import CustomerProduct, ProductOrder
 from app.db.models.promotion import Promotion
+from app.db.models.subscription import SubscriptionPackage, UserSubscription
 from app.db.models.wallet import (
     MerchantSaleQR,
     SaleQRStatus,
+    WalletTopupOrder,
+    WalletTopupStatus,
     Wallet,
     WalletLedgerDirection,
     WalletLedgerEntry,
@@ -26,6 +29,8 @@ __all__ = [
     "MerchantProfile",
     "MerchantFavorite",
     "Promotion",
+    "SubscriptionPackage",
+    "UserSubscription",
     "CustomerProduct",
     "ProductOrder",
     "LogoCategory",
@@ -43,4 +48,6 @@ __all__ = [
     "WalletLedgerDirection",
     "MerchantSaleQR",
     "SaleQRStatus",
+    "WalletTopupOrder",
+    "WalletTopupStatus",
 ]
