@@ -2,7 +2,8 @@ import os
 import shutil
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.api.deps import (
@@ -11,11 +12,12 @@ from app.api.deps import (
     require_admin,
     require_role,
     require_any_authenticated,
+    security_scheme,
 )
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
-from app.schemas.auth import GenericMessageResponse, SafeUserResponse, TokenResponse
+from app.schemas.auth import GenericMessageResponse, LogoutRequest, LogoutResponse, SafeUserResponse, TokenResponse
 from app.schemas.merchant import (
     LocationCountItem,
     MerchantDiscoveryMetaResponse,
@@ -43,6 +45,7 @@ from app.schemas.response import (
     success_response,
 )
 from app.services.merchant_service import MerchantService
+from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/merchants", tags=["Merchants"])
 
@@ -750,6 +753,35 @@ def merchant_login_with_password(
     return MerchantService.authenticate_merchant_login(
         db=db,
         login_data=UserLoginRequest(email=login_data.email, password=login_data.password),
+    )
+
+
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    summary="Merchant logout",
+    description=(
+        "Revokes the Bearer access token (and optional refresh token in body), "
+        "sets logged_out_at, and records USER_LOGOUT. Same behaviour as /auth/logout and /customer/logout."
+    ),
+)
+def merchant_logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    current_user: User = Depends(get_current_user),
+    body: Optional[LogoutRequest] = Body(None),
+    db: Session = Depends(get_db),
+) -> LogoutResponse:
+    refresh = body.refresh_token if body else None
+    logged_out_at = AuthService.logout_user(
+        db=db,
+        user=current_user,
+        access_token=credentials.credentials,
+        refresh_token=refresh,
+    )
+    return LogoutResponse(
+        message=f"Merchant {current_user.email} successfully logged out.",
+        user_id=current_user.id,
+        logged_out_at=logged_out_at,
     )
 
 

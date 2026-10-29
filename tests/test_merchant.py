@@ -206,3 +206,35 @@ def test_list_merchants_merges_linked_user(client: TestClient, db_session):
     assert row["user"]["email"] == "owner@shop.example.com"
     assert row["owner_name"] == "Shop Owner"
     assert row["contact_number"] == "9876543210"
+
+
+def test_merchant_logout(client: TestClient):
+    reg_payload = {
+        "name": "Logout Merchant",
+        "email": "logout.merchant@example.com",
+        "password": "LogoutPass123",
+        "business_name": "Logout Shop",
+        "categories": ["Retail"],
+        "location": "Kochi",
+        "services": ["General"],
+        "service_timing": "9-9",
+        "merchant_photos": [],
+        "contact_number": "9876500001",
+        "address": "Kochi Kerala",
+    }
+    client.post("/api/v1/merchants/register", json=reg_payload)
+    login_res = client.post(
+        "/api/v1/merchants/login",
+        json={"email": "logout.merchant@example.com", "password": "LogoutPass123"},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    out = client.post("/api/v1/merchants/logout", headers=headers)
+    assert out.status_code == 200
+    assert out.json()["success"] is True
+    assert "logged out" in out.json()["message"].lower()
+
+    me = client.get("/api/v1/merchants/me", headers=headers)
+    assert me.status_code == 401
