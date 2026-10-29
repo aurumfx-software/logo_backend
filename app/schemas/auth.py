@@ -199,6 +199,16 @@ class SafeUserResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v):
+        return UserRole.coerce(v)
+
+    @field_validator("regions", "module_access", mode="before")
+    @classmethod
+    def none_to_list(cls, v):
+        return v if v is not None else []
+
 
 class UserProfileUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100, json_schema_extra={"example": "Updated Name"})

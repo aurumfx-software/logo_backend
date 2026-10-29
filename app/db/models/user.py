@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, JSON
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, JSON, TypeDecorator
 from app.db.database import Base
 
 
@@ -24,6 +24,41 @@ class UserRole(str, enum.Enum):
                 return cls.ADMIN
         return None
 
+    @classmethod
+    def coerce(cls, value) -> "UserRole":
+        if isinstance(value, cls):
+            return value
+        if value is None:
+            return cls.FIELD_STAFF
+        if isinstance(value, str):
+            try:
+                return cls(value)
+            except ValueError:
+                resolved = cls._missing_(value)
+                if resolved is not None:
+                    return resolved
+        return cls.FIELD_STAFF
+
+
+class UserRoleType(TypeDecorator):
+    """Stores role as string; tolerates legacy DB values like 'SUPER ADMIN'."""
+
+    impl = String(50)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return UserRole.FIELD_STAFF.value
+        if isinstance(value, UserRole):
+            return value.value
+        coerced = UserRole.coerce(value)
+        return coerced.value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return UserRole.FIELD_STAFF
+        return UserRole.coerce(value)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -36,7 +71,7 @@ class User(Base):
     password = Column(String(255), nullable=True)
     password_hash = Column(String(255), nullable=True)  # stores hashed password
     role = Column(
-        Enum(UserRole, name="user_role", native_enum=False),
+        UserRoleType(),
         default=UserRole.FIELD_STAFF,
         nullable=False,
     )

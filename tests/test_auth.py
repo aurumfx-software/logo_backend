@@ -532,3 +532,27 @@ def test_customer_phone_password_quick_login(client: TestClient):
     assert res.json()["access_token"]
 
 
+def test_phone_login_legacy_super_admin_role_string(client: TestClient, db_session: Session):
+    from app.core.security import hash_password
+    from app.db.models.user import User
+
+    user = User(
+        name="Legacy Super",
+        email="legacy.super@example.com",
+        phone="9001122334",
+        password_hash=hash_password("LegacyPass123"),
+        role="SUPER ADMIN",
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    res = client.post(
+        "/api/v1/auth/login/phone",
+        json={"phone": "9001122334", "password": "LegacyPass123"},
+    )
+    assert res.status_code == 403
+    assert "admin portal" in res.json()["message"].lower()
+
+

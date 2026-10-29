@@ -154,6 +154,8 @@ class AuthService:
         user.last_active = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)
+        WalletService.ensure_wallet_for_user(db, user.id)
+        db.commit()
         return user
 
     @staticmethod
@@ -355,7 +357,8 @@ class AuthService:
 
     @staticmethod
     def generate_token_pair(user: User) -> TokenResponse:
-        role_val = user.role.value if hasattr(user.role, "value") else str(user.role)
+        role = UserRole.coerce(user.role)
+        role_val = role.value
         access_token = create_access_token(user_id=user.id, role=role_val)
         refresh_token = create_refresh_token(user_id=user.id, role=role_val)
         return TokenResponse(
