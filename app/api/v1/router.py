@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     promotion,
     user,
     wallet,
+    wallet_ws,
 )
 
 api_router = APIRouter()
@@ -31,3 +32,4 @@ api_router.include_router(favorite.router)
 api_router.include_router(notification.router)
 api_router.include_router(admin.router)
 api_router.include_router(wallet.router)
+api_router.include_router(wallet_ws.router)

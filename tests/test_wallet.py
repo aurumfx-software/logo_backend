@@ -10,13 +10,17 @@ from app.services.wallet_service import WalletService
 
 
 def _auth_headers(client: TestClient, email: str, password: str) -> dict:
+    token = _access_token(client, email, password)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _access_token(client: TestClient, email: str, password: str = "Password123!") -> str:
     res = client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": password},
     )
     assert res.status_code == 200
-    token = res.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return res.json()["access_token"]
 
 
 def _create_user(db_session: Session, email: str, name: str, role: UserRole = UserRole.FIELD_STAFF) -> User:
@@ -201,3 +205,48 @@ def test_insufficient_merchant_balance_blocks_redeem(client: TestClient, db_sess
     )
     assert redeem_res.status_code == 400
     assert "Insufficient" in redeem_res.json()["message"]
+
+
+def test_websocket_merchant_receives_sale_redeemed(client: TestClient, db_session: Session):
+    merchant_user = _create_merchant(db_session, "wsmerchant@example.com")
+    customer = _create_user(db_session, "wscustomer@example.com", "Customer")
+    admin = _create_user(db_session, "wsadmin@example.com", "Admin", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": merchant_user.id, "amount": "1000.00", "operation": "credit"},
+    )
+
+    merchant_headers = _auth_headers(client, merchant_user.email, "Password123!")
+    access = _access_token(client, merchant_user.email, "Password123!")
+
+    with client.websocket_connect(f"/api/v1/wallet/ws?token={access}") as ws:
+        hello = ws.receive_json()
+        assert hello["event"] == "connected"
+
+        qr_res = client.post(
+            "/api/v1/wallet/sales/qr",
+            headers=merchant_headers,
+            json={"sale_amount": "1000.00"},
+        )
+        assert qr_res.status_code == 201
+        sale_token = qr_res.json()["token"]
+
+        ws.send_json({"action": "subscribe", "token": sale_token})
+        assert ws.receive_json()["event"] == "subscribed"
+
+        customer_headers = _auth_headers(client, customer.email, "Password123!")
+        redeem_res = client.post(
+            "/api/v1/wallet/sales/redeem",
+            headers=customer_headers,
+            json={"token": sale_token},
+        )
+        assert redeem_res.status_code == 200
+
+        event = ws.receive_json()
+        assert event["event"] == "sale_qr.redeemed"
+        assert event["token"] == sale_token
+        assert event["merchant_wallet_balance"] == "950.00"
+        assert event["merchant_debit"] == "50.00"
+        assert event["transaction_group_id"]

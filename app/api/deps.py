@@ -1,5 +1,5 @@
-from typing import Callable, List
-from fastapi import Depends, HTTPException, status
+from typing import Callable, List, Optional
+from fastapi import Depends, HTTPException, WebSocketException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 import jwt
@@ -94,6 +94,36 @@ def get_current_user_optional(
     except Exception:
         return None
     return None
+
+
+def authenticate_websocket_user(token: str, db: Session) -> User:
+    """Validate JWT for WebSocket handshake (query param token)."""
+    if not token or not token.strip():
+        raise WebSocketException(code=4401, reason="Missing access token")
+
+    try:
+        payload = decode_token(token.strip())
+    except jwt.ExpiredSignatureError:
+        raise WebSocketException(code=4401, reason="Access token expired")
+    except jwt.InvalidTokenError:
+        raise WebSocketException(code=4401, reason="Invalid access token")
+
+    if payload.get("type") != "access":
+        raise WebSocketException(code=4401, reason="Not an access token")
+
+    if AuthService.is_token_revoked(db, payload, token.strip()):
+        raise WebSocketException(code=4401, reason="Token revoked")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise WebSocketException(code=4401, reason="Invalid token subject")
+
+    user = db.query(User).filter(User.id == int(user_id)).first()
+    if not user:
+        raise WebSocketException(code=4401, reason="User not found")
+    if not user.is_active:
+        raise WebSocketException(code=4403, reason="User inactive")
+    return user
 
 
 def require_role(*allowed_roles: UserRole) -> Callable[[User], User]:

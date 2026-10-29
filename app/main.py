@@ -38,6 +38,11 @@ def _cors_settings() -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
+
+    from app.services.wallet_ws_manager import wallet_ws_manager
+
+    wallet_ws_manager.bind_event_loop(asyncio.get_running_loop())
     # Ensure all tables exist in PostgreSQL (pgAdmin) on application start
     Base.metadata.create_all(bind=engine)
     yield

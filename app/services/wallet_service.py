@@ -558,6 +558,26 @@ class WalletService:
 
         db.commit()
         db.refresh(locked_user)
+        db.refresh(locked_merchant)
+
+        from app.services.wallet_ws_manager import wallet_ws_manager
+
+        wallet_ws_manager.publish_sale_qr_redeemed(
+            merchant_user_id=sale_qr.merchant_user_id,
+            payload={
+                "token": sale_qr.token,
+                "status": SaleQRStatus.REDEEMED.value,
+                "transaction_group_id": group_id,
+                "sale_amount": str(sale_amount),
+                "merchant_debit": str(merchant_debit),
+                "user_cashback": str(user_cb),
+                "company_fee": str(company_fee),
+                "merchant_wallet_balance": str(WalletService._money(locked_merchant.balance)),
+                "currency": settings.WALLET_CURRENCY,
+                "redeemed_at": now.isoformat(),
+                "merchant_profile_id": sale_qr.merchant_profile_id,
+            },
+        )
 
         return SaleRedeemResponse(
             message="Cashback redeemed to your wallet",

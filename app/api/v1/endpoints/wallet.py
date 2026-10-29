@@ -91,9 +91,9 @@ def create_sale_qr(
     response_model=SaleQRMerchantStatusResponse,
     summary="Merchant: poll sale QR payment status",
     description=(
-        "For the merchant QR screen: call every 2–3 seconds while waiting for payment. "
-        "When is_redeemed is true, show success and stop polling. "
-        "Includes wallet balance and countdown (seconds_until_expiry)."
+        "For the merchant QR screen: poll every 2–3 seconds while waiting, or use "
+        "WebSocket GET /api/v1/wallet/ws?token=<JWT> and listen for event sale_qr.redeemed. "
+        "When is_redeemed is true, show success and stop polling."
     ),
 )
 def merchant_sale_qr_status(
