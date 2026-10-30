@@ -213,8 +213,43 @@ class SafeUserResponse(BaseModel):
 class UserProfileUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=100, json_schema_extra={"example": "Updated Name"})
     phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    email: Optional[str] = Field(None, json_schema_extra={"example": "updated@example.com"})
     address: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "Updated Address"})
+    district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Ernakulam"})
+    city: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Kochi"})
     profile_picture: Optional[str] = Field(None, max_length=500, json_schema_extra={"example": "https://example.com/new_avatar.jpg"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = str(v).strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        cleaned = re.sub(r"[\s\-()]", "", str(v).strip())
+        if cleaned.startswith("+91"):
+            cleaned = cleaned[3:]
+        elif cleaned.startswith("91") and len(cleaned) > 10:
+            cleaned = cleaned[2:]
+        if cleaned and not cleaned.isdigit():
+            raise ValueError("Phone number must contain only digits")
+        return cleaned or None
+
+    @field_validator("district", "city", "address", "profile_picture")
+    @classmethod
+    def empty_str_to_none(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        stripped = str(v).strip()
+        return stripped or None
 
 
 class AvatarUploadResponse(BaseModel):

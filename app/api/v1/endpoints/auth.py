@@ -177,6 +177,15 @@ def logout(
     summary="Get current authenticated user profile",
     description="Returns current authenticated user details. Requires Bearer access token. Never exposes password hash.",
 )
+@router.get(
+    "/profile",
+    response_model=SafeUserResponse,
+    summary="Get current authenticated user profile",
+    description=(
+        "Alias of GET /auth/me. Returns the authenticated user (name, email, phone, "
+        "district, city, address, avatar). Requires Bearer access token."
+    ),
+)
 def get_me(
     current_user: User = Depends(get_current_user),
 ) -> SafeUserResponse:
@@ -187,7 +196,7 @@ def get_me(
     "/profile",
     response_model=SafeUserResponse,
     summary="Update current user profile",
-    description="Updates name, phone, address, and profile picture for the authenticated user.",
+    description="Updates name, email, phone, district, city, address, and profile picture for the authenticated user.",
 )
 def update_profile(
     update_data: UserProfileUpdateRequest,

@@ -276,10 +276,24 @@ class AuthService:
     ) -> User:
         if update_data.name is not None:
             user.name = update_data.name.strip()
+        if update_data.email is not None and update_data.email != user.email:
+            existing_email = (
+                db.query(User)
+                .filter(User.email == update_data.email, User.id != user.id)
+                .first()
+            )
+            if existing_email:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A user with this email already exists.",
+                )
+            user.email = update_data.email
         if update_data.phone is not None:
             if update_data.phone != user.phone:
                 existing_phone = (
-                    db.query(User).filter(User.phone == update_data.phone).first()
+                    db.query(User)
+                    .filter(User.phone == update_data.phone, User.id != user.id)
+                    .first()
                 )
                 if existing_phone:
                     raise HTTPException(
@@ -289,6 +303,10 @@ class AuthService:
                 user.phone = update_data.phone
         if update_data.address is not None:
             user.address = update_data.address
+        if update_data.district is not None:
+            user.district = update_data.district
+        if update_data.city is not None:
+            user.city = update_data.city
         if update_data.profile_picture is not None:
             user.profile_picture = update_data.profile_picture
 
