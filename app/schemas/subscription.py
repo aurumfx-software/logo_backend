@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db.models.subscription import (
     SubscriptionAudience,
@@ -78,16 +78,50 @@ class UserSubscriptionResponse(BaseModel):
 
 
 class SubscribeRequest(BaseModel):
-    package_id: int
+    package_id: Optional[int] = None
+    package_code: Optional[str] = Field(
+        None,
+        description="Package code such as USER_SELLER_500 or MERCHANT_PROMO_BASIC",
+    )
     merchant_profile_id: Optional[int] = Field(
         None,
-        description="Required when subscribing to a MERCHANT audience package",
+        description="Shop id for MERCHANT packages. Resolved from the logged-in merchant when omitted.",
     )
     payment_reference: Optional[str] = Field(
         None,
         max_length=255,
         description="Payment gateway reference (Razorpay order id, etc.)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_client_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if not payload.get("package_code"):
+            for key in ("code", "plan_code", "plan", "package"):
+                if payload.get(key):
+                    payload["package_code"] = payload[key]
+                    break
+        raw_id = payload.get("package_id", payload.get("packageId", payload.get("plan_id")))
+        if isinstance(raw_id, str):
+            text = raw_id.strip()
+            if text.isdigit():
+                payload["package_id"] = int(text)
+            elif text:
+                payload["package_code"] = payload.get("package_code") or text
+                payload["package_id"] = None
+        if not payload.get("payment_reference"):
+            payload["payment_reference"] = (
+                payload.get("payment_id")
+                or payload.get("razorpay_payment_id")
+                or payload.get("reference_id")
+            )
+        merchant_id = payload.get("merchant_profile_id", payload.get("merchantProfileId"))
+        if isinstance(merchant_id, str) and merchant_id.strip().isdigit():
+            payload["merchant_profile_id"] = int(merchant_id.strip())
+        return payload
 
 
 class AdminAssignSubscriptionRequest(BaseModel):

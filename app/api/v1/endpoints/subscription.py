@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, get_current_user_optional, require_admin
 from app.db.database import get_db
 from app.db.models.subscription import SubscriptionAudience
 from app.db.models.user import User
@@ -84,12 +84,20 @@ def list_my_subscriptions(
     "/me/active",
     response_model=StandardResponse[ActiveSubscriptionSummary],
     summary="Active subscription summary",
-    description="Returns active user/merchant subscriptions and computed entitlements.",
+    description=(
+        "Returns active user and merchant subscriptions. "
+        "Without a token, returns an empty summary instead of 401."
+    ),
 )
 def get_my_active_subscriptions(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardResponse[ActiveSubscriptionSummary]:
+    if current_user is None:
+        return success_response(
+            data=ActiveSubscriptionSummary(),
+            message="No active subscription",
+        )
     user_subs, merchant_subs, user = SubscriptionService.get_active_summary(db=db, user=current_user)
     merchant_flag = any(
         s.merchant_profile_id
@@ -112,8 +120,8 @@ def get_my_active_subscriptions(
     status_code=status.HTTP_201_CREATED,
     summary="Subscribe to a package",
     description=(
-        "Activates a subscription after payment (send payment_reference from gateway). "
-        "MERCHANT packages require merchant_profile_id."
+        "Activates a subscription. Send package_id or package_code. "
+        "Merchant plans use the caller's shop when merchant_profile_id is omitted."
     ),
 )
 def subscribe_to_package(

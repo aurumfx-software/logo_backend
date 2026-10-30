@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models.merchant import MerchantProfile
@@ -227,12 +228,18 @@ class SubscriptionService:
         merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_profile_id).first()
         if not merchant:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant profile not found.")
-        if merchant.user_id != user.id and user.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this merchant profile.",
-            )
-        return merchant
+        if merchant.user_id == user.id or user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            return merchant
+        if merchant.onboarded_by_id == user.id:
+            return merchant
+        if user.phone and user.phone in {merchant.phone, merchant.contact_number}:
+            return merchant
+        if user.email and merchant.email and user.email.strip().lower() == merchant.email.strip().lower():
+            return merchant
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this merchant profile.",
+        )
 
     @staticmethod
     def _apply_user_entitlements(db: Session, user_id: int) -> User:
@@ -310,6 +317,34 @@ class SubscriptionService:
         return merchant
 
     @staticmethod
+    def _audience_value(pkg: SubscriptionPackage) -> str:
+        raw = getattr(pkg.audience, "value", pkg.audience)
+        return str(raw or "").strip().upper()
+
+    @staticmethod
+    def _resolve_package(db: Session, payload: SubscribeRequest) -> SubscriptionPackage:
+        SubscriptionService.ensure_default_packages(db)
+        if payload.package_id:
+            return SubscriptionService.get_package(db, payload.package_id)
+        code = (payload.package_code or "").strip().upper()
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="package_id or package_code is required.",
+            )
+        pkg = (
+            db.query(SubscriptionPackage)
+            .filter(func.upper(SubscriptionPackage.code) == code)
+            .first()
+        )
+        if not pkg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Subscription package '{code}' not found.",
+            )
+        return pkg
+
+    @staticmethod
     def subscribe(
         db: Session,
         user: User,
@@ -319,23 +354,23 @@ class SubscriptionService:
         amount_paid: Optional[Decimal] = None,
     ) -> UserSubscription:
         SubscriptionService._expire_due_subscriptions(db, user.id)
-        pkg = SubscriptionService.get_package(db, payload.package_id)
+        pkg = SubscriptionService._resolve_package(db, payload)
         if not pkg.is_active:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Package is not available.")
 
         merchant_profile_id = payload.merchant_profile_id
-        if pkg.audience == SubscriptionAudience.MERCHANT:
-            if not merchant_profile_id:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="merchant_profile_id is required for merchant subscription packages.",
+        if SubscriptionService._audience_value(pkg) == "MERCHANT":
+            if merchant_profile_id:
+                SubscriptionService._assert_merchant_access(db, user, merchant_profile_id)
+            else:
+                from app.services.wallet_service import WalletService
+
+                merchant = WalletService._merchant_for_user(
+                    db, user, None, allow_unapproved=True
                 )
-            SubscriptionService._assert_merchant_access(db, user, merchant_profile_id)
-        elif merchant_profile_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="merchant_profile_id must not be set for user subscription packages.",
-            )
+                merchant_profile_id = merchant.id
+        else:
+            merchant_profile_id = None
 
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(days=pkg.duration_days) if pkg.duration_days else None
@@ -356,7 +391,7 @@ class SubscriptionService:
         db.commit()
         db.refresh(sub)
 
-        if pkg.audience == SubscriptionAudience.USER:
+        if SubscriptionService._audience_value(pkg) == "USER":
             SubscriptionService._apply_user_entitlements(db, user.id)
         else:
             SubscriptionService._apply_merchant_entitlements(db, merchant_profile_id)
