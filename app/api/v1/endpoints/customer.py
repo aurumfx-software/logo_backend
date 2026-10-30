@@ -14,6 +14,7 @@ from app.schemas.auth import (
     LogoutResponse,
     SafeUserResponse,
 )
+from app.schemas.customer import CustomerLocationUpdateRequest, CustomerProfileResponse
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/customer", tags=["Customer"])
@@ -72,3 +73,48 @@ def logout_customer(
         user_id=current_user.id,
         logged_out_at=logged_out_at,
     )
+
+
+@router.get(
+    "/location",
+    response_model=CustomerProfileResponse,
+    summary="Get current customer location",
+    description="Returns the authenticated user's saved district, city, location, and coordinates.",
+)
+def get_customer_location(
+    current_user: User = Depends(get_current_user),
+) -> CustomerProfileResponse:
+    return CustomerProfileResponse.model_validate(current_user)
+
+
+@router.put(
+    "/location",
+    response_model=CustomerProfileResponse,
+    summary="Update customer location",
+    description="Saves district, city, town/location, address, or GPS coordinates for the authenticated user.",
+)
+@router.post(
+    "/location",
+    response_model=CustomerProfileResponse,
+    summary="Update customer location",
+)
+def update_customer_location(
+    data: CustomerLocationUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CustomerProfileResponse:
+    if data.district is not None:
+        current_user.district = data.district.strip() or None
+    if data.city is not None:
+        current_user.city = data.city.strip() or None
+    if data.location is not None:
+        current_user.location = data.location.strip() or None
+    if data.address is not None:
+        current_user.address = data.address.strip() or None
+    if data.latitude is not None:
+        current_user.latitude = data.latitude
+    if data.longitude is not None:
+        current_user.longitude = data.longitude
+    db.commit()
+    db.refresh(current_user)
+    return CustomerProfileResponse.model_validate(current_user)

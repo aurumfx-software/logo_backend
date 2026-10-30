@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, JSON, TypeDecorator
+from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, JSON, TypeDecorator
 from app.db.database import Base
 
 
@@ -78,6 +78,9 @@ class User(Base):
     district = Column(String(100), nullable=True)
     regions = Column(JSON, default=list, nullable=True)
     city = Column(String(100), nullable=True)
+    location = Column(String(255), nullable=True)
+    latitude = Column(Numeric(10, 8), nullable=True)
+    longitude = Column(Numeric(11, 8), nullable=True)
     module_access = Column(JSON, default=list, nullable=True)
     send_email = Column(Boolean, default=False, nullable=False)
     status = Column(String(50), default="ACTIVE", nullable=False)

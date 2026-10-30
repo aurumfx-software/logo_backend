@@ -15,6 +15,8 @@ from app.schemas.wallet import (
     SaleRedeemResponse,
     WalletMeResponse,
     WalletTransactionListResponse,
+    WalletTopUpRequest,
+    WalletTopUpResponse,
     WalletTransferRequest,
     WalletTransferResponse,
 )
@@ -70,6 +72,35 @@ def wallet_transfer(
     db: Session = Depends(get_db),
 ) -> WalletTransferResponse:
     return WalletService.transfer_wallet_to_wallet(db=db, sender=current_user, payload=payload)
+
+
+@router.get(
+    "/topup",
+    response_model=WalletMeResponse,
+    summary="Wallet top-up account",
+    description="Returns the authenticated user's wallet. Add money with POST /wallet/topup.",
+)
+def get_wallet_topup(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WalletMeResponse:
+    wallet = WalletService.get_my_wallet(db=db, user=current_user)
+    return WalletMeResponse(message="Use POST to add money to this wallet", wallet=wallet)
+
+
+@router.post(
+    "/topup",
+    response_model=WalletTopUpResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Top up / add money to wallet",
+    description="Credits the authenticated customer or merchant wallet.",
+)
+def top_up_wallet(
+    payload: WalletTopUpRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WalletTopUpResponse:
+    return WalletService.top_up_wallet(db=db, user=current_user, payload=payload)
 
 
 @router.post(
