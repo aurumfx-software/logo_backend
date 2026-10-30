@@ -7,23 +7,22 @@ cd "$ROOT"
 
 BRANCH="${1:-dev}"
 
-BLOCKERS=(
-  app/api/v1/endpoints/complaint.py
-  app/db/models/complaint.py
-  app/schemas/complaint.py
-  app/services/complaint_service.py
-  alembic/versions/014_complaints_table.py
-)
+git merge --abort 2>/dev/null || true
+git fetch origin "$BRANCH"
 
-for path in "${BLOCKERS[@]}"; do
+# Untracked files that also exist on the incoming branch make git pull abort.
+while IFS= read -r path; do
+  [[ -z "$path" ]] && continue
   if [[ -e "$path" ]] && ! git ls-files --error-unmatch "$path" &>/dev/null; then
     echo "Removing untracked file that blocks merge: $path"
     rm -rf "$path"
   fi
-done
+done < <(
+  comm -12 \
+    <(git ls-files --others --exclude-standard | sort) \
+    <(git ls-tree -r --name-only "origin/$BRANCH" | sort)
+)
 
-git merge --abort 2>/dev/null || true
-git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git merge --ff-only "origin/$BRANCH"
 
