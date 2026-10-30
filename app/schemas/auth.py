@@ -330,7 +330,7 @@ class LogoutRequest(BaseModel):
 class LogoutResponse(BaseModel):
     success: bool = True
     message: str
-    user_id: int
+    user_id: Optional[int] = None
     logged_out_at: datetime
 
 

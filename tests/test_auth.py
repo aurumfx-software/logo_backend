@@ -249,6 +249,12 @@ def test_logout_endpoint(client: TestClient):
     assert "revoked" in me_res.json()["detail"].lower()
 
 
+def test_logout_without_token_is_success(client: TestClient):
+    response = client.post("/api/v1/auth/logout", json={})
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+
 # 10. OTP generation and verification
 def test_otp_generation_and_verification(client: TestClient):
     # Register user first

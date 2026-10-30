@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import (
     get_current_user,
     get_current_user_optional,
+    optional_security_scheme,
     require_admin,
     require_role,
     require_any_authenticated,
-    security_scheme,
 )
 from app.core.config import settings
 from app.db.database import get_db
@@ -766,23 +766,13 @@ def merchant_login_with_password(
     ),
 )
 def merchant_logout(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    current_user: User = Depends(get_current_user),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
     body: Optional[LogoutRequest] = Body(None),
     db: Session = Depends(get_db),
 ) -> LogoutResponse:
+    access = credentials.credentials if credentials else None
     refresh = body.refresh_token if body else None
-    logged_out_at = AuthService.logout_user(
-        db=db,
-        user=current_user,
-        access_token=credentials.credentials,
-        refresh_token=refresh,
-    )
-    return LogoutResponse(
-        message=f"Merchant {current_user.email} successfully logged out.",
-        user_id=current_user.id,
-        logged_out_at=logged_out_at,
-    )
+    return AuthService.logout_request(db=db, access_token=access, refresh_token=refresh)
 
 
 # ── OTP Login Flow ────────────────────────────────────────────────────────────

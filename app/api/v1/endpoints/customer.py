@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, security_scheme
+from app.api.deps import get_current_user, optional_security_scheme
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.auth import (
@@ -51,28 +51,18 @@ def register_customer(
     response_model=LogoutResponse,
     summary="Customer logout (mobile app)",
     description=(
-        "Same behaviour as POST /api/v1/auth/logout: revokes the Bearer access token "
-        "(and optional refresh token in body), sets logged_out_at, and records USER_LOGOUT."
+        "Revokes the Bearer access token when one is sent. "
+        "Missing or expired tokens still return success."
     ),
 )
 def logout_customer(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    current_user: User = Depends(get_current_user),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
     body: Optional[LogoutRequest] = Body(None),
     db: Session = Depends(get_db),
 ) -> LogoutResponse:
+    access = credentials.credentials if credentials else None
     refresh = body.refresh_token if body else None
-    logged_out_at = AuthService.logout_user(
-        db=db,
-        user=current_user,
-        access_token=credentials.credentials,
-        refresh_token=refresh,
-    )
-    return LogoutResponse(
-        message=f"Customer {current_user.email} successfully logged out.",
-        user_id=current_user.id,
-        logged_out_at=logged_out_at,
-    )
+    return AuthService.logout_request(db=db, access_token=access, refresh_token=refresh)
 
 
 @router.get(

@@ -75,6 +75,19 @@ def decode_token(token: str) -> Dict[str, Any]:
     )
 
 
+def decode_token_allow_expired(token: str) -> Dict[str, Any]:
+    """Decode a JWT even when it is expired. Signature is still verified."""
+    try:
+        return decode_token(token)
+    except jwt.ExpiredSignatureError:
+        return jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": False},
+        )
+
+
 # --- OTP Security ---
 def generate_numeric_otp(length: int = 6) -> str:
     """Generate a cryptographically secure numeric OTP."""

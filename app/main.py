@@ -16,19 +16,22 @@ import app.db.models  # Ensure all SQLAlchemy models are registered
 def _cors_settings() -> dict:
     raw = (settings.CORS_ORIGINS or "*").strip()
     origin_regex = (settings.CORS_ORIGIN_REGEX or "").strip() or None
+    # Always allow any localhost / 127.0.0.1 port, even when CORS_ORIGINS is a fixed list.
+    local_dev = r"https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?"
+    if origin_regex:
+        inner = origin_regex[1:] if origin_regex.startswith("^") else origin_regex
+        inner = inner[:-1] if inner.endswith("$") else inner
+        origin_regex = rf"^(?:{inner}|{local_dev})$"
+    else:
+        origin_regex = rf"^{local_dev}$"
+
     if raw == "*":
-        if origin_regex:
-            return {
-                "allow_origins": [],
-                "allow_origin_regex": origin_regex,
-                "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
-            }
         return {
-            "allow_origins": ["*"],
-            "allow_origin_regex": None,
-            "allow_credentials": False,
+            "allow_origins": [],
+            "allow_origin_regex": origin_regex,
+            "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
         }
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
     return {
         "allow_origins": origins,
         "allow_origin_regex": origin_regex,
@@ -60,6 +63,35 @@ app = FastAPI(
 
 # CORS must not combine allow_origins=["*"] with allow_credentials=True (browser blocks preflight).
 _cors = _cors_settings()
+
+
+class _PrivateNetworkHeaderMiddleware:
+    """Lets Chrome preflights from localhost succeed against this public API."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request_headers = {
+            k.decode("latin1").lower(): v.decode("latin1")
+            for k, v in scope.get("headers") or []
+        }
+        allow_private = request_headers.get("access-control-request-private-network", "").lower() == "true"
+
+        async def send_wrapper(message):
+            if allow_private and message.get("type") == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.append((b"access-control-allow-private-network", b"true"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors["allow_origins"],
@@ -69,6 +101,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+app.add_middleware(_PrivateNetworkHeaderMiddleware)
 
 # Standardized Error Exception Handlers
 @app.exception_handler(HTTPException)

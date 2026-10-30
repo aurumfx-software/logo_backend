@@ -11,6 +11,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    decode_token_allow_expired,
     hash_password,
     verify_password,
 )
@@ -19,6 +20,7 @@ from app.db.models.revoked_token import RevokedToken
 from app.db.models.user import User, UserRole
 from app.schemas.auth import (
     CustomerRegisterRequest,
+    LogoutResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
     SafeUserResponse,
@@ -474,6 +476,51 @@ class AuthService:
         )
 
     @staticmethod
+    def _user_from_token(db: Session, token: Optional[str]) -> Optional[User]:
+        if not token or not str(token).strip():
+            return None
+        try:
+            payload = decode_token_allow_expired(str(token).strip())
+        except jwt.InvalidTokenError:
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        try:
+            return db.query(User).filter(User.id == int(user_id)).first()
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def logout_request(
+        db: Session,
+        access_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+    ) -> LogoutResponse:
+        """Log out when a token is present. Missing or expired tokens still return success."""
+        user = AuthService._user_from_token(db, access_token)
+        if user is None:
+            user = AuthService._user_from_token(db, refresh_token)
+        now = datetime.now(timezone.utc)
+        if user is None:
+            return LogoutResponse(
+                message="Logged out.",
+                user_id=None,
+                logged_out_at=now,
+            )
+        logged_out_at = AuthService.logout_user(
+            db=db,
+            user=user,
+            access_token=access_token or "",
+            refresh_token=refresh_token,
+        )
+        return LogoutResponse(
+            message=f"User {user.email} successfully logged out.",
+            user_id=user.id,
+            logged_out_at=logged_out_at,
+        )
+
+    @staticmethod
     def logout_user(
         db: Session,
         user: User,
@@ -483,7 +530,7 @@ class AuthService:
         now = datetime.now(timezone.utc)
 
         try:
-            access_payload = decode_token(access_token)
+            access_payload = decode_token_allow_expired(access_token)
             if access_payload.get("type") == "access":
                 AuthService._revoke_raw_token(
                     db, user.id, access_token, access_payload, "access"
@@ -493,7 +540,7 @@ class AuthService:
 
         if refresh_token:
             try:
-                refresh_payload = decode_token(refresh_token)
+                refresh_payload = decode_token_allow_expired(refresh_token)
                 if refresh_payload.get("type") == "refresh":
                     AuthService._revoke_raw_token(
                         db, user.id, refresh_token, refresh_payload, "refresh"
