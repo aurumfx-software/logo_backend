@@ -82,6 +82,8 @@ class MerchantProfile(Base):
     rejection_reason = Column(String(500), nullable=True)
     can_create_promotions = Column(Boolean, default=True, nullable=False)
     has_active_subscription = Column(Boolean, default=False, nullable=False)
+    cashback_percent = Column(Numeric(5, 2), nullable=False, default=3, server_default="3")
+    company_fee_percent = Column(Numeric(5, 2), nullable=False, default=2, server_default="2")
 
     approved_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)

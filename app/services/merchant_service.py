@@ -970,6 +970,11 @@ class MerchantService:
             if user:
                 user.password_hash = merchant.password_hash
 
+        if data.cashback_percent is not None:
+            merchant.cashback_percent = data.cashback_percent
+        if data.company_fee_percent is not None:
+            merchant.company_fee_percent = data.company_fee_percent
+
         db.commit()
         db.refresh(merchant)
         return merchant

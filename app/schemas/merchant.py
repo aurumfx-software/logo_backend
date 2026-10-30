@@ -125,6 +125,8 @@ class MerchantProfileResponse(BaseModel):
     user: Optional[MerchantLinkedUser] = None
     is_active: bool = True
     has_password: bool = False
+    cashback_percent: float = 3
+    company_fee_percent: float = 2
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -433,6 +435,18 @@ class MerchantUpdateRequest(BaseModel):
         min_length=8,
         max_length=100,
         description="Set or update merchant login password",
+    )
+    cashback_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Percent of the bill credited to the customer wallet",
+    )
+    company_fee_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Percent of the bill kept by the company",
     )
 
     model_config = ConfigDict(extra="ignore")
