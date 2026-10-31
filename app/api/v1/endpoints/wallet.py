@@ -153,7 +153,7 @@ def preview_sale_qr(
 @router.post(
     "/sales/redeem",
     response_model=SaleRedeemResponse,
-    summary="Customer: redeem 5% sale cashback to wallet (3% user, 2% company)",
+    summary="Customer: redeem sale cashback to wallet",
 )
 def redeem_sale_cashback(
     payload: SaleRedeemRequest,

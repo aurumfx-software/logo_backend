@@ -44,6 +44,10 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _percent_label(percent: float) -> str:
+    return f"{percent:.2f}".rstrip("0").rstrip(".") or "0"
+
+
 class WalletService:
     @staticmethod
     def _money(value: Decimal) -> Decimal:
@@ -437,15 +441,32 @@ class WalletService:
         return user_pct, company_pct
 
     @staticmethod
-    def _split_cashback(sale_amount: Decimal, merchant: Optional[MerchantProfile]) -> Tuple[Decimal, Decimal, Decimal]:
+    def _split_cashback(
+        sale_amount: Decimal, merchant: Optional[MerchantProfile]
+    ) -> Tuple[Decimal, Decimal, Decimal]:
         user_pct, company_pct = WalletService._cashback_rates(merchant)
-        total = WalletService._percent_of(sale_amount, user_pct + company_pct)
         user_cb = WalletService._percent_of(sale_amount, user_pct)
-        company_fee = WalletService._money(total - user_cb)
-        if company_fee < 0:
-            company_fee = Decimal("0.00")
-            user_cb = total
+        company_fee = WalletService._percent_of(sale_amount, company_pct)
+        total = WalletService._money(user_cb + company_fee)
         return total, user_cb, company_fee
+
+    @staticmethod
+    def _sale_qr_payload(token: str, sale_amount: Decimal, business_name: str) -> str:
+        return (
+            f"logo://wallet/redeem?token={token}"
+            f"&amount={sale_amount}&merchant={business_name}"
+        )
+
+    @staticmethod
+    def _expire_if_pending(db: Session, sale_qr: MerchantSaleQR) -> bool:
+        if sale_qr.status != SaleQRStatus.PENDING:
+            return False
+        if _as_utc(sale_qr.expires_at) >= datetime.now(timezone.utc):
+            return False
+        sale_qr.status = SaleQRStatus.EXPIRED
+        db.commit()
+        db.refresh(sale_qr)
+        return True
 
     @staticmethod
     def create_sale_qr(
@@ -473,8 +494,8 @@ class WalletService:
         db.commit()
         db.refresh(sale_qr)
 
-        qr_payload = (
-            f"logo://wallet/redeem?token={sale_qr.token}&amount={sale_amount}&merchant={merchant.business_name}"
+        qr_payload = WalletService._sale_qr_payload(
+            sale_qr.token, sale_amount, merchant.business_name
         )
         return SaleQRCreateResponse(
             message="Sale QR created",
@@ -494,10 +515,7 @@ class WalletService:
         if not sale_qr:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sale QR not found.")
 
-        now = datetime.now(timezone.utc)
-        if sale_qr.status == SaleQRStatus.PENDING and _as_utc(sale_qr.expires_at) < now:
-            sale_qr.status = SaleQRStatus.EXPIRED
-            db.commit()
+        WalletService._expire_if_pending(db, sale_qr)
 
         merchant = sale_qr.merchant_profile
         user_cb = WalletService._split_cashback(sale_qr.sale_amount, merchant)[1]
@@ -545,11 +563,8 @@ class WalletService:
 
         WalletService._assert_merchant_owns_sale_qr(sale_qr, merchant_user)
 
+        WalletService._expire_if_pending(db, sale_qr)
         now = datetime.now(timezone.utc)
-        if sale_qr.status == SaleQRStatus.PENDING and _as_utc(sale_qr.expires_at) < now:
-            sale_qr.status = SaleQRStatus.EXPIRED
-            db.commit()
-            db.refresh(sale_qr)
 
         sale_amount = WalletService._money(sale_qr.sale_amount)
         merchant = sale_qr.merchant_profile
@@ -578,12 +593,11 @@ class WalletService:
         else:
             message = "Waiting for customer to scan and redeem."
 
-        qr_payload = None
-        if is_pending:
-            qr_payload = (
-                f"logo://wallet/redeem?token={sale_qr.token}"
-                f"&amount={sale_amount}&merchant={business_name}"
-            )
+        qr_payload = (
+            WalletService._sale_qr_payload(sale_qr.token, sale_amount, business_name)
+            if is_pending
+            else None
+        )
 
         return SaleQRMerchantStatusResponse(
             message=message,
@@ -618,11 +632,9 @@ class WalletService:
         if not sale_qr:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sale QR not found.")
 
-        now = datetime.now(timezone.utc)
-        if _as_utc(sale_qr.expires_at) < now and sale_qr.status == SaleQRStatus.PENDING:
-            sale_qr.status = SaleQRStatus.EXPIRED
-            db.commit()
+        if WalletService._expire_if_pending(db, sale_qr):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sale QR has expired.")
+        now = datetime.now(timezone.utc)
 
         if sale_qr.status != SaleQRStatus.PENDING:
             raise HTTPException(
@@ -637,6 +649,7 @@ class WalletService:
             )
 
         sale_amount = WalletService._money(sale_qr.sale_amount)
+        user_pct, company_pct = WalletService._cashback_rates(sale_qr.merchant_profile)
         merchant_debit, user_cb, company_fee = WalletService._split_cashback(
             sale_amount, sale_qr.merchant_profile
         )
@@ -670,7 +683,7 @@ class WalletService:
             WalletLedgerDirection.DEBIT,
             merchant_debit,
             counterparty_wallet_id=locked_user.id,
-            note=f"5% cashback on sale {sale_amount}",
+            note=f"{_percent_label(user_pct + company_pct)}% cashback on sale {sale_amount}",
         )
         WalletService._apply_ledger_line(
             db,
@@ -679,7 +692,7 @@ class WalletService:
             WalletLedgerDirection.CREDIT,
             user_cb,
             counterparty_wallet_id=locked_merchant.id,
-            note=f"3% user cashback on sale {sale_amount}",
+            note=f"{_percent_label(user_pct)}% user cashback on sale {sale_amount}",
         )
         WalletService._apply_ledger_line(
             db,
@@ -688,7 +701,7 @@ class WalletService:
             WalletLedgerDirection.CREDIT,
             company_fee,
             counterparty_wallet_id=locked_merchant.id,
-            note=f"2% platform fee on sale {sale_amount}",
+            note=f"{_percent_label(company_pct)}% platform fee on sale {sale_amount}",
         )
 
         sale_qr.status = SaleQRStatus.REDEEMED
