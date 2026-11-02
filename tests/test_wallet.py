@@ -191,6 +191,17 @@ def test_sale_qr_uses_merchant_table_cashback_percent(client: TestClient, db_ses
     assert body["company_fee"] == "30.00"
     assert body["merchant_debit"] == "80.00"
 
+    platform = client.get("/api/v1/wallet/platform", headers=admin_headers)
+    assert platform.status_code == 200
+    screen = platform.json()
+    assert screen["balance"] == "30.00"
+    assert screen["total_platform_revenue"] == "30.00"
+    assert screen["cashback_distributed"] == "50.00"
+    assert screen["gross_sales_volume"] == "1000.00"
+    assert screen["qr_redemptions"] == 1
+    assert screen["transactions"][0]["amount"] == "30.00"
+    assert screen["transactions"][0]["direction"] == "CREDIT"
+
 
 def test_merchant_qr_status_pending_then_redeemed(client: TestClient, db_session: Session):
     merchant_user = _create_merchant(db_session, "statusmerchant@example.com")

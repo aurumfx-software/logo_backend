@@ -7,6 +7,7 @@ from app.db.models.user import User
 from app.schemas.wallet import (
     AdminWalletAdjustRequest,
     AdminWalletAdjustResponse,
+    PlatformWalletResponse,
     SaleQRCreateRequest,
     SaleQRCreateResponse,
     SaleQRMerchantStatusResponse,
@@ -23,6 +24,40 @@ from app.schemas.wallet import (
 from app.services.wallet_service import WalletService
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
+
+
+@router.get(
+    "/platform",
+    response_model=PlatformWalletResponse,
+    summary="Admin: platform company wallet and fee ledger",
+    description=(
+        "Fills the Platform Wallet screen: company balance, default 3/2/5 split, "
+        "platform revenue, cashback paid, gross sales, QR redemption count, "
+        "and the company ledger of fee credits."
+    ),
+)
+def get_platform_wallet(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> PlatformWalletResponse:
+    return WalletService.get_platform_wallet(db=db, page=page, page_size=page_size)
+
+
+@router.get(
+    "/company",
+    response_model=PlatformWalletResponse,
+    summary="Admin: platform company wallet and fee ledger",
+    include_in_schema=False,
+)
+def get_company_wallet_alias(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> PlatformWalletResponse:
+    return WalletService.get_platform_wallet(db=db, page=page, page_size=page_size)
 
 
 @router.get(

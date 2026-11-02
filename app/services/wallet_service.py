@@ -21,6 +21,8 @@ from app.db.models.wallet import (
     WalletType,
 )
 from app.schemas.wallet import (
+    PlatformWalletResponse,
+    PlatformWalletTransaction,
     SaleQRCreateRequest,
     SaleQRCreateResponse,
     SaleQRMerchantStatusResponse,
@@ -155,6 +157,92 @@ class WalletService:
         )
         db.add(entry)
         return entry
+
+    @staticmethod
+    def _sum_money(value) -> Decimal:
+        return WalletService._money(Decimal(str(value or 0)))
+
+    @staticmethod
+    def get_platform_wallet(db: Session, page: int = 1, page_size: int = 20) -> PlatformWalletResponse:
+        """Company wallet balance, QR fee totals, and platform ledger credits."""
+        company = WalletService.get_company_wallet(db)
+        db.commit()
+        db.refresh(company)
+
+        revenue = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+            )
+            .scalar()
+        )
+        cashback = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id != company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
+            .scalar()
+        )
+        gross_sales = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(MerchantSaleQR.sale_amount), 0))
+            .filter(MerchantSaleQR.status == SaleQRStatus.REDEEMED)
+            .scalar()
+        )
+        redemptions = (
+            db.query(func.count(MerchantSaleQR.id))
+            .filter(MerchantSaleQR.status == SaleQRStatus.REDEEMED)
+            .scalar()
+            or 0
+        )
+
+        ledger = (
+            db.query(WalletLedgerEntry)
+            .filter(WalletLedgerEntry.wallet_id == company.id)
+            .order_by(WalletLedgerEntry.created_at.desc())
+        )
+        total = ledger.count()
+        rows = ledger.offset((page - 1) * page_size).limit(page_size).all()
+        transactions = []
+        for row in rows:
+            txn = row.transaction
+            transactions.append(
+                PlatformWalletTransaction(
+                    id=row.id,
+                    direction=row.direction.value if hasattr(row.direction, "value") else str(row.direction),
+                    amount=WalletService._money(row.amount),
+                    balance_after=WalletService._money(row.balance_after),
+                    note=row.note,
+                    created_at=row.created_at,
+                    transaction_type=(
+                        txn.transaction_type.value
+                        if txn and hasattr(txn.transaction_type, "value")
+                        else (str(txn.transaction_type) if txn else None)
+                    ),
+                    transaction_group_id=txn.group_id if txn else None,
+                )
+            )
+
+        user_pct = float(settings.CASHBACK_USER_PERCENT)
+        company_pct = float(settings.CASHBACK_COMPANY_PERCENT)
+        return PlatformWalletResponse(
+            currency=company.currency or settings.WALLET_CURRENCY,
+            balance=WalletService._money(company.balance),
+            customer_cashback_percent=user_pct,
+            platform_fee_percent=company_pct,
+            total_shop_deduction_percent=user_pct + company_pct,
+            total_platform_revenue=revenue,
+            cashback_distributed=cashback,
+            gross_sales_volume=gross_sales,
+            qr_redemptions=int(redemptions),
+            transactions=transactions,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     @staticmethod
     def get_my_wallet(db: Session, user: User) -> WalletResponse:

@@ -41,6 +41,37 @@ class WalletTransactionListResponse(BaseModel):
     page_size: int = 20
 
 
+class PlatformWalletTransaction(BaseModel):
+    id: int
+    direction: str
+    amount: Decimal
+    balance_after: Decimal
+    note: Optional[str] = None
+    created_at: datetime
+    transaction_type: Optional[str] = None
+    transaction_group_id: Optional[str] = None
+
+
+class PlatformWalletResponse(BaseModel):
+    """Admin platform wallet screen: company balance, fee totals, and ledger."""
+
+    success: bool = True
+    message: str = "Platform wallet retrieved"
+    currency: str = "INR"
+    balance: Decimal
+    customer_cashback_percent: float
+    platform_fee_percent: float
+    total_shop_deduction_percent: float
+    total_platform_revenue: Decimal
+    cashback_distributed: Decimal
+    gross_sales_volume: Decimal
+    qr_redemptions: int
+    transactions: List[PlatformWalletTransaction] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 class WalletMeResponse(BaseModel):
     success: bool = True
     message: str = "Wallet retrieved"
