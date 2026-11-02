@@ -562,3 +562,49 @@ def test_phone_login_legacy_super_admin_role_string(client: TestClient, db_sessi
     assert "admin portal" in res.json()["message"].lower()
 
 
+def test_otp_send_and_verify_by_phone(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Phone OTP User",
+            "email": "phone.otp@example.com",
+            "phone": "9812345678",
+            "password": "Password12345",
+        },
+    )
+    send_res = client.post(
+        "/api/v1/otp/send",
+        json={"phone": "+91 98123-45678", "purpose": "ACCOUNT_VERIFICATION"},
+    )
+    assert send_res.status_code == 200
+    otp = send_res.json()["dev_otp"]
+    assert otp and len(otp) == 6
+
+    bad_res = client.post(
+        "/api/v1/otp/verify",
+        json={"phone": "9812345678", "otp": "000000", "purpose": "ACCOUNT_VERIFICATION"},
+    )
+    assert bad_res.status_code == 400
+
+    verify_res = client.post(
+        "/api/v1/otp/verify",
+        json={"phone": "9812345678", "otp": otp, "purpose": "ACCOUNT_VERIFICATION"},
+    )
+    assert verify_res.status_code == 200
+    assert verify_res.json()["is_verified"] is True
+
+    login_res = client.post(
+        "/api/v1/auth/login",
+        json={"email": "phone.otp@example.com", "password": "Password12345"},
+    )
+    token = login_res.json()["access_token"]
+    me_res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_res.json()["is_verified"] is True
+
+    reuse_res = client.post(
+        "/api/v1/otp/verify",
+        json={"phone": "9812345678", "otp": otp, "purpose": "ACCOUNT_VERIFICATION"},
+    )
+    assert reuse_res.status_code == 400
+
+

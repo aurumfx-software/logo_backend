@@ -285,6 +285,61 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str = Field(..., json_schema_extra={"example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."})
 
 
+def _normalize_phone(value: str) -> str:
+    cleaned = re.sub(r"[\s\-()]", "", value.strip())
+    if cleaned.startswith("+91"):
+        cleaned = cleaned[3:]
+    elif cleaned.startswith("91") and len(cleaned) > 10:
+        cleaned = cleaned[2:]
+    if not cleaned.isdigit() or len(cleaned) < 10:
+        raise ValueError("Invalid phone number")
+    return cleaned
+
+
+class OTPChannelRequest(BaseModel):
+    """Send or check an OTP for an email address or a mobile number."""
+
+    email: Optional[str] = Field(None, json_schema_extra={"example": "user@example.com"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    purpose: OTPPurpose = Field(
+        default=OTPPurpose.ACCOUNT_VERIFICATION,
+        json_schema_extra={"example": "ACCOUNT_VERIFICATION"},
+    )
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        return _normalize_phone(str(v))
+
+    @model_validator(mode="after")
+    def require_one_channel(self) -> "OTPChannelRequest":
+        if not self.email and not self.phone:
+            raise ValueError("Provide either email or phone")
+        if self.email and self.phone:
+            raise ValueError("Provide only one of email or phone")
+        return self
+
+    @property
+    def identifier(self) -> str:
+        return self.email or self.phone or ""
+
+
+class OTPVerifyChannelRequest(OTPChannelRequest):
+    otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
+
+
 class SendOTPRequest(UserBase):
     purpose: OTPPurpose = Field(
         default=OTPPurpose.ACCOUNT_VERIFICATION,
