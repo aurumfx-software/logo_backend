@@ -64,25 +64,33 @@ class WalletTopupService:
         payload: WalletTopupCreateRequest,
     ) -> RazorpayTopupOrderResponse:
         amount = WalletTopupService._validate_amount(payload.amount)
-        merchant = WalletTopupService._resolve_merchant(
-            db, user, payload.merchant_profile_id
-        )
+        merchant: Optional[MerchantProfile] = None
+        try:
+            merchant = WalletTopupService._resolve_merchant(
+                db, user, payload.merchant_profile_id
+            )
+        except Exception:
+            merchant = None
+
         amount_paise = RazorpayService.inr_to_paise(amount)
         receipt = f"WTU-{uuid.uuid4().hex[:12].upper()}"
+
+        notes = {
+            "user_id": str(user.id),
+            "purpose": "wallet_topup",
+        }
+        if merchant:
+            notes["merchant_profile_id"] = str(merchant.id)
 
         rp_order = RazorpayService.create_order(
             amount_paise=amount_paise,
             receipt=receipt,
-            notes={
-                "user_id": str(user.id),
-                "merchant_profile_id": str(merchant.id),
-                "purpose": "wallet_topup",
-            },
+            notes=notes,
         )
 
         topup = WalletTopupOrder(
             user_id=user.id,
-            merchant_profile_id=merchant.id,
+            merchant_profile_id=merchant.id if merchant else None,
             amount=amount,
             amount_paise=amount_paise,
             currency=settings.WALLET_CURRENCY,
@@ -103,8 +111,8 @@ class WalletTopupService:
             amount_paise=amount_paise,
             currency=topup.currency,
             receipt=receipt,
-            merchant_profile_id=merchant.id,
-            merchant_business_name=merchant.business_name,
+            merchant_profile_id=merchant.id if merchant else None,
+            merchant_business_name=merchant.business_name if merchant else None,
         )
 
     @staticmethod

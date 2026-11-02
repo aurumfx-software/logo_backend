@@ -40,8 +40,8 @@ class RazorpayTopupOrderResponse(BaseModel):
     amount_paise: int
     currency: str
     receipt: str
-    merchant_profile_id: int
-    merchant_business_name: str
+    merchant_profile_id: Optional[int] = None
+    merchant_business_name: Optional[str] = None
 
 
 class RazorpayTopupVerifyRequest(BaseModel):
