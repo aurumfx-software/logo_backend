@@ -44,6 +44,7 @@ from app.schemas.response import (
     list_response,
     success_response,
 )
+from app.services.admin_service import AdminService
 from app.services.merchant_service import MerchantService
 from app.services.auth_service import AuthService
 
@@ -275,7 +276,10 @@ def get_merchant_regions(
     "/me",
     response_model=MerchantProfileResponse,
     summary="Get current merchant profile",
-    description="Returns the business profile for the currently authenticated merchant.",
+    description=(
+        "Returns the business profile for the currently authenticated merchant. "
+        "cashback_percent and company_fee_percent are the values stored on merchant_profiles."
+    ),
 )
 def get_my_merchant_profile(
     current_user: User = Depends(require_any_authenticated),
@@ -284,6 +288,7 @@ def get_my_merchant_profile(
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
+    db.refresh(merchant)
     return MerchantService.build_merchant_response(merchant)
 
 
@@ -491,6 +496,8 @@ def list_merchants_paginated(
         current_user=current_user,
         user_code=user_code,
     )
+    if search and search.strip():
+        AdminService.record_search(db, "merchant_list", search)
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
@@ -531,6 +538,7 @@ def search_merchants(
         current_user=current_user,
         user_code=user_code,
     )
+    AdminService.record_search(db, "merchant_search", q or location or service or category)
     page = (skip // limit) + 1
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],
@@ -564,6 +572,7 @@ def search_merchants_by_location(
         public_only=True,
         current_user=current_user,
     )
+    AdminService.record_search(db, "merchant_location", location)
     page = (skip // limit) + 1
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],
@@ -597,6 +606,7 @@ def search_merchants_by_service(
         public_only=True,
         current_user=current_user,
     )
+    AdminService.record_search(db, "merchant_service", service)
     page = (skip // limit) + 1
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],

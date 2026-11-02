@@ -6,6 +6,7 @@ from app.api.deps import require_admin, require_any_authenticated
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.admin import (
+    AdminDashboardCards,
     AdminDashboardStats,
     AdminUserCreateRequest,
     AdminUserDetailResponse,
@@ -49,6 +50,27 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
 ) -> AdminDashboardStats:
     return AdminService.get_dashboard_stats(db=db)
+
+
+@router.get(
+    "/dashboard/cards",
+    response_model=StandardResponse[AdminDashboardCards],
+    summary="Admin dashboard cards",
+    description=(
+        "Returns Total Users, Total Merchants, Total Searches, and Revenue (INR). "
+        "change_percent compares the last 30 days with the 30 days before that. "
+        "Searches are counted from merchant search requests. "
+        "Revenue is subscription payments plus company-wallet cashback fees."
+    ),
+)
+def get_dashboard_cards(
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StandardResponse[AdminDashboardCards]:
+    return success_response(
+        data=AdminService.get_dashboard_cards(db=db),
+        message="Dashboard cards retrieved",
+    )
 
 
 # --- Logo Moderation & Approval ---

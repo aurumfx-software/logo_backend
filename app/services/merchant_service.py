@@ -268,6 +268,10 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
+        resp.cashback_percent = float(merchant.cashback_percent if merchant.cashback_percent is not None else 3)
+        resp.company_fee_percent = float(
+            merchant.company_fee_percent if merchant.company_fee_percent is not None else 2
+        )
         if merchant.user_code:
             resp.user_code = merchant.user_code
         elif creator_summary:
@@ -527,7 +531,10 @@ class MerchantService:
     @staticmethod
     def get_merchant_by_user_id(db: Session, user_id: int) -> MerchantProfile:
         merchant = (
-            db.query(MerchantProfile).filter(MerchantProfile.user_id == user_id).first()
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.user_id == user_id)
+            .order_by(MerchantProfile.id.desc())
+            .first()
         )
         if not merchant:
             raise HTTPException(

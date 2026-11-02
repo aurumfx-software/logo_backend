@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
@@ -7,10 +8,16 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.db.models.logo import Logo, LogoCategory, LogoFavorite, LogoStatus
 from app.db.models.merchant import MerchantProfile
+from app.db.models.search_event import SearchEvent
+from app.db.models.subscription import UserSubscription
 from app.db.models.user import User, UserRole
+from app.db.models.wallet import Wallet, WalletLedgerDirection, WalletLedgerEntry, WalletType
 from app.schemas.admin import (
     AdminCategoryDistributionItem,
+    AdminDashboardCards,
     AdminDashboardStats,
+    DashboardCountCard,
+    DashboardRevenueCard,
     AdminUserCreateRequest,
     AdminUserDetailResponse,
     AdminUserListItem,
@@ -118,6 +125,90 @@ class AdminService:
             recent_users=recent_users,
             trending_logos=trending_logos,
             category_distribution=category_distribution,
+        )
+
+    @staticmethod
+    def record_search(db: Session, source: str, query: Optional[str] = None) -> None:
+        text = (query or "").strip()
+        db.add(SearchEvent(source=source[:40], query=text[:255] or None))
+        db.commit()
+
+    @staticmethod
+    def _change_percent(current: float, previous: float) -> float:
+        if previous == 0:
+            return 100.0 if current else 0.0
+        return round((current - previous) / previous * 100, 1)
+
+    @staticmethod
+    def _count_since(db: Session, model, column, start: datetime, end: Optional[datetime] = None) -> int:
+        query = db.query(func.count(model.id)).filter(column >= start)
+        if end is not None:
+            query = query.filter(column < end)
+        return query.scalar() or 0
+
+    @staticmethod
+    def _revenue_since(db: Session, start: Optional[datetime] = None, end: Optional[datetime] = None) -> Decimal:
+        sub_q = db.query(func.coalesce(func.sum(UserSubscription.amount_paid), 0))
+        fee_q = (
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(Wallet, Wallet.id == WalletLedgerEntry.wallet_id)
+            .filter(
+                Wallet.wallet_type == WalletType.COMPANY,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+            )
+        )
+        if start is not None:
+            sub_q = sub_q.filter(UserSubscription.started_at >= start)
+            fee_q = fee_q.filter(WalletLedgerEntry.created_at >= start)
+        if end is not None:
+            sub_q = sub_q.filter(UserSubscription.started_at < end)
+            fee_q = fee_q.filter(WalletLedgerEntry.created_at < end)
+        total = Decimal(str(sub_q.scalar() or 0)) + Decimal(str(fee_q.scalar() or 0))
+        return total.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def get_dashboard_cards(db: Session) -> AdminDashboardCards:
+        """Totals for the four admin cards, plus change versus the previous 30 days."""
+        now = datetime.now(timezone.utc)
+        current_start = now - timedelta(days=30)
+        previous_start = now - timedelta(days=60)
+
+        users_now = AdminService._count_since(db, User, User.created_at, current_start)
+        users_prev = AdminService._count_since(db, User, User.created_at, previous_start, current_start)
+        merchants_now = AdminService._count_since(db, MerchantProfile, MerchantProfile.created_at, current_start)
+        merchants_prev = AdminService._count_since(
+            db, MerchantProfile, MerchantProfile.created_at, previous_start, current_start
+        )
+        searches_now = AdminService._count_since(db, SearchEvent, SearchEvent.created_at, current_start)
+        searches_prev = AdminService._count_since(
+            db, SearchEvent, SearchEvent.created_at, previous_start, current_start
+        )
+        revenue_now = AdminService._revenue_since(db, current_start)
+        revenue_prev = AdminService._revenue_since(db, previous_start, current_start)
+
+        total_users = db.query(func.count(User.id)).scalar() or 0
+        total_merchants = db.query(func.count(MerchantProfile.id)).scalar() or 0
+        total_searches = db.query(func.count(SearchEvent.id)).scalar() or 0
+        revenue = AdminService._revenue_since(db)
+
+        return AdminDashboardCards(
+            total_users=DashboardCountCard(
+                value=total_users,
+                change_percent=AdminService._change_percent(users_now, users_prev),
+            ),
+            total_merchants=DashboardCountCard(
+                value=total_merchants,
+                change_percent=AdminService._change_percent(merchants_now, merchants_prev),
+            ),
+            total_searches=DashboardCountCard(
+                value=total_searches,
+                change_percent=AdminService._change_percent(searches_now, searches_prev),
+            ),
+            revenue=DashboardRevenueCard(
+                value=revenue,
+                currency="INR",
+                change_percent=AdminService._change_percent(float(revenue_now), float(revenue_prev)),
+            ),
         )
 
     @classmethod

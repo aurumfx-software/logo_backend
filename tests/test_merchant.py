@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 
 def test_merchant_registration_success(client: TestClient):
@@ -68,6 +69,51 @@ def test_merchant_login_and_get_profile(client: TestClient):
     m_data = profile_res.json()
     assert m_data["business_name"] == "Anil Coffee House"
     assert m_data["location"] == "Panampilly Nagar, Kochi"
+
+
+def test_merchant_me_returns_cashback_rates_from_table(client: TestClient, db_session: Session):
+    from decimal import Decimal
+
+    from app.db.models.merchant import MerchantProfile
+
+    created = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Rate Shop",
+            "email": "rates.shop@example.com",
+            "password": "RatePassword123",
+            "business_name": "Rate Shop",
+            "categories": ["Salon"],
+            "location": "Kochi",
+            "services": ["Haircut"],
+            "service_timing": "09:00 AM - 09:00 PM",
+            "contact_number": "9876501122",
+            "address": "MG Road, Kochi",
+        },
+    )
+    assert created.status_code == 201
+    merchant = (
+        db_session.query(MerchantProfile)
+        .filter(MerchantProfile.email == "rates.shop@example.com")
+        .first()
+    )
+    merchant.cashback_percent = Decimal("5.00")
+    merchant.company_fee_percent = Decimal("3.00")
+    db_session.commit()
+
+    login_res = client.post(
+        "/api/v1/auth/login",
+        json={"email": "rates.shop@example.com", "password": "RatePassword123"},
+    )
+    assert login_res.status_code == 200
+    profile_res = client.get(
+        "/api/v1/merchants/me",
+        headers={"Authorization": f"Bearer {login_res.json()['access_token']}"},
+    )
+    assert profile_res.status_code == 200
+    body = profile_res.json()
+    assert body["cashback_percent"] == 5.0
+    assert body["company_fee_percent"] == 3.0
 
 
 def test_merchant_update_profile(client: TestClient):

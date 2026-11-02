@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,6 +13,26 @@ class AdminCategoryDistributionItem(BaseModel):
     name: str
     slug: str
     logo_count: int
+
+
+class DashboardCountCard(BaseModel):
+    value: int
+    change_percent: float
+
+
+class DashboardRevenueCard(BaseModel):
+    value: Decimal
+    currency: str = "INR"
+    change_percent: float
+
+
+class AdminDashboardCards(BaseModel):
+    """Four summary cards: users, merchants, searches, and revenue."""
+
+    total_users: DashboardCountCard
+    total_merchants: DashboardCountCard
+    total_searches: DashboardCountCard
+    revenue: DashboardRevenueCard
 
 
 class AdminDashboardStats(BaseModel):
