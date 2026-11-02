@@ -1081,23 +1081,41 @@ class MerchantService:
     # ── OTP Login ───────────────────────────────────────────────────────────
 
     @staticmethod
-    def send_login_otp(db: Session, email: str) -> Optional[str]:
+    def send_login_otp(
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> Optional[str]:
         """
-        Step 1 of OTP login.
-        Validates that the email belongs to an active MERCHANT account,
+        Step 1 of OTP login for merchants.
+        Validates that the email or phone belongs to an active MERCHANT account,
         then generates and dispatches a MERCHANT_LOGIN OTP.
-        Returns the plain OTP in development; None in production.
         """
-        clean_email = email.strip().lower()
-        merchant, user = MerchantService.resolve_merchant_by_email(db, clean_email)
+        from app.services.auth_service import AuthService
 
-        if not merchant or not user:
+        merchant = None
+        user = None
+        target_identifier = None
+
+        if email:
+            clean_email = email.strip().lower()
+            target_identifier = clean_email
+            merchant, user = MerchantService.resolve_merchant_by_email(db, clean_email)
+        elif phone:
+            target_identifier = AuthService.normalize_phone(phone)
+            user = AuthService.find_user_by_phone(db, phone)
+            if user:
+                merchant = (
+                    db.query(MerchantProfile)
+                    .filter(MerchantProfile.user_id == user.id)
+                    .first()
+                )
+
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No account found with this email address.",
+                detail="No merchant account found with this email or phone.",
             )
 
-        if not user.is_active or not merchant.is_active:
+        if not user.is_active or (merchant and not merchant.is_active):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Merchant account is inactive. Please contact support.",
@@ -1105,31 +1123,47 @@ class MerchantService:
 
         plain_otp, _ = OTPService.create_otp(
             db=db,
-            identifier=clean_email,
+            identifier=target_identifier,
             purpose=OTPPurpose.MERCHANT_LOGIN,
         )
         return plain_otp
 
     @staticmethod
-    def verify_login_otp(db: Session, email: str, otp: str) -> TokenResponse:
+    def verify_login_otp(
+        db: Session, otp: str, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> TokenResponse:
         """
-        Step 2 of OTP login.
+        Step 2 of OTP login for merchants.
         Verifies the MERCHANT_LOGIN OTP then returns a JWT access + refresh token pair.
         """
-        # Import here to avoid circular imports
         from app.services.auth_service import AuthService
 
-        clean_email = email.strip().lower()
+        target_identifier = None
+        if email:
+            target_identifier = email.strip().lower()
+        elif phone:
+            target_identifier = AuthService.normalize_phone(phone)
+
+        if not target_identifier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide either email or phone",
+            )
 
         # Verify OTP (raises HTTPException on failure)
         OTPService.verify_otp(
             db=db,
-            identifier=clean_email,
+            identifier=target_identifier,
             otp=otp,
             purpose=OTPPurpose.MERCHANT_LOGIN,
         )
 
-        user = db.query(User).filter(User.email == clean_email).first()
+        user = None
+        if email:
+            _, user = MerchantService.resolve_merchant_by_email(db, target_identifier)
+        elif phone:
+            user = AuthService.find_user_by_phone(db, phone)
+
         if not user or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

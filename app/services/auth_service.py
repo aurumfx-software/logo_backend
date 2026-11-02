@@ -619,10 +619,12 @@ class AuthService:
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found.",
+                detail="Account not found.",
             )
 
-        user.password_hash = hash_password(reset_data.new_password)
+        new_hash = hash_password(reset_data.new_password)
+        user.password = new_hash
+        user.password_hash = new_hash
         from app.services.merchant_service import MerchantService
 
         MerchantService.sync_merchant_password_from_user(

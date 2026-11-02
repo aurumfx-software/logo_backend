@@ -592,6 +592,7 @@ class WalletService:
 
         user_pct, company_pct = WalletService._cashback_rates(merchant)
         total_cb, user_cb, company_fee = WalletService._split_cashback(sale_amount, merchant)
+        user_pct, company_pct = WalletService._cashback_rates(merchant)
 
         sale_qr = MerchantSaleQR(
             merchant_profile_id=merchant.id,
@@ -618,6 +619,7 @@ class WalletService:
             estimated_company_fee=company_fee,
             cashback_percent=user_pct,
             company_fee_percent=company_pct,
+            total_deduction_percent=user_pct + company_pct,
             expires_at=sale_qr.expires_at,
             status=sale_qr.status,
         )
@@ -630,8 +632,8 @@ class WalletService:
 
         WalletService._expire_if_pending(db, sale_qr)
 
-        merchant = WalletService._merchant_row(db, sale_qr.merchant_profile_id)
-        user_pct, _company_pct = WalletService._cashback_rates(merchant)
+        merchant = WalletService._merchant_row(db, sale_qr.merchant_profile_id) or sale_qr.merchant_profile
+        user_pct, company_pct = WalletService._cashback_rates(merchant)
         user_cb = WalletService._split_cashback(sale_qr.sale_amount, merchant)[1]
         return SaleQRPreviewResponse(
             message="Sale QR details",
@@ -642,6 +644,8 @@ class WalletService:
             expires_at=sale_qr.expires_at,
             estimated_user_cashback=user_cb,
             cashback_percent=user_pct,
+            company_fee_percent=company_pct,
+            total_deduction_percent=user_pct + company_pct,
         )
 
     @staticmethod
@@ -733,6 +737,7 @@ class WalletService:
             estimated_company_fee=company_fee,
             cashback_percent=user_pct,
             company_fee_percent=company_pct,
+            total_deduction_percent=user_pct + company_pct,
             merchant_debit=merchant_debit,
             transaction_group_id=txn_group,
             merchant_wallet_balance=WalletService._money(merchant_wallet.balance),
@@ -842,6 +847,9 @@ class WalletService:
                 "merchant_debit": str(merchant_debit),
                 "user_cashback": str(user_cb),
                 "company_fee": str(company_fee),
+                "cashback_percent": user_pct,
+                "company_fee_percent": company_pct,
+                "total_deduction_percent": user_pct + company_pct,
                 "merchant_wallet_balance": str(WalletService._money(locked_merchant.balance)),
                 "currency": settings.WALLET_CURRENCY,
                 "redeemed_at": now.isoformat(),

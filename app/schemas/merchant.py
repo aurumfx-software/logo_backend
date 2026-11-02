@@ -294,7 +294,7 @@ class MerchantOnboardingRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def validate_email(cls, v: Optional[str]) -> Optional[str]:
-        if v:
+        if v and v.strip():
             clean = v.strip().lower()
             if not re.match(EMAIL_REGEX, clean):
                 raise ValueError("Invalid email format")
@@ -473,17 +473,48 @@ class MerchantPhotosUploadResponse(BaseModel):
 
 # ── Merchant OTP Login ──────────────────────────────────────────────────────
 
+def _normalize_phone_m(value: str) -> str:
+    cleaned = re.sub(r"[\s\-()]", "", str(value).strip())
+    if cleaned.startswith("+91"):
+        cleaned = cleaned[3:]
+    elif cleaned.startswith("91") and len(cleaned) > 10:
+        cleaned = cleaned[2:]
+    if not cleaned.isdigit() or len(cleaned) < 10:
+        raise ValueError("Invalid phone number")
+    return cleaned
+
+
 class MerchantLoginOTPRequest(BaseModel):
-    """Step 1: Merchant requests an OTP to log in."""
-    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+    """Step 1: Merchant requests an OTP to log in (email or phone)."""
+    email: Optional[str] = Field(None, json_schema_extra={"example": "rajesh.salon@example.com"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, v: str) -> str:
-        clean_email = v.strip().lower()
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = str(v).strip().lower()
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        return _normalize_phone_m(v)
+
+    @model_validator(mode="after")
+    def require_one_channel(self) -> "MerchantLoginOTPRequest":
+        if not self.email and not self.phone:
+            raise ValueError("Provide either email or phone")
+        return self
+
+    @property
+    def identifier(self) -> str:
+        return self.email or self.phone or ""
 
 
 class MerchantLoginOTPResponse(BaseModel):
@@ -495,14 +526,34 @@ class MerchantLoginOTPResponse(BaseModel):
 
 class MerchantVerifyOTPLoginRequest(BaseModel):
     """Step 2: Merchant submits OTP to complete login and receive JWT tokens."""
-    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+    email: Optional[str] = Field(None, json_schema_extra={"example": "rajesh.salon@example.com"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
     otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, v: str) -> str:
-        clean_email = v.strip().lower()
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = str(v).strip().lower()
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        return _normalize_phone_m(v)
+
+    @model_validator(mode="after")
+    def require_one_channel(self) -> "MerchantVerifyOTPLoginRequest":
+        if not self.email and not self.phone:
+            raise ValueError("Provide either email or phone")
+        return self
+
+    @property
+    def identifier(self) -> str:
+        return self.email or self.phone or ""
 

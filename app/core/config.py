@@ -102,6 +102,20 @@ class Settings(BaseSettings):
     WALLET_TOPUP_MIN_AMOUNT: float = 100.0
     WALLET_TOPUP_MAX_AMOUNT: float = 100000.0
 
+    # Phone / SMS Providers (MSG91 preferred, Twilio fallback)
+    MSG91_AUTH_KEY: str = ""
+    MSG91_TEMPLATE_ID: str = ""
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+
+    # Email / SMTP Provider (SendGrid, AWS SES, or custom mail host)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

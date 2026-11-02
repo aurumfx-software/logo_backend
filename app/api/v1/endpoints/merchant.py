@@ -427,29 +427,88 @@ def upload_merchant_photos(
 
 
 @router.get(
+    "/registration-requests",
+    response_model=StandardListResponse[MerchantProfileResponse],
+    summary="List merchant registration approval requests",
+)
+def list_merchant_registration_requests(
+    status: Optional[str] = Query(None, description="pending, approved, rejected, or all"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[MerchantProfileResponse]:
+    target_status = "PENDING"
+    if status and status.upper() in ("APPROVED", "REJECTED", "PENDING"):
+        target_status = status.upper()
+    elif status and status.lower() == "all":
+        target_status = None
+
+    results, total = MerchantService.search_merchants(
+        db=db,
+        approval_status=target_status,
+        skip=skip,
+        limit=limit,
+        public_only=False,
+        current_user=current_user,
+        user_code=user_code,
+    )
+    page = (skip // limit) + 1 if limit else 1
+    return list_response(
+        data=[MerchantService.build_merchant_response(m) for m in results],
+        total_items=total,
+        page=page,
+        page_size=limit,
+        message=f"Retrieved {len(results)} registration request(s)",
+    )
+
+
+@router.get(
     "",
     response_model=List[MerchantProfileResponse],
     summary="Discover & list merchants",
-    description="Public catalog of approved merchants. No login required. Optional filters: category, location, user_code.",
+    description="Public catalog of approved merchants. No login required. Optional filters: category, location, user_code, status.",
 )
 def list_merchants(
     category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Restaurant)"),
     location: Optional[str] = Query(None, description="Filter by location/city"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
+    status: Optional[str] = Query(None, description="Filter by status/approval status (e.g. pending, approved, all)"),
+    approval_status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
+    target_status = approval_status or status
+    if target_status and target_status.lower() in ("all", "any"):
+        target_status = None
+    elif target_status:
+        target_status = target_status.upper()
+
     try:
-        merchants = MerchantService.list_merchants(
-            db=db,
-            category=category,
-            location=location,
-            skip=skip,
-            limit=limit,
-            current_user=None,
-            user_code=user_code,
-        )
+        if target_status and target_status != "APPROVED":
+            results, _ = MerchantService.search_merchants(
+                db=db,
+                category=category,
+                location=location,
+                approval_status=target_status,
+                skip=skip,
+                limit=limit,
+                public_only=False,
+                user_code=user_code,
+            )
+            merchants = results
+        else:
+            merchants = MerchantService.list_merchants(
+                db=db,
+                category=category,
+                location=location,
+                skip=skip,
+                limit=limit,
+                current_user=None,
+                user_code=user_code,
+            )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -477,11 +536,20 @@ def list_merchants_paginated(
     service: Optional[str] = Query(None, description="Filter by specific service offered"),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
+    status: Optional[str] = Query(None, description="Filter by status (pending, approved, all)"),
+    approval_status: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
+    target_status = approval_status or status
+    if target_status and target_status.lower() in ("all", "any"):
+        target_status = None
+    elif target_status:
+        target_status = target_status.upper()
+
+    public_only = target_status is None or target_status == "APPROVED"
     skip = (page - 1) * page_size
     results, total = MerchantService.search_merchants(
         db=db,
@@ -490,9 +558,10 @@ def list_merchants_paginated(
         service=service,
         category=category,
         is_verified=is_verified,
+        approval_status=target_status,
         skip=skip,
         limit=page_size,
-        public_only=True,
+        public_only=public_only,
         current_user=current_user,
         user_code=user_code,
     )
@@ -792,7 +861,7 @@ def merchant_logout(
     response_model=MerchantLoginOTPResponse,
     summary="Step 1 — Request merchant OTP login code",
     description=(
-        "Sends a 6-digit OTP to the registered merchant's email through SMTP. "
+        "Sends a 6-digit OTP to the registered merchant's email or phone. "
         "The OTP expires in a few minutes and is single-use. "
         "Only works for accounts with MERCHANT role that are active."
     ),
@@ -801,10 +870,11 @@ def merchant_login_send_otp(
     req: MerchantLoginOTPRequest,
     db: Session = Depends(get_db),
 ) -> MerchantLoginOTPResponse:
-    plain_otp = MerchantService.send_login_otp(db=db, email=req.email)
+    plain_otp = MerchantService.send_login_otp(db=db, email=req.email, phone=req.phone)
+    target = req.email or req.phone or "your merchant account"
     dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
     return MerchantLoginOTPResponse(
-        message=f"OTP sent to {req.email}. Please check your inbox.",
+        message=f"OTP sent to {target}. Please check your inbox / messages.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp,
     )
@@ -815,7 +885,7 @@ def merchant_login_send_otp(
     response_model=TokenResponse,
     summary="Step 2 — Verify OTP and receive JWT tokens",
     description=(
-        "Verifies the 6-digit OTP sent to the merchant's email. "
+        "Verifies the 6-digit OTP sent to the merchant's email or phone. "
         "On success, returns a JWT access token and refresh token pair "
         "to authenticate subsequent requests."
     ),
@@ -824,4 +894,6 @@ def merchant_login_verify_otp(
     req: MerchantVerifyOTPLoginRequest,
     db: Session = Depends(get_db),
 ) -> TokenResponse:
-    return MerchantService.verify_login_otp(db=db, email=req.email, otp=req.otp)
+    return MerchantService.verify_login_otp(
+        db=db, otp=req.otp, email=req.email, phone=req.phone
+    )

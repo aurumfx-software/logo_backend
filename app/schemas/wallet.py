@@ -122,8 +122,9 @@ class SaleQRCreateResponse(BaseModel):
     estimated_cashback_total: Decimal
     estimated_user_cashback: Decimal
     estimated_company_fee: Decimal
-    cashback_percent: float = 0
-    company_fee_percent: float = 0
+    cashback_percent: float = 3.0
+    company_fee_percent: float = 2.0
+    total_deduction_percent: float = 5.0
     expires_at: datetime
     status: SaleQRStatus
 
@@ -137,7 +138,9 @@ class SaleQRPreviewResponse(BaseModel):
     status: SaleQRStatus
     expires_at: datetime
     estimated_user_cashback: Decimal
-    cashback_percent: float = 0
+    cashback_percent: float = 3.0
+    company_fee_percent: float = 2.0
+    total_deduction_percent: float = 5.0
 
 
 class SaleQRMerchantStatusResponse(BaseModel):
@@ -159,8 +162,9 @@ class SaleQRMerchantStatusResponse(BaseModel):
     estimated_cashback_total: Decimal
     estimated_user_cashback: Decimal
     estimated_company_fee: Decimal
-    cashback_percent: float = 0
-    company_fee_percent: float = 0
+    cashback_percent: float = 3.0
+    company_fee_percent: float = 2.0
+    total_deduction_percent: float = 5.0
     merchant_debit: Optional[Decimal] = None
     transaction_group_id: Optional[str] = None
     merchant_wallet_balance: Decimal

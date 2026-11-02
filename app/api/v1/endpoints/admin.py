@@ -329,34 +329,46 @@ def get_admin_merchant_stats(
 
 
 @router.get(
+    "/merchants/registration-requests",
+    response_model=StandardListResponse[MerchantProfileResponse],
+    summary="List merchant registration approval requests",
+)
+@router.get(
     "/merchants/pending",
     response_model=StandardListResponse[MerchantProfileResponse],
     summary="List pending merchants for review",
     description="Returns all merchant accounts with PENDING approval status awaiting review. Scoped to current user if Field Staff.",
 )
 def list_pending_merchants(
+    status: Optional[str] = Query(None, description="pending, approved, rejected, or all"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=500),
     user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> StandardListResponse[MerchantProfileResponse]:
+    target_status = "PENDING"
+    if status and status.upper() in ("APPROVED", "REJECTED", "PENDING"):
+        target_status = status.upper()
+    elif status and status.lower() == "all":
+        target_status = None
+
     results, total = MerchantService.search_merchants(
         db=db,
-        approval_status="PENDING",
+        approval_status=target_status,
         skip=skip,
         limit=limit,
         public_only=False,
         current_user=current_user,
         user_code=user_code,
     )
-    page = (skip // limit) + 1
+    page = (skip // limit) + 1 if limit else 1
     return list_response(
         data=[MerchantService.build_merchant_response(m) for m in results],
         total_items=total,
         page=page,
         page_size=limit,
-        message=f"Retrieved {len(results)} pending merchant(s)",
+        message=f"Retrieved {len(results)} registration request(s)",
     )
 
 

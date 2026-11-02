@@ -328,7 +328,7 @@ def reset_password(
     db: Session = Depends(get_db),
 ) -> GenericMessageResponse:
     AuthService.reset_password(db=db, reset_data=reset_req)
-    return GenericMessageResponse(message="Password has been reset successfully.")
+    return GenericMessageResponse(message="Password has been reset successfully. You can now log in.")
 
 
 @router.get(
