@@ -566,36 +566,56 @@ class AuthService:
         return now
 
     @staticmethod
-    def request_password_reset(db: Session, email: str) -> Optional[str]:
-        clean_email = email.strip().lower()
-        user = db.query(User).filter(User.email == clean_email).first()
-        if not user:
-            from app.services.merchant_service import MerchantService
+    def _password_reset_target(
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> tuple[Optional[User], Optional[str]]:
+        if email:
+            clean_email = email.strip().lower()
+            user = db.query(User).filter(User.email == clean_email).first()
+            if not user:
+                from app.services.merchant_service import MerchantService
 
-            _, user = MerchantService.resolve_merchant_by_email(db, clean_email)
-        dev_otp = None
-        if user and user.is_active:
-            plain_otp, _ = OTPService.create_otp(
-                db=db,
-                identifier=clean_email,
-                purpose=OTPPurpose.PASSWORD_RESET,
-            )
-            dev_otp = plain_otp
-        # Always return safe indication
-        return dev_otp
+                _, user = MerchantService.resolve_merchant_by_email(db, clean_email)
+            return user, clean_email
+        if phone:
+            normalized = AuthService.normalize_phone(phone)
+            return AuthService.find_user_by_phone(db, normalized), normalized
+        return None, None
+
+    @staticmethod
+    def request_password_reset(
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+    ) -> Optional[str]:
+        user, identifier = AuthService._password_reset_target(db, email=email, phone=phone)
+        if not user or not user.is_active or not identifier:
+            return None
+        plain_otp, _ = OTPService.create_otp(
+            db=db,
+            identifier=identifier,
+            purpose=OTPPurpose.PASSWORD_RESET,
+        )
+        return plain_otp
 
     @staticmethod
     def reset_password(db: Session, reset_data: ResetPasswordRequest) -> None:
-        clean_email = reset_data.email.strip().lower()
-        # Verify OTP first
+        _user, identifier = AuthService._password_reset_target(
+            db, email=reset_data.email, phone=reset_data.phone
+        )
+        if not identifier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Provide either email or phone.",
+            )
         OTPService.verify_otp(
             db=db,
-            identifier=clean_email,
+            identifier=identifier,
             otp=reset_data.otp,
             purpose=OTPPurpose.PASSWORD_RESET,
         )
 
-        user = db.query(User).filter(User.email == clean_email).first()
+        user, _identifier = AuthService._password_reset_target(
+            db, email=reset_data.email, phone=reset_data.phone
+        )
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

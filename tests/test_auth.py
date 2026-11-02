@@ -379,6 +379,83 @@ def test_password_reset_flow(client: TestClient):
     assert ok_login.status_code == 200
 
 
+def test_forgot_password_by_phone(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "Phone Reset",
+            "email": "phone.reset@example.com",
+            "phone": "9811122233",
+            "password": "OldPassword123",
+        },
+    )
+    forgot_res = client.post("/api/v1/auth/forgot-password", json={"phone": "+91 98111-22233"})
+    assert forgot_res.status_code == 200
+    otp = forgot_res.json()["dev_otp"]
+    assert otp and len(otp) == 6
+
+    reset_res = client.post(
+        "/api/v1/auth/reset-password",
+        json={"phone": "9811122233", "otp": otp, "new_password": "NewPassword789"},
+    )
+    assert reset_res.status_code == 200
+
+    login_res = client.post(
+        "/api/v1/auth/login/phone",
+        json={"phone": "9811122233", "password": "NewPassword789"},
+    )
+    assert login_res.status_code == 200
+
+
+def test_customer_login_otp_uses_msg91(client: TestClient, monkeypatch):
+    from app.core.config import settings
+
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "MSG91 User",
+            "email": "msg91.user@example.com",
+            "phone": "9876500011",
+            "password": "Password12345",
+        },
+    )
+    captured = {}
+
+    class _Response:
+        status_code = 200
+        text = '{"type":"success"}'
+
+        def json(self):
+            return {"type": "success"}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs.get("params")
+            captured["headers"] = kwargs.get("headers")
+            return _Response()
+
+    monkeypatch.setattr(settings, "MSG91_AUTH_KEY", "test-auth-key")
+    monkeypatch.setattr(settings, "MSG91_TEMPLATE_ID", "template-1")
+    monkeypatch.setattr("app.services.otp_delivery.httpx.Client", _Client)
+
+    send_res = client.post("/api/v1/auth/login/send-otp", json={"phone": "9876500011"})
+    assert send_res.status_code == 200
+    assert "control.msg91.com" in captured["url"]
+    assert captured["params"]["mobile"] == "919876500011"
+    assert captured["params"]["otp"] == send_res.json()["dev_otp"]
+    assert captured["headers"]["authkey"] == "test-auth-key"
+
+
 # 14. Role-based authorization
 def test_role_based_authorization(client: TestClient, db_session: Session):
     # 1. Normal field staff (FIELD_STAFF)

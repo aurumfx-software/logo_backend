@@ -8,6 +8,12 @@ from sqlalchemy.pool import StaticPool
 # Set test environment
 os.environ["ENVIRONMENT"] = "development"
 os.environ["JWT_SECRET_KEY"] = "test_secret_key_for_unit_tests_32_chars_long"
+os.environ["TWILIO_ACCOUNT_SID"] = ""
+os.environ["TWILIO_AUTH_TOKEN"] = ""
+os.environ["TWILIO_FROM_NUMBER"] = ""
+os.environ["TWILIO_VERIFY_SERVICE_SID"] = ""
+os.environ["MSG91_AUTH_KEY"] = ""
+os.environ["MSG91_TEMPLATE_ID"] = ""
 
 from app.db.database import Base, get_db
 from app.main import app

@@ -366,11 +366,39 @@ class VerifyOTPResponse(BaseModel):
     is_verified: bool
 
 
-class ForgotPasswordRequest(UserBase):
-    pass
+class ForgotPasswordRequest(BaseModel):
+    """Send a password-reset OTP to a registered email or mobile number."""
+
+    email: Optional[str] = Field(None, json_schema_extra={"example": "user@example.com"})
+    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        clean_email = v.strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        return _normalize_phone(str(v))
+
+    @model_validator(mode="after")
+    def require_one_channel(self) -> "ForgotPasswordRequest":
+        if not self.email and not self.phone:
+            raise ValueError("Provide either email or phone")
+        if self.email and self.phone:
+            raise ValueError("Provide only one of email or phone")
+        return self
 
 
-class ResetPasswordRequest(UserBase):
+class ResetPasswordRequest(ForgotPasswordRequest):
     otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
     new_password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "NewPassword123"})
 

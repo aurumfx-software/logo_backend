@@ -11,6 +11,7 @@ from app.schemas.auth import (
     SendOTPResponse,
     VerifyOTPResponse,
 )
+from app.services.otp_delivery import OTPDeliveryService
 from app.services.otp_service import OTPService
 
 router = APIRouter(prefix="/otp", tags=["OTP"])
@@ -49,7 +50,7 @@ def send_otp(
         identifier=payload.identifier,
         purpose=payload.purpose,
     )
-    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    dev_otp = plain_otp if OTPDeliveryService.expose_local_code(payload.identifier) else None
     destination = payload.email or payload.phone
     return SendOTPResponse(
         message=f"OTP sent to {destination}.",

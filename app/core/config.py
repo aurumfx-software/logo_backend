@@ -61,6 +61,20 @@ class Settings(BaseSettings):
     # OTP
     OTP_EXPIRE_MINUTES: int = 5
     OTP_MAX_ATTEMPTS: int = 3
+    # SMS: MSG91 (India) is used when both values are set. Otherwise Twilio is used.
+    MSG91_AUTH_KEY: str = ""
+    MSG91_TEMPLATE_ID: str = ""
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_FROM_NUMBER: str = ""
+    TWILIO_VERIFY_SERVICE_SID: str = ""
+    # Email OTP / forgot-password. Works with SendGrid, SES, or any SMTP host.
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_USE_TLS: bool = True
 
     # Google OAuth 2.0
     GOOGLE_CLIENT_ID: str = ""

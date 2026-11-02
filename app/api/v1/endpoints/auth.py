@@ -36,6 +36,7 @@ from app.schemas.auth import (
 )
 from app.services.auth_service import AuthService
 from app.services.oauth_service import GoogleOAuthService
+from app.services.otp_delivery import OTPDeliveryService
 from app.services.otp_service import OTPService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -95,7 +96,7 @@ def login_with_phone(
     summary="Customer OTP login — send code",
     description=(
         "Sends a 6-digit OTP to the customer's registered email or phone. "
-        "Use for mobile OTP Login tab / Login with OTP."
+        "Phone codes are sent by Twilio Verify. Email codes go through SMTP."
     ),
 )
 def customer_login_send_otp(
@@ -106,7 +107,7 @@ def customer_login_send_otp(
         db=db, email=req.email, phone=req.phone
     )
     target = req.email or req.phone or "your account"
-    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    dev_otp = plain_otp if OTPDeliveryService.expose_local_code(req.email or req.phone or "") else None
     return SendOTPResponse(
         message=f"OTP sent to {target}. Please check your messages.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
@@ -295,16 +296,22 @@ def verify_otp(
     "/forgot-password",
     response_model=SendOTPResponse,
     summary="Request password reset OTP",
-    description="Initiates password reset flow by sending OTP to the user's email.",
+    description=(
+        "Sends a password-reset OTP to a registered email (SMTP) or phone (Twilio Verify). "
+        "The response does not reveal whether the account exists."
+    ),
 )
 def forgot_password(
     forgot_req: ForgotPasswordRequest,
     db: Session = Depends(get_db),
 ) -> SendOTPResponse:
-    dev_otp = AuthService.request_password_reset(db=db, email=forgot_req.email)
-    dev_otp_val = dev_otp if settings.ENVIRONMENT == "development" else None
+    dev_otp = AuthService.request_password_reset(
+        db=db, email=forgot_req.email, phone=forgot_req.phone
+    )
+    channel = forgot_req.email or forgot_req.phone or ""
+    dev_otp_val = dev_otp if dev_otp and OTPDeliveryService.expose_local_code(channel) else None
     return SendOTPResponse(
-        message="If the email is registered, a password reset OTP has been sent.",
+        message="If the account is registered, a password reset OTP has been sent.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp_val,
     )

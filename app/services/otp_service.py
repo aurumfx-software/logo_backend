@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import generate_numeric_otp, hash_otp, verify_otp_hash
 from app.db.models.otp import OTPVerification, OTPPurpose
+from app.services.otp_delivery import OTPDeliveryService
 
 logger = logging.getLogger("logo.otp")
 
@@ -16,17 +17,21 @@ class OTPService:
 
     @staticmethod
     def send_notification_stub(identifier: str, otp: str, purpose: OTPPurpose) -> None:
-        """
-        Provider abstraction for OTP delivery.
-        In production, this delegates to Twilio / AWS SNS / SendGrid / Postmark.
-        In trial/development mode, it logs safely to the dev server console.
-        """
-        logger.info(
-            f"[DEV/TRIAL OTP] Destination: {identifier} | Purpose: {purpose.value} | Generated OTP: {otp}"
-        )
-        print(
-            f"\n>>> [DEV/TRIAL OTP NOTIFICATION] To: {identifier} | Purpose: {purpose.value} | CODE: {otp} <<<\n"
-        )
+        """Send the code by SMS (MSG91 or Twilio) or email (SMTP)."""
+        try:
+            OTPDeliveryService.deliver(identifier, otp, purpose)
+        except HTTPException:
+            raise
+        if settings.ENVIRONMENT == "development" and not (
+            ("@" in identifier and OTPDeliveryService.email_configured())
+            or ("@" not in identifier and OTPDeliveryService.sms_configured())
+        ):
+            logger.info(
+                "[DEV OTP] Destination: %s | Purpose: %s | Code: %s",
+                identifier,
+                purpose.value,
+                otp,
+            )
 
     @classmethod
     def create_otp(
@@ -60,8 +65,12 @@ class OTPService:
         db.commit()
         db.refresh(otp_record)
 
-        # Trigger notification delivery stub
-        cls.send_notification_stub(clean_identifier, plain_otp, purpose)
+        try:
+            cls.send_notification_stub(clean_identifier, plain_otp, purpose)
+        except HTTPException:
+            otp_record.is_used = True
+            db.commit()
+            raise
 
         return plain_otp, otp_record
 
@@ -109,6 +118,22 @@ class OTPService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Maximum verification attempts exceeded. Please request a new OTP.",
             )
+
+        if OTPDeliveryService.twilio_owns_sms(clean_identifier):
+            approved = OTPDeliveryService.check_twilio_verification(clean_identifier, otp)
+            if not approved:
+                otp_record.attempts += 1
+                if otp_record.attempts >= otp_record.max_attempts:
+                    otp_record.is_used = True
+                db.commit()
+                remaining = otp_record.max_attempts - otp_record.attempts
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+                )
+            otp_record.is_used = True
+            db.commit()
+            return True
 
         # Check OTP match
         otp_record.attempts += 1

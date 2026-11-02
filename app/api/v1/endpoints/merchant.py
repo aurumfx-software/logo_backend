@@ -792,7 +792,7 @@ def merchant_logout(
     response_model=MerchantLoginOTPResponse,
     summary="Step 1 — Request merchant OTP login code",
     description=(
-        "Sends a 6-digit OTP to the registered merchant's email. "
+        "Sends a 6-digit OTP to the registered merchant's email through SMTP. "
         "The OTP expires in a few minutes and is single-use. "
         "Only works for accounts with MERCHANT role that are active."
     ),
