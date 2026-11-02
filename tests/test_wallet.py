@@ -45,6 +45,8 @@ def _create_merchant(db_session: Session, email: str) -> User:
     merchant = MerchantProfile(
         user_id=user.id,
         business_name="Test Shop",
+        email=email,
+        password_hash=user.password_hash,
         approval_status="APPROVED",
         status="APPROVED",
         is_active=True,
@@ -140,6 +142,54 @@ def test_sale_qr_cashback_split(client: TestClient, db_session: Session):
     assert status_body["status"] == "REDEEMED"
     assert status_body["merchant_wallet_balance"] == "950.00"
     assert status_body["transaction_group_id"]
+
+
+def test_sale_qr_uses_merchant_table_cashback_percent(client: TestClient, db_session: Session):
+    merchant_user = _create_merchant(db_session, "rate.merchant@example.com")
+    customer = _create_user(db_session, "rate.customer@example.com", "Customer")
+    admin = _create_user(db_session, "rate.admin@example.com", "Admin", UserRole.ADMIN)
+    profile = (
+        db_session.query(MerchantProfile)
+        .filter(MerchantProfile.user_id == merchant_user.id)
+        .first()
+    )
+    profile.cashback_percent = Decimal("5.00")
+    profile.company_fee_percent = Decimal("3.00")
+    db_session.commit()
+
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": merchant_user.id, "amount": "1000.00", "operation": "credit"},
+    )
+    merchant_headers = _auth_headers(client, merchant_user.email, "Password123!")
+    qr_res = client.post(
+        "/api/v1/wallet/sales/qr",
+        headers=merchant_headers,
+        json={"sale_amount": "1000.00"},
+    )
+    assert qr_res.status_code == 201
+    qr = qr_res.json()
+    assert qr["cashback_percent"] == 5.0
+    assert qr["company_fee_percent"] == 3.0
+    assert qr["estimated_user_cashback"] == "50.00"
+    assert qr["estimated_company_fee"] == "30.00"
+    assert qr["estimated_cashback_total"] == "80.00"
+
+    customer_headers = _auth_headers(client, customer.email, "Password123!")
+    redeem_res = client.post(
+        "/api/v1/wallet/sales/redeem",
+        headers=customer_headers,
+        json={"token": qr["token"]},
+    )
+    assert redeem_res.status_code == 200
+    body = redeem_res.json()
+    assert body["cashback_percent"] == 5.0
+    assert body["company_fee_percent"] == 3.0
+    assert body["user_cashback"] == "50.00"
+    assert body["company_fee"] == "30.00"
+    assert body["merchant_debit"] == "80.00"
 
 
 def test_merchant_qr_status_pending_then_redeemed(client: TestClient, db_session: Session):

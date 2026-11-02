@@ -430,15 +430,26 @@ class WalletService:
         return merchant
 
     @staticmethod
+    def _merchant_row(db: Session, merchant_profile_id: Optional[int]) -> Optional[MerchantProfile]:
+        if not merchant_profile_id:
+            return None
+        return (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.id == merchant_profile_id)
+            .first()
+        )
+
+    @staticmethod
     def _cashback_rates(merchant: Optional[MerchantProfile]) -> Tuple[float, float]:
-        user_pct = float(settings.CASHBACK_USER_PERCENT)
-        company_pct = float(settings.CASHBACK_COMPANY_PERCENT)
-        if merchant is not None:
-            if merchant.cashback_percent is not None:
-                user_pct = float(merchant.cashback_percent)
-            if merchant.company_fee_percent is not None:
-                company_pct = float(merchant.company_fee_percent)
-        return user_pct, company_pct
+        """Customer cashback and company fee percents from merchant_profiles."""
+        if merchant is None:
+            return float(settings.CASHBACK_USER_PERCENT), float(settings.CASHBACK_COMPANY_PERCENT)
+        user_pct = merchant.cashback_percent
+        company_pct = merchant.company_fee_percent
+        return (
+            float(user_pct if user_pct is not None else settings.CASHBACK_USER_PERCENT),
+            float(company_pct if company_pct is not None else settings.CASHBACK_COMPANY_PERCENT),
+        )
 
     @staticmethod
     def _split_cashback(
@@ -474,12 +485,24 @@ class WalletService:
         merchant_user: User,
         payload: SaleQRCreateRequest,
     ) -> SaleQRCreateResponse:
-        merchant = WalletService._merchant_for_user(
-            db, merchant_user, payload.merchant_profile_id, allow_unapproved=True
-        )
+        if payload.merchant_profile_id:
+            merchant = WalletService._merchant_for_user(
+                db, merchant_user, payload.merchant_profile_id, allow_unapproved=True
+            )
+        else:
+            from app.services.merchant_service import MerchantService
+
+            try:
+                merchant = MerchantService.get_merchant_by_user_id(db, merchant_user.id)
+            except HTTPException:
+                merchant = WalletService._merchant_for_user(
+                    db, merchant_user, None, allow_unapproved=True
+                )
+        db.refresh(merchant)
         sale_amount = WalletService._money(payload.sale_amount)
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=payload.expires_in_minutes)
 
+        user_pct, company_pct = WalletService._cashback_rates(merchant)
         total_cb, user_cb, company_fee = WalletService._split_cashback(sale_amount, merchant)
 
         sale_qr = MerchantSaleQR(
@@ -505,6 +528,8 @@ class WalletService:
             estimated_cashback_total=total_cb,
             estimated_user_cashback=user_cb,
             estimated_company_fee=company_fee,
+            cashback_percent=user_pct,
+            company_fee_percent=company_pct,
             expires_at=sale_qr.expires_at,
             status=sale_qr.status,
         )
@@ -517,7 +542,8 @@ class WalletService:
 
         WalletService._expire_if_pending(db, sale_qr)
 
-        merchant = sale_qr.merchant_profile
+        merchant = WalletService._merchant_row(db, sale_qr.merchant_profile_id)
+        user_pct, _company_pct = WalletService._cashback_rates(merchant)
         user_cb = WalletService._split_cashback(sale_qr.sale_amount, merchant)[1]
         return SaleQRPreviewResponse(
             message="Sale QR details",
@@ -527,6 +553,7 @@ class WalletService:
             status=sale_qr.status,
             expires_at=sale_qr.expires_at,
             estimated_user_cashback=user_cb,
+            cashback_percent=user_pct,
         )
 
     @staticmethod
@@ -567,7 +594,8 @@ class WalletService:
         now = datetime.now(timezone.utc)
 
         sale_amount = WalletService._money(sale_qr.sale_amount)
-        merchant = sale_qr.merchant_profile
+        merchant = WalletService._merchant_row(db, sale_qr.merchant_profile_id)
+        user_pct, company_pct = WalletService._cashback_rates(merchant)
         total_cb, user_cb, company_fee = WalletService._split_cashback(sale_amount, merchant)
         business_name = merchant.business_name if merchant else "Merchant"
 
@@ -615,6 +643,8 @@ class WalletService:
             estimated_cashback_total=total_cb,
             estimated_user_cashback=user_cb,
             estimated_company_fee=company_fee,
+            cashback_percent=user_pct,
+            company_fee_percent=company_pct,
             merchant_debit=merchant_debit,
             transaction_group_id=txn_group,
             merchant_wallet_balance=WalletService._money(merchant_wallet.balance),
@@ -649,10 +679,9 @@ class WalletService:
             )
 
         sale_amount = WalletService._money(sale_qr.sale_amount)
-        user_pct, company_pct = WalletService._cashback_rates(sale_qr.merchant_profile)
-        merchant_debit, user_cb, company_fee = WalletService._split_cashback(
-            sale_amount, sale_qr.merchant_profile
-        )
+        merchant = WalletService._merchant_row(db, sale_qr.merchant_profile_id)
+        user_pct, company_pct = WalletService._cashback_rates(merchant)
+        merchant_debit, user_cb, company_fee = WalletService._split_cashback(sale_amount, merchant)
 
         merchant_wallet = WalletService.ensure_wallet_for_user(db, sale_qr.merchant_user_id)
         user_wallet = WalletService.ensure_wallet_for_user(db, customer.id)
@@ -738,6 +767,8 @@ class WalletService:
             sale_amount=sale_amount,
             user_cashback=user_cb,
             company_fee=company_fee,
+            cashback_percent=user_pct,
+            company_fee_percent=company_pct,
             merchant_debit=merchant_debit,
             user_wallet_balance=WalletService._money(locked_user.balance),
         )
