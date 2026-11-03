@@ -872,9 +872,14 @@ def merchant_login_send_otp(
 ) -> MerchantLoginOTPResponse:
     plain_otp = MerchantService.send_login_otp(db=db, email=req.email, phone=req.phone)
     target = req.email or req.phone or "your merchant account"
-    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    mailed = bool(req.email and settings.SMTP_HOST and settings.SMTP_USER)
+    dev_otp = None if mailed else (plain_otp if settings.ENVIRONMENT == "development" else None)
     return MerchantLoginOTPResponse(
-        message=f"OTP sent to {target}. Please check your inbox / messages.",
+        message=(
+            f"OTP sent to {target}. Please check your inbox."
+            if mailed
+            else f"OTP generated for {target}, but email is not configured on this server."
+        ),
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp,
     )

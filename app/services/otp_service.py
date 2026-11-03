@@ -90,24 +90,27 @@ class OTPService:
         try:
             port = int(settings.SMTP_PORT or 587)
             if port == 465:
-                with smtplib.SMTP_SSL(settings.SMTP_HOST, port, timeout=12) as server:
+                with smtplib.SMTP_SSL(settings.SMTP_HOST, port, timeout=20) as server:
                     if settings.SMTP_USER and settings.SMTP_PASSWORD:
                         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                     server.send_message(msg)
             else:
-                with smtplib.SMTP(settings.SMTP_HOST, port, timeout=12) as server:
+                with smtplib.SMTP(settings.SMTP_HOST, port, timeout=20) as server:
+                    server.ehlo()
                     server.starttls()
+                    server.ehlo()
                     if settings.SMTP_USER and settings.SMTP_PASSWORD:
                         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                     server.send_message(msg)
             logger.info(f"Successfully sent OTP email to {recipient} via SMTP ({settings.SMTP_HOST})")
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"SMTP error sending to {recipient}: {exc}")
-            if settings.ENVIRONMENT != "development":
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Failed to send verification email. Please try again later.",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The email provider could not send the OTP.",
+            ) from exc
 
     @staticmethod
     def _send_phone_msg91(mobile: str, otp: str) -> None:
@@ -236,7 +239,7 @@ class OTPService:
         db.refresh(otp_record)
 
         try:
-            cls.send_notification_stub(clean_identifier, plain_otp, purpose)
+            cls.send_notification(clean_identifier, plain_otp, purpose)
         except HTTPException:
             otp_record.is_used = True
             db.commit()

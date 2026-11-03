@@ -14,6 +14,10 @@ os.environ["TWILIO_FROM_NUMBER"] = ""
 os.environ["TWILIO_VERIFY_SERVICE_SID"] = ""
 os.environ["MSG91_AUTH_KEY"] = ""
 os.environ["MSG91_TEMPLATE_ID"] = ""
+os.environ["SMTP_HOST"] = ""
+os.environ["SMTP_USER"] = ""
+os.environ["SMTP_PASSWORD"] = ""
+os.environ["SMTP_FROM"] = ""
 
 from app.db.database import Base, get_db
 from app.main import app
