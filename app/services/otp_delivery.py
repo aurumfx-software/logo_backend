@@ -239,7 +239,8 @@ class OTPDeliveryService:
         label = _purpose_label(purpose)
         message = EmailMessage()
         message["Subject"] = f"Your LOGO {label} code"
-        message["From"] = settings.SMTP_FROM
+        from_addr = settings.SMTP_FROM or "noreply@logo.app"
+        message["From"] = f"Logo <{from_addr}>" if "<" not in from_addr else from_addr
         message["To"] = email
         message.set_content(
             f"Your LOGO {label} code is {otp}.\n"

@@ -74,10 +74,10 @@ class OTPService:
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
-        sender = settings.SMTP_FROM or settings.SMTP_USER
+        sender = settings.SMTP_FROM or settings.SMTP_USER or "noreply@logo.app"
         msg = MIMEMultipart("alternative")
         msg["Subject"] = f"Your LOGO Verification Code: {otp}"
-        msg["From"] = sender
+        msg["From"] = f"Logo <{sender}>" if "<" not in sender else sender
         msg["To"] = recipient
 
         body_text = (

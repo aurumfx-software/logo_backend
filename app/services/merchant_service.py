@@ -718,7 +718,7 @@ class MerchantService:
         elif (
             not public_only
             and current_user
-            and current_user.role == UserRole.FIELD_STAFF
+            and current_user.role in (UserRole.FIELD_STAFF, UserRole.MERCHANT)
         ):
             q = q.filter(
                 (MerchantProfile.user_id == current_user.id)
@@ -1040,6 +1040,7 @@ class MerchantService:
             limit=limit,
             public_only=not scoped,
             current_user=current_user if scoped else None,
+            user_id=current_user.id if (scoped and current_user) else None,
             user_code=user_code,
         )
         return items

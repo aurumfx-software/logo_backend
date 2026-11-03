@@ -81,17 +81,37 @@ class AuthService:
 
     @staticmethod
     def _find_user_for_customer_login(
-        db: Session, email: Optional[str] = None, phone: Optional[str] = None
+        db: Session, email: Optional[str] = None, phone: Optional[str] = None, auto_create: bool = True
     ) -> User:
         user = None
         if email:
-            user = db.query(User).filter(User.email == email.strip().lower()).first()
+            clean_email = email.strip().lower()
+            user = db.query(User).filter(User.email == clean_email).first()
+            if not user and auto_create:
+                default_pwd = hash_password(secrets.token_urlsafe(16))
+                display_name = clean_email.split('@')[0].capitalize()
+                user = User(
+                    name=display_name,
+                    email=clean_email,
+                    phone=None,
+                    password=default_pwd,
+                    password_hash=default_pwd,
+                    role=UserRole.FIELD_STAFF,
+                    status="ACTIVE",
+                    is_active=True,
+                    is_verified=False,
+                )
+                db.add(user)
+                db.flush()
+                WalletService.ensure_wallet_for_user(db, user.id)
+                db.commit()
+                db.refresh(user)
         elif phone:
             user = AuthService.find_user_by_phone(db, phone)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No customer account found with this email or phone.",
+                detail="No customer account found with this email.",
             )
         AuthService._ensure_customer_login_allowed(user)
         return user

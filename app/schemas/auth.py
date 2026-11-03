@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.db.models.user import UserRole
 from app.db.models.otp import OTPPurpose
@@ -97,45 +97,49 @@ class UserPhoneLoginRequest(BaseModel):
 
 
 class CustomerLoginOTPSendRequest(BaseModel):
-    """Send OTP for customer mobile login (email or phone)."""
-    email: Optional[str] = Field(None, json_schema_extra={"example": "customer@example.com"})
-    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    """Send OTP for customer mobile login (email only)."""
+    email: str = Field(..., json_schema_extra={"example": "customer@example.com"})
+    phone: Optional[Any] = Field(None, json_schema_extra={"example": None})
+
+    @field_validator("phone")
+    @classmethod
+    def reject_phone(cls, v: Optional[Any]) -> Optional[Any]:
+        if v is not None and str(v).strip():
+            raise ValueError("Phone number is not supported on this route. Use email.")
+        return None
 
     @field_validator("email")
     @classmethod
-    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not v.strip():
-            return None
-        clean_email = v.strip().lower()
+    def validate_email_required(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("Email is required")
+        clean_email = str(v).strip().lower()
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
 
+
+class CustomerLoginOTPVerifyRequest(BaseModel):
+    email: str = Field(..., json_schema_extra={"example": "customer@example.com"})
+    otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
+    phone: Optional[Any] = Field(None, json_schema_extra={"example": None})
+
     @field_validator("phone")
     @classmethod
-    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        cleaned = re.sub(r"[\s\-()]", "", str(v).strip())
-        if cleaned.startswith("+91"):
-            cleaned = cleaned[3:]
-        elif cleaned.startswith("91") and len(cleaned) > 10:
-            cleaned = cleaned[2:]
-        if not cleaned.isdigit() or len(cleaned) < 10:
-            raise ValueError("Invalid phone number")
-        return cleaned
+    def reject_phone(cls, v: Optional[Any]) -> Optional[Any]:
+        if v is not None and str(v).strip():
+            raise ValueError("Phone number is not supported on this route. Use email.")
+        return None
 
-    @model_validator(mode="after")
-    def require_email_or_phone(self) -> "CustomerLoginOTPSendRequest":
-        if not self.email and not self.phone:
-            raise ValueError("Provide either email or phone")
-        if self.email and self.phone:
-            raise ValueError("Provide only one of email or phone")
-        return self
-
-
-class CustomerLoginOTPVerifyRequest(CustomerLoginOTPSendRequest):
-    otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "482910"})
+    @field_validator("email")
+    @classmethod
+    def validate_email_required(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("Email is required")
+        clean_email = str(v).strip().lower()
+        if not re.match(EMAIL_REGEX, clean_email):
+            raise ValueError("Invalid email format")
+        return clean_email
 
 
 class CustomerRegisterRequest(BaseModel):
@@ -367,75 +371,59 @@ class VerifyOTPResponse(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    """Send a password-reset OTP to a registered email or mobile number."""
+    """Send a password-reset OTP to a registered email."""
 
-    email: Optional[str] = Field(None, json_schema_extra={"example": "user@example.com"})
-    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    email: str = Field(..., json_schema_extra={"example": "user@example.com"})
+    phone: Optional[Any] = Field(None, json_schema_extra={"example": None})
+
+    @field_validator("phone")
+    @classmethod
+    def reject_phone(cls, v: Optional[Any]) -> Optional[Any]:
+        if v is not None and str(v).strip():
+            raise ValueError("Phone number is not supported on this route. Use email.")
+        return None
 
     @field_validator("email")
     @classmethod
-    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        clean_email = v.strip().lower()
+    def validate_email_required(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("Email is required")
+        clean_email = str(v).strip().lower()
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
 
-    @field_validator("phone")
-    @classmethod
-    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        return _normalize_phone(str(v))
-
-    @model_validator(mode="after")
-    def require_one_channel(self) -> "ForgotPasswordRequest":
-        if not self.email and not self.phone:
-            raise ValueError("Provide either email or phone")
-        if self.email and self.phone:
-            raise ValueError("Provide only one of email or phone")
-        return self
-
     @property
     def identifier(self) -> str:
-        return self.email or self.phone or ""
+        return self.email
 
 
 class ResetPasswordRequest(BaseModel):
-    email: Optional[str] = Field(None, json_schema_extra={"example": "user@example.com"})
-    phone: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
+    email: str = Field(..., json_schema_extra={"example": "user@example.com"})
     otp: str = Field(..., min_length=6, max_length=6, json_schema_extra={"example": "123456"})
     new_password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "NewPassword123"})
+    phone: Optional[Any] = Field(None, json_schema_extra={"example": None})
+
+    @field_validator("phone")
+    @classmethod
+    def reject_phone(cls, v: Optional[Any]) -> Optional[Any]:
+        if v is not None and str(v).strip():
+            raise ValueError("Phone number is not supported on this route. Use email.")
+        return None
 
     @field_validator("email")
     @classmethod
-    def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        clean_email = v.strip().lower()
+    def validate_email_required(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("Email is required")
+        clean_email = str(v).strip().lower()
         if not re.match(EMAIL_REGEX, clean_email):
             raise ValueError("Invalid email format")
         return clean_email
 
-    @field_validator("phone")
-    @classmethod
-    def validate_phone_optional(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        return _normalize_phone(str(v))
-
-    @model_validator(mode="after")
-    def require_one_channel(self) -> "ResetPasswordRequest":
-        if not self.email and not self.phone:
-            raise ValueError("Provide either email or phone")
-        if self.email and self.phone:
-            raise ValueError("Provide only one of email or phone")
-        return self
-
     @property
     def identifier(self) -> str:
-        return self.email or self.phone or ""
+        return self.email
 
 
 class LogoutRequest(BaseModel):
