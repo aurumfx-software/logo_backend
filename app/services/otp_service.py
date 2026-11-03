@@ -20,7 +20,7 @@ class OTPService:
     def send_notification(cls, identifier: str, otp: str, purpose: OTPPurpose) -> None:
         """
         Dispatches OTP through real delivery providers:
-        - Email: SMTP (SendGrid, SES, or custom host) using SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
+        - Email: Resend (https://api.resend.com/emails) using RESEND_API_KEY and RESEND_FROM_EMAIL
         - Phone:
           1. MSG91 Send OTP (https://control.msg91.com/api/v5/otp) using MSG91_AUTH_KEY, MSG91_TEMPLATE_ID
           2. Twilio Messages API using TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
@@ -32,14 +32,14 @@ class OTPService:
 
         # ── 1. EMAIL CHANNEL ──
         if "@" in clean_target:
-            if settings.SMTP_HOST and settings.SMTP_USER:
-                cls._send_email_smtp(clean_target, otp, purpose)
+            if settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL:
+                cls._send_email_resend(clean_target, otp, purpose)
             else:
                 if settings.ENVIRONMENT != "development":
-                    logger.error(f"Cannot dispatch OTP email to {clean_target}: SMTP is not configured.")
+                    logger.error(f"Cannot dispatch OTP email to {clean_target}: Resend is not configured.")
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Email delivery provider is not configured on this server.",
+                        detail="Email delivery is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL.",
                     )
                 logger.info(f"[DEV OTP] Destination (Email): {clean_target} | Purpose: {purpose.value} | OTP: {otp}")
                 print(f"\n>>> [DEV OTP NOTIFICATION] To: {clean_target} | Purpose: {purpose.value} | CODE: {otp} <<<\n")
@@ -69,48 +69,46 @@ class OTPService:
             print(f"\n>>> [DEV OTP NOTIFICATION] To: {clean_target} ({mobile}) | Purpose: {purpose.value} | CODE: {otp} <<<\n")
 
     @staticmethod
-    def _send_email_smtp(recipient: str, otp: str, purpose: OTPPurpose) -> None:
-        import smtplib
-        from email.mime.multipart import MIMEMultipart
-        from email.mime.text import MIMEText
+    def _send_email_resend(recipient: str, otp: str, purpose: OTPPurpose) -> None:
+        import httpx
 
-        sender = settings.SMTP_FROM or settings.SMTP_USER or "noreply@logo.app"
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Your LOGO Verification Code: {otp}"
-        msg["From"] = f"Logo <{sender}>" if "<" not in sender else sender
-        msg["To"] = recipient
-
+        sender = settings.RESEND_FROM_EMAIL.strip()
+        if "<" not in sender:
+            sender = f"Logo <{sender}>"
+        label = purpose.value.replace("_", " ").lower()
         body_text = (
-            f"Your LOGO verification code is: {otp}\n\n"
+            f"Your Logo {label} code is: {otp}\n\n"
             f"This code will expire in {settings.OTP_EXPIRE_MINUTES} minutes.\n"
-            f"Do not share this code with anyone. If you did not request this, please ignore this email."
+            "Do not share this code with anyone. If you did not request this, please ignore this email."
         )
-        msg.attach(MIMEText(body_text, "plain"))
-
         try:
-            port = int(settings.SMTP_PORT or 587)
-            if port == 465:
-                with smtplib.SMTP_SSL(settings.SMTP_HOST, port, timeout=20) as server:
-                    if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(settings.SMTP_HOST, port, timeout=20) as server:
-                    server.ehlo()
-                    server.starttls()
-                    server.ehlo()
-                    if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                        server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                    server.send_message(msg)
-            logger.info(f"Successfully sent OTP email to {recipient} via SMTP ({settings.SMTP_HOST})")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"SMTP error sending to {recipient}: {exc}")
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY.strip()}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": sender,
+                    "to": [recipient],
+                    "subject": f"Your Logo {label} code",
+                    "text": body_text,
+                },
+                timeout=20.0,
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Resend request failed for %s: %s", recipient, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="The email provider could not send the OTP.",
+                detail="Resend could not send the OTP email.",
             ) from exc
+        if response.status_code >= 400:
+            logger.error("Resend rejected email to %s: %s %s", recipient, response.status_code, response.text)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Resend rejected the OTP email.",
+            )
+        logger.info("Sent OTP email to %s via Resend", recipient)
 
     @staticmethod
     def _send_phone_msg91(mobile: str, otp: str) -> None:

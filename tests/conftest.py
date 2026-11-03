@@ -18,6 +18,8 @@ os.environ["SMTP_HOST"] = ""
 os.environ["SMTP_USER"] = ""
 os.environ["SMTP_PASSWORD"] = ""
 os.environ["SMTP_FROM"] = ""
+os.environ["RESEND_API_KEY"] = ""
+os.environ["RESEND_FROM_EMAIL"] = ""
 
 from app.db.database import Base, get_db
 from app.main import app

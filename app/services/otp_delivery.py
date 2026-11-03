@@ -1,8 +1,6 @@
-"""Deliver OTP codes through MSG91 or Twilio (SMS) and SMTP (email)."""
+"""Deliver OTP codes through MSG91 or Twilio (SMS) and Resend (email)."""
 
 import logging
-import smtplib
-from email.message import EmailMessage
 
 import httpx
 from fastapi import HTTPException, status
@@ -62,7 +60,7 @@ class OTPDeliveryService:
 
     @staticmethod
     def email_configured() -> bool:
-        return bool(settings.SMTP_HOST and settings.SMTP_FROM)
+        return bool(settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL)
 
     @classmethod
     def deliver(cls, identifier: str, otp: str, purpose: OTPPurpose) -> None:
@@ -230,32 +228,42 @@ class OTPDeliveryService:
     def _send_email(cls, email: str, otp: str, purpose: OTPPurpose) -> None:
         if not cls.email_configured():
             if settings.ENVIRONMENT == "development":
-                logger.info("OTP email skipped (SMTP is not configured). Destination=%s", email)
+                logger.info("OTP email skipped (Resend is not configured). Destination=%s", email)
                 return
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Email OTP is not configured. Set SMTP_HOST and SMTP_FROM.",
+                detail="Email OTP is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL.",
             )
+        sender = settings.RESEND_FROM_EMAIL.strip()
+        if "<" not in sender:
+            sender = f"Logo <{sender}>"
         label = _purpose_label(purpose)
-        message = EmailMessage()
-        message["Subject"] = f"Your LOGO {label} code"
-        from_addr = settings.SMTP_FROM or "noreply@logo.app"
-        message["From"] = f"Logo <{from_addr}>" if "<" not in from_addr else from_addr
-        message["To"] = email
-        message.set_content(
-            f"Your LOGO {label} code is {otp}.\n"
-            f"It expires in {settings.OTP_EXPIRE_MINUTES} minutes.\n"
-            "If you did not request this, you can ignore this email."
-        )
         try:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as smtp:
-                if settings.SMTP_USE_TLS:
-                    smtp.starttls()
-                if settings.SMTP_USER:
-                    smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                smtp.send_message(message)
-        except (smtplib.SMTPException, OSError) as exc:
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY.strip()}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": sender,
+                    "to": [email],
+                    "subject": f"Your Logo {label} code",
+                    "text": (
+                        f"Your Logo {label} code is {otp}.\n"
+                        f"It expires in {settings.OTP_EXPIRE_MINUTES} minutes.\n"
+                        "If you did not request this, you can ignore this email."
+                    ),
+                },
+                timeout=20.0,
+            )
+        except httpx.HTTPError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="The email provider could not send the OTP.",
+                detail="Resend could not send the OTP email.",
             ) from exc
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Resend rejected the OTP email.",
+            )

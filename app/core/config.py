@@ -68,7 +68,10 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_FROM_NUMBER: str = ""
     TWILIO_VERIFY_SERVICE_SID: str = ""
-    # Email OTP / forgot-password. Works with SendGrid, SES, or any SMTP host.
+    # Email OTP via Resend (https://resend.com).
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = ""
+    # Legacy SMTP settings. OTP email uses Resend when RESEND_API_KEY is set.
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
