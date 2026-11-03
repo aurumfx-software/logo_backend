@@ -268,6 +268,8 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
+        if (merchant.approval_status or "").upper() == "APPROVED":
+            resp.status = "APPROVED"
         resp.cashback_percent = float(merchant.cashback_percent if merchant.cashback_percent is not None else 3)
         resp.company_fee_percent = float(
             merchant.company_fee_percent if merchant.company_fee_percent is not None else 2
@@ -551,7 +553,9 @@ class MerchantService:
 
         merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
         merchant.approval_status = "APPROVED"
+        merchant.status = "APPROVED"
         merchant.is_verified = True
+        merchant.is_active = True
         merchant.approved_by_id = admin_user.id
         merchant.approved_at = datetime.now(timezone.utc)
         merchant.rejection_reason = None
@@ -591,6 +595,8 @@ class MerchantService:
 
         merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
         merchant.approval_status = "REJECTED"
+        merchant.status = "REJECTED"
+        merchant.is_active = False
         merchant.rejection_reason = reason.strip()
         merchant.approved_by_id = admin_user.id
         merchant.approved_at = datetime.now(timezone.utc)
