@@ -127,6 +127,7 @@ class MerchantProfileResponse(BaseModel):
     has_password: bool = False
     cashback_percent: float = 3
     company_fee_percent: float = 2
+    total_deduction_percent: float = 5.0
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -447,6 +448,12 @@ class MerchantUpdateRequest(BaseModel):
         ge=0,
         le=100,
         description="Percent of the bill kept by the company",
+    )
+    total_deduction_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Total percent debited from merchant (cashback + company fee)",
     )
 
     model_config = ConfigDict(extra="ignore")

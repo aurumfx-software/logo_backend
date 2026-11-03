@@ -51,6 +51,12 @@ def get_platform_wallet(
     summary="Admin: platform company wallet and fee ledger",
     include_in_schema=False,
 )
+@router.get(
+    "/company/overview",
+    response_model=PlatformWalletResponse,
+    summary="Admin: platform company wallet overview alias",
+    include_in_schema=False,
+)
 def get_company_wallet_alias(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),

@@ -274,6 +274,7 @@ class MerchantService:
         resp.company_fee_percent = float(
             merchant.company_fee_percent if merchant.company_fee_percent is not None else 2
         )
+        resp.total_deduction_percent = round(resp.cashback_percent + resp.company_fee_percent, 2)
         if merchant.user_code:
             resp.user_code = merchant.user_code
         elif creator_summary:
