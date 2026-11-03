@@ -861,9 +861,9 @@ def merchant_logout(
     response_model=MerchantLoginOTPResponse,
     summary="Step 1 — Request merchant OTP login code",
     description=(
-        "Sends a 6-digit OTP to the registered merchant's email or phone. "
-        "The OTP expires in a few minutes and is single-use. "
-        "Only works for accounts with MERCHANT role that are active."
+        "Sends a 6-digit OTP with Resend to the merchant's email. "
+        "A phone number is used only to find that email. "
+        "Only works for active merchant accounts."
     ),
 )
 def merchant_login_send_otp(
@@ -871,8 +871,8 @@ def merchant_login_send_otp(
     db: Session = Depends(get_db),
 ) -> MerchantLoginOTPResponse:
     plain_otp = MerchantService.send_login_otp(db=db, email=req.email, phone=req.phone)
-    target = req.email or req.phone or "your merchant account"
-    mailed = bool(req.email and settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL)
+    target = req.email or "your email"
+    mailed = bool(settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL)
     dev_otp = None if mailed else (plain_otp if settings.ENVIRONMENT == "development" else None)
     return MerchantLoginOTPResponse(
         message=(

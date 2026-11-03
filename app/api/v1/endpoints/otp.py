@@ -34,11 +34,11 @@ def _mark_account_verified(db: Session, payload: OTPChannelRequest) -> None:
 @router.post(
     "/send",
     response_model=SendOTPResponse,
-    summary="Send a 6-digit OTP to email or phone",
+    summary="Send a 6-digit OTP by email",
     description=(
-        "Creates a single-use OTP for the given email or phone. "
-        "Previous unused codes for the same destination and purpose are invalidated. "
-        "dev_otp is returned only when ENVIRONMENT is development."
+        "Creates a single-use OTP and sends it with Resend. "
+        "A phone number is accepted only to find the account email. "
+        "dev_otp is returned only when Resend is not configured and ENVIRONMENT is development."
     ),
 )
 def send_otp(
@@ -51,9 +51,9 @@ def send_otp(
         purpose=payload.purpose,
     )
     dev_otp = plain_otp if OTPDeliveryService.expose_local_code(payload.identifier) else None
-    destination = payload.email or payload.phone
+    destination = payload.email or "your email"
     return SendOTPResponse(
-        message=f"OTP sent to {destination}.",
+        message=f"OTP sent to {destination}. Please check your inbox.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp,
     )

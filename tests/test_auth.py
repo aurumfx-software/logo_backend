@@ -389,14 +389,17 @@ def test_forgot_password_by_phone(client: TestClient):
             "password": "OldPassword123",
         },
     )
-    forgot_res = client.post("/api/v1/auth/forgot-password", json={"phone": "+91 98111-22233"})
+    forgot_res = client.post(
+        "/api/v1/auth/forgot-password",
+        json={"email": "phone.reset@example.com"},
+    )
     assert forgot_res.status_code == 200
     otp = forgot_res.json()["dev_otp"]
     assert otp and len(otp) == 6
 
     reset_res = client.post(
         "/api/v1/auth/reset-password",
-        json={"phone": "9811122233", "otp": otp, "new_password": "NewPassword789"},
+        json={"email": "phone.reset@example.com", "otp": otp, "new_password": "NewPassword789"},
     )
     assert reset_res.status_code == 200
 
@@ -407,14 +410,14 @@ def test_forgot_password_by_phone(client: TestClient):
     assert login_res.status_code == 200
 
 
-def test_customer_login_otp_uses_msg91(client: TestClient, monkeypatch):
+def test_phone_login_otp_is_emailed_with_resend(client: TestClient, monkeypatch):
     from app.core.config import settings
 
     client.post(
         "/api/v1/auth/register",
         json={
-            "name": "MSG91 User",
-            "email": "msg91.user@example.com",
+            "name": "Resend User",
+            "email": "resend.user@example.com",
             "phone": "9876500011",
             "password": "Password12345",
         },
@@ -423,37 +426,30 @@ def test_customer_login_otp_uses_msg91(client: TestClient, monkeypatch):
 
     class _Response:
         status_code = 200
-        text = '{"type":"success"}'
+        text = '{"id":"email_1"}'
 
         def json(self):
-            return {"type": "success"}
+            return {"id": "email_1"}
 
-    class _Client:
-        def __init__(self, *args, **kwargs):
-            pass
+    def _post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        captured["headers"] = kwargs.get("headers")
+        return _Response()
 
-        def __enter__(self):
-            return self
+    monkeypatch.setattr(settings, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(settings, "RESEND_FROM_EMAIL", "noreply@backend.aurumfx.org")
+    monkeypatch.setattr("httpx.post", _post)
 
-        def __exit__(self, *args):
-            return False
-
-        def post(self, url, **kwargs):
-            captured["url"] = url
-            captured["params"] = kwargs.get("params")
-            captured["headers"] = kwargs.get("headers")
-            return _Response()
-
-    monkeypatch.setattr(settings, "MSG91_AUTH_KEY", "test-auth-key")
-    monkeypatch.setattr(settings, "MSG91_TEMPLATE_ID", "template-1")
-    monkeypatch.setattr("app.services.otp_delivery.httpx.Client", _Client)
-
-    send_res = client.post("/api/v1/auth/login/send-otp", json={"phone": "9876500011"})
+    send_res = client.post(
+        "/api/v1/auth/login/send-otp",
+        json={"email": "resend.user@example.com"},
+    )
     assert send_res.status_code == 200
-    assert "control.msg91.com" in captured["url"]
-    assert captured["params"]["mobile"] == "919876500011"
-    assert captured["params"]["otp"] == send_res.json()["dev_otp"]
-    assert captured["headers"]["authkey"] == "test-auth-key"
+    assert send_res.json()["dev_otp"] is None
+    assert captured["url"] == "https://api.resend.com/emails"
+    assert captured["json"]["to"] == ["resend.user@example.com"]
+    assert captured["headers"]["Authorization"] == "Bearer re_test"
 
 
 # 14. Role-based authorization
@@ -585,16 +581,14 @@ def test_customer_otp_login_with_phone(client: TestClient):
         "/api/v1/auth/login/send-otp",
         json={"phone": "+919876512345"},
     )
-    assert send_res.status_code == 200
-    dev_otp = send_res.json().get("dev_otp")
-    assert dev_otp
+    assert send_res.status_code == 422
 
-    token_res = client.post(
-        "/api/v1/auth/login/verify-otp",
-        json={"phone": "9876512345", "otp": dev_otp},
+    email_res = client.post(
+        "/api/v1/auth/login/send-otp",
+        json={"email": "phone.customer@example.com"},
     )
-    assert token_res.status_code == 200
-    assert token_res.json()["user"]["phone"] == "9876512345"
+    assert email_res.status_code == 200
+    assert email_res.json()["dev_otp"]
 
 
 def test_customer_phone_password_quick_login(client: TestClient):

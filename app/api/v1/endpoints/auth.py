@@ -95,8 +95,8 @@ def login_with_phone(
     response_model=SendOTPResponse,
     summary="Customer OTP login — send code",
     description=(
-        "Sends a 6-digit OTP to the customer's registered email or phone. "
-        "Phone codes are sent by Twilio Verify. Email codes go through SMTP."
+        "Sends a 6-digit OTP with Resend to the customer's email. "
+        "A phone number is used only to find that email."
     ),
 )
 def customer_login_send_otp(
@@ -106,10 +106,10 @@ def customer_login_send_otp(
     plain_otp = AuthService.send_customer_login_otp(
         db=db, email=req.email, phone=req.phone
     )
-    target = req.email or req.phone or "your account"
+    target = req.email or "your email"
     dev_otp = plain_otp if OTPDeliveryService.expose_local_code(req.email or req.phone or "") else None
     return SendOTPResponse(
-        message=f"OTP sent to {target}. Please check your messages.",
+        message=f"OTP sent to {target}. Please check your inbox.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp,
     )
@@ -254,9 +254,9 @@ def send_otp(
         identifier=otp_req.email,
         purpose=otp_req.purpose,
     )
-    dev_otp = plain_otp if settings.ENVIRONMENT == "development" else None
+    dev_otp = plain_otp if OTPDeliveryService.expose_local_code(otp_req.email) else None
     return SendOTPResponse(
-        message=f"OTP successfully generated for {otp_req.email}.",
+        message=f"OTP sent to {otp_req.email}. Please check your inbox.",
         expires_in_minutes=settings.OTP_EXPIRE_MINUTES,
         dev_otp=dev_otp,
     )
@@ -297,7 +297,8 @@ def verify_otp(
     response_model=SendOTPResponse,
     summary="Request password reset OTP",
     description=(
-        "Sends a password-reset OTP to a registered email (SMTP) or phone (Twilio Verify). "
+        "Sends a password-reset OTP with Resend to the account email. "
+        "A phone number is used only to find that email. "
         "The response does not reveal whether the account exists."
     ),
 )

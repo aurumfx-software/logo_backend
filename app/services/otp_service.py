@@ -204,6 +204,23 @@ class OTPService:
                 otp,
             )
 
+    @staticmethod
+    def recipient_email(db: Session, identifier: str) -> str:
+        """Every OTP is emailed. A phone number is resolved to the account email."""
+        clean = identifier.strip().lower()
+        if "@" in clean:
+            return clean
+        from app.services.auth_service import AuthService
+
+        user = AuthService.find_user_by_phone(db, clean)
+        email = (user.email or "").strip().lower() if user else ""
+        if "@" not in email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account has no email address. OTP is sent by email.",
+            )
+        return email
+
     @classmethod
     def create_otp(
         cls, db: Session, identifier: str, purpose: OTPPurpose = OTPPurpose.ACCOUNT_VERIFICATION
@@ -237,7 +254,7 @@ class OTPService:
         db.refresh(otp_record)
 
         try:
-            cls.send_notification(clean_identifier, plain_otp, purpose)
+            cls.send_notification(cls.recipient_email(db, clean_identifier), plain_otp, purpose)
         except HTTPException:
             otp_record.is_used = True
             db.commit()

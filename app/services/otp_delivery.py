@@ -45,7 +45,9 @@ class OTPDeliveryService:
 
     @staticmethod
     def expose_local_code(identifier: str) -> bool:
-        """Development may echo the local code only when Twilio did not generate the SMS."""
+        """Hide the code once Resend is configured to send it."""
+        if settings.RESEND_API_KEY and settings.RESEND_FROM_EMAIL:
+            return False
         return settings.ENVIRONMENT == "development" and not OTPDeliveryService.twilio_owns_sms(identifier)
 
     @staticmethod
