@@ -141,8 +141,8 @@ def list_users(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     search: Optional[str] = Query(None, description="Search by name, email, or phone"),
     skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    sort: str = Query("asc", description="Sort order by user ID: 'asc' (1, 2, 3...) or 'desc' (7, 6, 5...)"),
+    limit: int = Query(100, ge=1, le=1000),
+    sort: str = Query("desc", description="Sort order by user ID: 'asc' or 'desc' (latest first)"),
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> AdminUserListResponse:

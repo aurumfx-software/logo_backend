@@ -219,8 +219,8 @@ class AdminService:
         is_active: Optional[bool] = None,
         search: Optional[str] = None,
         skip: int = 0,
-        limit: int = 20,
-        sort: Optional[str] = "asc",
+        limit: int = 100,
+        sort: Optional[str] = "desc",
     ) -> AdminUserListResponse:
         """Search and paginate users with submitted logos and favorite counts."""
         query = db.query(User)
