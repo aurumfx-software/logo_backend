@@ -85,6 +85,8 @@ class WalletTransferRequest(BaseModel):
     to_user_id: Optional[int] = Field(None, description="Recipient user id")
     to_user_code: Optional[str] = Field(None, description="Recipient user code (e.g. FLS_1)")
     to_email: Optional[str] = Field(None, description="Recipient email")
+    to_phone: Optional[str] = Field(None, description="Recipient phone number")
+    to_merchant_id: Optional[int] = Field(None, description="Recipient merchant profile ID")
     to_admin: Optional[bool] = Field(False, description="Transfer directly to platform admin")
     note: Optional[str] = Field(None, max_length=500)
 

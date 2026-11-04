@@ -328,19 +328,46 @@ class WalletService:
             if user:
                 return user
 
-        if not payload.to_user_id and not payload.to_user_code and not payload.to_email and not payload.to_admin:
+        if not payload.to_user_id and not payload.to_user_code and not payload.to_email and not payload.to_phone and not payload.to_merchant_id and not payload.to_admin:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide to_user_id, to_user_code, to_email, or set to_admin=True.",
+                detail="Provide to_user_id, to_user_code, to_email, to_phone, to_merchant_id, or set to_admin=True.",
             )
 
-        if payload.to_user_id:
+        if payload.to_merchant_id:
+            merchant = db.query(MerchantProfile).filter(MerchantProfile.id == payload.to_merchant_id).first()
+            if merchant and merchant.user_id:
+                user = db.query(User).filter(User.id == merchant.user_id).first()
+            if not user:
+                user = db.query(User).filter(User.id == payload.to_merchant_id).first()
+        elif payload.to_user_id:
             user = db.query(User).filter(User.id == payload.to_user_id).first()
+        elif payload.to_phone:
+            phone_clean = payload.to_phone.strip()
+            user = db.query(User).filter(User.phone == phone_clean).first()
+            if not user:
+                merchant = db.query(MerchantProfile).filter(
+                    or_(
+                        MerchantProfile.phone == phone_clean,
+                        MerchantProfile.whatsapp == phone_clean,
+                    )
+                ).first()
+                if merchant and merchant.user_id:
+                    user = db.query(User).filter(User.id == merchant.user_id).first()
         elif payload.to_user_code:
-            user = db.query(User).filter(User.user_code == payload.to_user_code.strip()).first()
+            code_clean = payload.to_user_code.strip()
+            user = db.query(User).filter(User.user_code == code_clean).first()
+            if not user and code_clean.isdigit():
+                merchant = db.query(MerchantProfile).filter(MerchantProfile.id == int(code_clean)).first()
+                if merchant and merchant.user_id:
+                    user = db.query(User).filter(User.id == merchant.user_id).first()
         elif payload.to_email:
             target_email = payload.to_email.strip().lower()
             user = db.query(User).filter(User.email == target_email).first()
+            if not user:
+                merchant = db.query(MerchantProfile).filter(MerchantProfile.email == target_email).first()
+                if merchant and merchant.user_id:
+                    user = db.query(User).filter(User.id == merchant.user_id).first()
             # If aurumfxsoftware or admin email alias was passed, map to platform admin user
             if not user and (target_email in ['aurumfxsoftware@gmail.com', 'admin@aurumfx.com'] or 'admin' in target_email or 'aurum' in target_email):
                 user = (
