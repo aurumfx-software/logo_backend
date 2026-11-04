@@ -216,10 +216,12 @@ class WalletTopUpResponse(BaseModel):
 
 
 class AdminWalletAdjustRequest(BaseModel):
-    user_id: int
+    user_id: Optional[int] = Field(None, description="Target user id")
+    merchant_id: Optional[int] = Field(None, description="Target merchant profile id")
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = Field(None, max_length=500)
     operation: str = Field("credit", pattern="^(credit|debit)$")
+    claim_mode: bool = Field(True, description="When true for credits, sends to Redeem section until claimed")
 
     @field_validator("amount")
     @classmethod
@@ -230,6 +232,25 @@ class AdminWalletAdjustRequest(BaseModel):
 class AdminWalletAdjustResponse(BaseModel):
     success: bool = True
     message: str
-    wallet: WalletResponse
-    transaction_group_id: str
-    transaction_type: WalletTransactionType
+    wallet: Optional[WalletResponse] = None
+    transaction_group_id: Optional[str] = None
+    transaction_type: Optional[WalletTransactionType] = None
+    claim_id: Optional[int] = None
+    claim_status: Optional[str] = None
+
+
+class WalletRewardClaimResponse(BaseModel):
+    id: int
+    claim_token: str
+    amount: Decimal
+    currency: str = "INR"
+    title: str
+    note: Optional[str] = None
+    status: str
+    recipient_user_id: int
+    merchant_profile_id: Optional[int] = None
+    created_at: datetime
+    redeemed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+

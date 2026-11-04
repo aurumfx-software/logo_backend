@@ -224,3 +224,48 @@ class WalletTopupOrder(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     merchant_profile = relationship("MerchantProfile", backref="wallet_topups")
+
+
+class RewardClaimStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    REDEEMED = "REDEEMED"
+    CANCELLED = "CANCELLED"
+
+
+class WalletRewardClaim(Base):
+    """Admin cash grants and promotional credits that sit in Redeem section until claimed."""
+
+    __tablename__ = "wallet_reward_claims"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    claim_token = Column(String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    recipient_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    merchant_profile_id = Column(Integer, ForeignKey("merchant_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+    amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String(3), default="INR", nullable=False)
+    title = Column(String(255), default="Admin Cash Grant", nullable=False)
+    note = Column(Text, nullable=True)
+    status = Column(
+        Enum(RewardClaimStatus, name="reward_claim_status", native_enum=False),
+        default=RewardClaimStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    created_by_admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    wallet_transaction_group_id = Column(String(36), nullable=True, index=True)
+    redeemed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    recipient_user = relationship("User", foreign_keys=[recipient_user_id])
+    merchant_profile = relationship("MerchantProfile", backref="reward_claims")
+

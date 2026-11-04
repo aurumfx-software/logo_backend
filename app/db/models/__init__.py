@@ -15,6 +15,8 @@ from app.db.models.wallet import (
     SaleQRStatus,
     WalletTopupOrder,
     WalletTopupStatus,
+    RewardClaimStatus,
+    WalletRewardClaim,
     Wallet,
     WalletLedgerDirection,
     WalletLedgerEntry,

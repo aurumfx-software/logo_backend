@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_admin
 from app.db.database import get_db
 from app.db.models.user import User
+from app.schemas.response import StandardListResponse, list_response
 from app.schemas.wallet import (
     AdminWalletAdjustRequest,
     AdminWalletAdjustResponse,
@@ -15,6 +16,7 @@ from app.schemas.wallet import (
     SaleRedeemRequest,
     SaleRedeemResponse,
     WalletMeResponse,
+    WalletRewardClaimResponse,
     WalletTransactionListResponse,
     WalletTopUpRequest,
     WalletTopUpResponse,
@@ -209,24 +211,73 @@ def redeem_sale_cashback(
 @router.post(
     "/admin/adjust",
     response_model=AdminWalletAdjustResponse,
-    summary="Admin: credit or debit a user wallet (funding / corrections)",
+    summary="Admin: credit or debit a user/merchant wallet",
 )
 def admin_adjust_wallet(
     payload: AdminWalletAdjustRequest,
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminWalletAdjustResponse:
-    wallet, group_id, txn_type = WalletService.admin_adjust_wallet(
+    wallet, group_id, txn_type, claim_id, claim_status = WalletService.admin_adjust_wallet(
         db=db,
         admin_user=admin_user,
         target_user_id=payload.user_id,
         amount=payload.amount,
         operation=payload.operation,
         note=payload.note,
+        merchant_id=payload.merchant_id,
+        claim_mode=payload.claim_mode,
+    )
+    msg = (
+        f"₹{payload.amount} sent to user's Redeem section (Pending Claim)"
+        if claim_id
+        else f"Wallet {payload.operation} successful"
     )
     return AdminWalletAdjustResponse(
-        message=f"Wallet {payload.operation} successful",
+        message=msg,
         wallet=wallet,
         transaction_group_id=group_id,
         transaction_type=txn_type,
+        claim_id=claim_id,
+        claim_status=claim_status,
     )
+
+
+@router.get(
+    "/rewards/pending",
+    response_model=StandardListResponse[WalletRewardClaimResponse],
+    summary="List pending redeemable rewards and admin cash grants",
+)
+def list_pending_rewards(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[WalletRewardClaimResponse]:
+    rewards = WalletService.list_pending_rewards(db=db, user=current_user)
+    data = [WalletRewardClaimResponse.model_validate(r) for r in rewards]
+    return list_response(
+        data=data,
+        total_items=len(data),
+        message=f"Retrieved {len(data)} pending reward(s)",
+    )
+
+
+@router.post(
+    "/rewards/{claim_id}/redeem",
+    summary="Redeem pending admin cash grant into wallet",
+)
+def redeem_reward(
+    claim_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    wallet, claim, group_id = WalletService.redeem_reward_claim(
+        db=db, user=current_user, claim_id=claim_id
+    )
+    return {
+        "success": True,
+        "message": f"🎉 ₹{claim.amount} redeemed to your wallet successfully!",
+        "wallet": wallet,
+        "claim": WalletRewardClaimResponse.model_validate(claim),
+        "transaction_group_id": group_id,
+    }
+

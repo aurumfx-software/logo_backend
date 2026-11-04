@@ -12,10 +12,12 @@ from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
 from app.db.models.wallet import (
     MerchantSaleQR,
+    RewardClaimStatus,
     SaleQRStatus,
     Wallet,
     WalletLedgerDirection,
     WalletLedgerEntry,
+    WalletRewardClaim,
     WalletTransaction,
     WalletTransactionType,
     WalletType,
@@ -945,15 +947,58 @@ class WalletService:
     def admin_adjust_wallet(
         db: Session,
         admin_user: User,
-        target_user_id: int,
+        target_user_id: Optional[int],
         amount: Decimal,
         operation: str,
         note: Optional[str] = None,
-    ) -> Tuple[WalletResponse, str, WalletTransactionType]:
+        merchant_id: Optional[int] = None,
+        claim_mode: bool = True,
+    ) -> Tuple[Optional[WalletResponse], Optional[str], Optional[WalletTransactionType], Optional[int], Optional[str]]:
         amount = WalletService._money(amount)
+
+        # Resolve target user if only merchant_id was provided
+        if target_user_id is None and merchant_id is not None:
+            merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+            if not merchant:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Merchant with ID {merchant_id} not found.")
+            if merchant.user_id:
+                target_user_id = merchant.user_id
+            else:
+                m_phone = merchant.phone or merchant.contact_number
+                if m_phone:
+                    clean_p = m_phone.strip().replace(" ", "").replace("-", "")[-10:]
+                    u = db.query(User).filter(User.phone.endswith(clean_p)).first()
+                    if u:
+                        target_user_id = u.id
+                        merchant.user_id = u.id
+                        db.commit()
+            if not target_user_id:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Merchant '{merchant.business_name}' has no linked user account.")
+
+        if not target_user_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Target user ID or Merchant ID is required.")
+
         target_wallet = WalletService.ensure_wallet_for_user(db, target_user_id)
         db.flush()
 
+        # If credit and claim_mode is True, put in Redeem section
+        if operation == "credit" and claim_mode:
+            claim = WalletRewardClaim(
+                recipient_user_id=target_user_id,
+                merchant_profile_id=merchant_id,
+                amount=amount,
+                currency=settings.WALLET_CURRENCY,
+                title="Admin Cash Grant",
+                note=note or "Promotional credit from Platform Admin (Redeem to Wallet)",
+                status=RewardClaimStatus.PENDING,
+                created_by_admin_id=admin_user.id,
+            )
+            db.add(claim)
+            db.commit()
+            db.refresh(claim)
+            return WalletService.wallet_to_response(target_wallet), None, None, claim.id, "PENDING"
+
+        # Otherwise direct credit or debit
         group_id = str(uuid.uuid4())
         txn_type = (
             WalletTransactionType.ADMIN_CREDIT
@@ -989,4 +1034,62 @@ class WalletService:
 
         db.commit()
         db.refresh(locked)
-        return WalletService.wallet_to_response(locked), group_id, txn_type
+        return WalletService.wallet_to_response(locked), group_id, txn_type, None, None
+
+    @staticmethod
+    def list_pending_rewards(db: Session, user: User) -> List[WalletRewardClaim]:
+        q = db.query(WalletRewardClaim).filter(
+            WalletRewardClaim.recipient_user_id == user.id,
+            WalletRewardClaim.status == RewardClaimStatus.PENDING,
+        ).order_by(WalletRewardClaim.created_at.desc())
+        return q.all()
+
+    @staticmethod
+    def redeem_reward_claim(
+        db: Session,
+        user: User,
+        claim_id: int,
+    ) -> Tuple[WalletResponse, WalletRewardClaim, str]:
+        claim = db.query(WalletRewardClaim).filter(WalletRewardClaim.id == claim_id).first()
+        if not claim:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reward claim not found.")
+        if claim.recipient_user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This reward does not belong to you.")
+        if claim.status != RewardClaimStatus.PENDING:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"This reward has already been {claim.status.lower()}.")
+
+        wallet = WalletService.ensure_wallet_for_user(db, user.id)
+        db.flush()
+
+        group_id = str(uuid.uuid4())
+        txn = WalletTransaction(
+            group_id=group_id,
+            transaction_type=WalletTransactionType.ADMIN_CREDIT,
+            amount=claim.amount,
+            currency=claim.currency,
+            description=f"Redeemed: {claim.title} ({claim.note or ''})".strip(),
+            initiated_by_user_id=user.id,
+            reference_id=str(claim.id),
+        )
+        db.add(txn)
+        db.flush()
+
+        locked = WalletService._lock_wallet(db, wallet.id)
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked,
+            WalletLedgerDirection.CREDIT,
+            WalletService._money(claim.amount),
+            note=f"Redeemed reward claim #{claim.id}",
+        )
+
+        claim.status = RewardClaimStatus.REDEEMED
+        claim.redeemed_at = datetime.now(timezone.utc)
+        claim.wallet_transaction_group_id = group_id
+
+        db.commit()
+        db.refresh(locked)
+        db.refresh(claim)
+        return WalletService.wallet_to_response(locked), claim, group_id
+
