@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Union
+import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -216,12 +217,36 @@ class WalletTopUpResponse(BaseModel):
 
 
 class AdminWalletAdjustRequest(BaseModel):
-    user_id: Optional[int] = Field(None, description="Target user id")
-    merchant_id: Optional[int] = Field(None, description="Target merchant profile id")
+    user_id: Optional[Union[int, str]] = Field(None, description="Target user id")
+    merchant_id: Optional[Union[int, str]] = Field(None, description="Target merchant profile id")
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = Field(None, max_length=500)
     operation: str = Field("credit", pattern="^(credit|debit)$")
     claim_mode: bool = Field(True, description="When true for credits, sends to Redeem section until claimed")
+
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def parse_user_id(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, int):
+            return v
+        m = re.search(r"\d+", str(v))
+        if m:
+            return int(m.group(0))
+        return None
+
+    @field_validator("merchant_id", mode="before")
+    @classmethod
+    def parse_merchant_id(cls, v):
+        if v is None or v == "":
+            return None
+        if isinstance(v, int):
+            return v
+        m = re.search(r"\d+", str(v))
+        if m:
+            return int(m.group(0))
+        return None
 
     @field_validator("amount")
     @classmethod
