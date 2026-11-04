@@ -1038,8 +1038,30 @@ class WalletService:
 
     @staticmethod
     def list_pending_rewards(db: Session, user: User) -> List[WalletRewardClaim]:
+        from app.db.models.merchant import MerchantProfile
+        from sqlalchemy import or_
+
+        filters = [WalletRewardClaim.recipient_user_id == user.id]
+        clean_p = (user.phone or "").strip()[-10:] if user.phone else None
+        
+        # Also include any claims targeting merchant profiles owned by or linked to this user/phone
+        merchant_q = db.query(MerchantProfile.id)
+        if clean_p:
+            merchant_q = merchant_q.filter(
+                or_(
+                    MerchantProfile.user_id == user.id,
+                    MerchantProfile.phone.like(f"%{clean_p}%")
+                )
+            )
+        else:
+            merchant_q = merchant_q.filter(MerchantProfile.user_id == user.id)
+
+        merchant_ids = [m[0] for m in merchant_q.all()]
+        if merchant_ids:
+            filters.append(WalletRewardClaim.merchant_profile_id.in_(merchant_ids))
+
         q = db.query(WalletRewardClaim).filter(
-            WalletRewardClaim.recipient_user_id == user.id,
+            or_(*filters),
             WalletRewardClaim.status == RewardClaimStatus.PENDING,
         ).order_by(WalletRewardClaim.created_at.desc())
         return q.all()
@@ -1050,10 +1072,27 @@ class WalletService:
         user: User,
         claim_id: int,
     ) -> Tuple[WalletResponse, WalletRewardClaim, str]:
+        from app.db.models.merchant import MerchantProfile
+        from sqlalchemy import or_
+
         claim = db.query(WalletRewardClaim).filter(WalletRewardClaim.id == claim_id).first()
         if not claim:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reward claim not found.")
-        if claim.recipient_user_id != user.id:
+
+        is_owner = (claim.recipient_user_id == user.id)
+        if not is_owner and claim.merchant_profile_id:
+            clean_p = (user.phone or "").strip()[-10:] if user.phone else None
+            mp_filter = [MerchantProfile.user_id == user.id]
+            if clean_p:
+                mp_filter.append(MerchantProfile.phone.like(f"%{clean_p}%"))
+            mp = db.query(MerchantProfile).filter(
+                MerchantProfile.id == claim.merchant_profile_id,
+                or_(*mp_filter)
+            ).first()
+            if mp:
+                is_owner = True
+
+        if not is_owner:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This reward does not belong to you.")
         if claim.status != RewardClaimStatus.PENDING:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"This reward has already been {claim.status.lower()}.")
