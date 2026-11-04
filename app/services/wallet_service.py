@@ -209,6 +209,20 @@ class WalletService:
         transactions = []
         for row in rows:
             txn = row.transaction
+            # Try to find merchant name from the transaction group's sale QR
+            merchant_name = None
+            merchant_city = None
+            if txn and txn.group_id:
+                sale_qr = db.query(MerchantSaleQR).filter(
+                    MerchantSaleQR.wallet_transaction_group_id == txn.group_id
+                ).first()
+                if sale_qr and sale_qr.merchant_profile_id:
+                    mp = db.query(MerchantProfile).filter(
+                        MerchantProfile.id == sale_qr.merchant_profile_id
+                    ).first()
+                    if mp:
+                        merchant_name = mp.business_name
+                        merchant_city = mp.city
             transactions.append(
                 PlatformWalletTransaction(
                     id=row.id,
@@ -223,6 +237,8 @@ class WalletService:
                         else (str(txn.transaction_type) if txn else None)
                     ),
                     transaction_group_id=txn.group_id if txn else None,
+                    merchant_name=merchant_name,
+                    merchant_city=merchant_city,
                 )
             )
 

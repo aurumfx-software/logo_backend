@@ -50,6 +50,8 @@ class PlatformWalletTransaction(BaseModel):
     created_at: datetime
     transaction_type: Optional[str] = None
     transaction_group_id: Optional[str] = None
+    merchant_name: Optional[str] = None
+    merchant_city: Optional[str] = None
 
 
 class PlatformWalletResponse(BaseModel):
