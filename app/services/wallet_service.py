@@ -346,7 +346,7 @@ class WalletService:
                 user = (
                     db.query(User)
                     .filter(
-                        User.role.in_(['admin', 'superadmin', UserRole.ADMIN, UserRole.SUPERADMIN]),
+                        User.role.in_(['admin', 'superadmin', 'ADMIN', 'SUPER_ADMIN', UserRole.ADMIN, UserRole.SUPER_ADMIN]),
                         User.is_active == True,
                     )
                     .order_by(User.id.asc())
