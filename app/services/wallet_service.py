@@ -310,19 +310,48 @@ class WalletService:
 
     @staticmethod
     def _resolve_recipient(db: Session, payload: WalletTransferRequest) -> User:
-        if not payload.to_user_id and not payload.to_user_code and not payload.to_email:
+        user = None
+
+        # 1. Direct transfer to Platform Admin
+        if payload.to_admin:
+            user = (
+                db.query(User)
+                .filter(
+                    User.role.in_(['admin', 'superadmin', UserRole.ADMIN, UserRole.SUPERADMIN]),
+                    User.is_active == True,
+                )
+                .order_by(User.id.asc())
+                .first()
+            )
+            if not user:
+                user = db.query(User).filter(User.id == 15).first()
+            if user:
+                return user
+
+        if not payload.to_user_id and not payload.to_user_code and not payload.to_email and not payload.to_admin:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Provide to_user_id, to_user_code, or to_email.",
+                detail="Provide to_user_id, to_user_code, to_email, or set to_admin=True.",
             )
 
-        user = None
         if payload.to_user_id:
             user = db.query(User).filter(User.id == payload.to_user_id).first()
         elif payload.to_user_code:
             user = db.query(User).filter(User.user_code == payload.to_user_code.strip()).first()
         elif payload.to_email:
-            user = db.query(User).filter(User.email == payload.to_email.strip().lower()).first()
+            target_email = payload.to_email.strip().lower()
+            user = db.query(User).filter(User.email == target_email).first()
+            # If aurumfxsoftware or admin email alias was passed, map to platform admin user
+            if not user and (target_email in ['aurumfxsoftware@gmail.com', 'admin@aurumfx.com'] or 'admin' in target_email or 'aurum' in target_email):
+                user = (
+                    db.query(User)
+                    .filter(
+                        User.role.in_(['admin', 'superadmin', UserRole.ADMIN, UserRole.SUPERADMIN]),
+                        User.is_active == True,
+                    )
+                    .order_by(User.id.asc())
+                    .first()
+                ) or db.query(User).filter(User.id == 15).first()
 
         if not user or not user.is_active:
             raise HTTPException(

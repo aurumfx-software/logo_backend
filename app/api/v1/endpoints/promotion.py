@@ -263,7 +263,7 @@ def upload_banner_media(
     image: Optional[UploadFile] = File(None, description="Banner image file"),
     video: Optional[UploadFile] = File(None, description="Banner video file"),
     db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user_flexible),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
     Upload a hero banner image or video directly to DigitalOcean Spaces CDN storage.

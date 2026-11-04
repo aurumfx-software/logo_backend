@@ -170,7 +170,7 @@ class MerchantOnboardingRequest(BaseModel):
     contact_number: Optional[str] = Field(None, json_schema_extra={"example": "9876543210"})
     whatsapp: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "9876543210"})
     landline: Optional[str] = Field(None, max_length=20, json_schema_extra={"example": "0484234567"})
-    email: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "owner@business.com"})
+    email: str = Field(..., max_length=255, description="Mandatory email address for merchant login", json_schema_extra={"example": "owner@business.com"})
     password: Optional[str] = Field(
         None,
         min_length=8,
@@ -178,6 +178,14 @@ class MerchantOnboardingRequest(BaseModel):
         description="Optional merchant login password (omit for onboarded merchants without login yet)",
         json_schema_extra={"example": "MerchantPass123"},
     )
+
+    @field_validator("email")
+    @classmethod
+    def validate_onboarding_email(cls, v: str) -> str:
+        clean = (v or "").strip().lower()
+        if not clean or not re.match(EMAIL_REGEX, clean):
+            raise ValueError("Valid business email address is required for merchant login & onboarding.")
+        return clean
 
     # Social & Web links
     website: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://example.com"})
