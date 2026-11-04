@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models.merchant import MerchantProfile
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.db.models.wallet import (
     MerchantSaleQR,
     SaleQRStatus,
@@ -317,7 +317,7 @@ class WalletService:
             user = (
                 db.query(User)
                 .filter(
-                    User.role.in_(['admin', 'superadmin', UserRole.ADMIN, UserRole.SUPERADMIN]),
+                    User.role.in_(['admin', 'superadmin', 'ADMIN', 'SUPER_ADMIN', UserRole.ADMIN, UserRole.SUPER_ADMIN]),
                     User.is_active == True,
                 )
                 .order_by(User.id.asc())
