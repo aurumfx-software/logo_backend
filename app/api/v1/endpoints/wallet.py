@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -33,6 +35,7 @@ from app.schemas.wallet import (
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
     AdminWalletTransactionListResponse,
+    AdminWalletTransactionResponse,
     WalletWithdrawalStatusResponse,
 )
 from app.services.wallet_service import WalletService
@@ -40,12 +43,56 @@ from app.services.wallet_service import WalletService
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
 
 
-@router.get("/admin/transactions", response_model=AdminWalletTransactionListResponse,
-            summary="Admin: list complete wallet transactions")
-def admin_wallet_transactions(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
-                              admin_user: User = Depends(require_admin), db: Session = Depends(get_db)):
-    items, total = WalletService.admin_list_transactions(db, page, page_size)
-    return AdminWalletTransactionListResponse(data=items, total=total, page=page, page_size=page_size)
+@router.get(
+    "/admin/transactions",
+    response_model=AdminWalletTransactionListResponse,
+    summary="Admin: platform cash table and all wallet transactions",
+    description=(
+        "Returns two tables. platform_cash is money the platform received when a merchant "
+        "tops up their wallet (RECEIVED) and money deducted when a user withdraws (DEDUCTED). "
+        "data is every wallet transaction. Open one row with GET /wallet/admin/transactions/{transaction_id}."
+    ),
+)
+def admin_wallet_transactions(
+    page: int = Query(1, ge=1, description="Page for the all-transactions table"),
+    page_size: int = Query(20, ge=1, le=100),
+    cash_page: int = Query(1, ge=1, description="Page for the platform cash table"),
+    cash_page_size: int = Query(20, ge=1, le=100),
+    transaction_type: Optional[str] = Query(None, description="Filter the all-transactions table by type"),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    items, total = WalletService.admin_list_transactions(
+        db, page, page_size, transaction_type=transaction_type
+    )
+    cash_items, cash_total, total_received, total_deducted = WalletService.list_admin_platform_cash(
+        db, cash_page, cash_page_size
+    )
+    return AdminWalletTransactionListResponse(
+        data=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        platform_cash=cash_items,
+        platform_cash_total=cash_total,
+        platform_cash_page=cash_page,
+        platform_cash_page_size=cash_page_size,
+        total_received=total_received,
+        total_deducted=total_deducted,
+    )
+
+
+@router.get(
+    "/admin/transactions/{transaction_id}",
+    response_model=AdminWalletTransactionResponse,
+    summary="Admin: wallet transaction details by id",
+)
+def admin_wallet_transaction_detail(
+    transaction_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return WalletService.get_admin_transaction(db, transaction_id)
 
 
 @router.get(
@@ -315,11 +362,11 @@ def get_admin_wallet_summary(
 
 
 @router.get(
-    "/admin/transactions",
+    "/admin/transactions/platform-ledger",
     response_model=AdminWalletTransactionsResponse,
-    summary="Admin: List all wallet transactions with pagination",
+    summary="Admin: company wallet commission ledger (simplified rows)",
 )
-def list_admin_wallet_transactions(
+def list_admin_platform_wallet_transactions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_admin: User = Depends(require_admin),

@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -51,6 +51,7 @@ from app.schemas.wallet import (
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
     WalletWithdrawalStatusResponse,
+    AdminPlatformCashItem,
     AdminWalletLedgerLineResponse,
     AdminWalletTransactionResponse,
 )
@@ -178,53 +179,176 @@ class WalletService:
         return entry
 
     @staticmethod
-    def admin_list_transactions(db: Session, page: int, page_size: int):
-        query = db.query(WalletTransaction)
-        total = query.count()
-        txns = query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
-        data = []
-        for txn in txns:
-            initiator = txn.initiated_by
-            initiator_profile = db.query(MerchantProfile).filter_by(user_id=initiator.id).first() if initiator else None
-            provider_status = provider_id = failure_reason = bank_name = bank_last4 = bank_ifsc = None
-            if txn.transaction_type == WalletTransactionType.WALLET_TOPUP:
-                topup = db.query(WalletTopupOrder).filter_by(wallet_transaction_group_id=txn.group_id).first()
-                if topup:
-                    provider_status, provider_id = topup.status.value, topup.razorpay_payment_id or topup.razorpay_order_id
-            elif txn.transaction_type == WalletTransactionType.WALLET_WITHDRAWAL:
-                withdrawal = db.query(WalletWithdrawal).filter_by(wallet_transaction_group_id=txn.group_id).first()
-                if withdrawal:
-                    provider_status, provider_id = withdrawal.status, withdrawal.payout_id
-                    failure_reason, bank_name, bank_last4, bank_ifsc = withdrawal.failure_reason, withdrawal.bank_account_holder_name, withdrawal.bank_account_last4, withdrawal.bank_ifsc
-            lines = []
-            for row in sorted(txn.ledger_entries, key=lambda item: item.id):
-                wallet = row.wallet
-                user = wallet.user
-                cp_wallet = row.counterparty_wallet
-                cp_user = cp_wallet.user if cp_wallet else None
-                profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
-                cp_profile = db.query(MerchantProfile).filter_by(user_id=cp_user.id).first() if cp_user else None
-                lines.append(AdminWalletLedgerLineResponse(
-                    id=row.id, direction=row.direction.value, amount=WalletService._money(row.amount),
-                    balance_after=WalletService._money(row.balance_after), wallet_id=wallet.id,
-                    wallet_type=wallet.wallet_type.value, user_id=user.id if user else None,
+    def _serialize_admin_transaction(db: Session, txn: WalletTransaction) -> AdminWalletTransactionResponse:
+        initiator = txn.initiated_by
+        initiator_profile = (
+            db.query(MerchantProfile).filter_by(user_id=initiator.id).first() if initiator else None
+        )
+        provider_status = provider_id = failure_reason = bank_name = bank_last4 = bank_ifsc = None
+        if txn.transaction_type == WalletTransactionType.WALLET_TOPUP:
+            topup = db.query(WalletTopupOrder).filter_by(wallet_transaction_group_id=txn.group_id).first()
+            if topup:
+                provider_status = topup.status.value
+                provider_id = topup.razorpay_payment_id or topup.razorpay_order_id
+        elif txn.transaction_type in (
+            WalletTransactionType.WALLET_WITHDRAWAL,
+            WalletTransactionType.WITHDRAWAL,
+        ):
+            withdrawal = (
+                db.query(WalletWithdrawal)
+                .filter(WalletWithdrawal.transaction_group_id == txn.group_id)
+                .first()
+            )
+            if withdrawal:
+                provider_status = (
+                    withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+                )
+                provider_id = withdrawal.payout_mode
+                failure_reason = withdrawal.admin_note
+                bank_name = withdrawal.account_holder_name
+                bank_last4 = (withdrawal.account_number or "")[-4:] or None
+                bank_ifsc = withdrawal.ifsc
+        lines = []
+        for row in sorted(txn.ledger_entries, key=lambda item: item.id):
+            wallet = row.wallet
+            user = wallet.user
+            cp_wallet = row.counterparty_wallet
+            cp_user = cp_wallet.user if cp_wallet else None
+            profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
+            cp_profile = db.query(MerchantProfile).filter_by(user_id=cp_user.id).first() if cp_user else None
+            lines.append(
+                AdminWalletLedgerLineResponse(
+                    id=row.id,
+                    direction=row.direction.value,
+                    amount=WalletService._money(row.amount),
+                    balance_after=WalletService._money(row.balance_after),
+                    wallet_id=wallet.id,
+                    wallet_type=wallet.wallet_type.value,
+                    user_id=user.id if user else None,
                     user_name=(profile.business_name if profile else user.name) if user else None,
-                    user_email=user.email if user else None, counterparty_wallet_id=cp_wallet.id if cp_wallet else None,
+                    user_email=user.email if user else None,
+                    counterparty_wallet_id=cp_wallet.id if cp_wallet else None,
                     counterparty_user_id=cp_user.id if cp_user else None,
-                    counterparty_name=(cp_profile.business_name if cp_profile else cp_user.name) if cp_user else ("Admin wallet" if cp_wallet and cp_wallet.wallet_type == WalletType.COMPANY else None),
-                    counterparty_email=cp_user.email if cp_user else None, note=row.note, created_at=row.created_at,
-                ))
-            data.append(AdminWalletTransactionResponse(
-                id=txn.id, transaction_group_id=txn.group_id, transaction_type=txn.transaction_type.value,
-                amount=WalletService._money(txn.amount), currency=txn.currency, description=txn.description,
-                initiated_by_user_id=initiator.id if initiator else None,
-                initiated_by_name=(initiator_profile.business_name if initiator_profile else initiator.name) if initiator else None,
-                initiated_by_email=initiator.email if initiator else None, reference_id=txn.reference_id,
-                provider_status=provider_status, provider_id=provider_id, failure_reason=failure_reason,
-                bank_account_holder_name=bank_name, bank_account_last4=bank_last4, bank_ifsc=bank_ifsc,
-                created_at=txn.created_at, ledger_entries=lines,
-            ))
+                    counterparty_name=(
+                        (cp_profile.business_name if cp_profile else cp_user.name)
+                        if cp_user
+                        else ("Admin wallet" if cp_wallet and cp_wallet.wallet_type == WalletType.COMPANY else None)
+                    ),
+                    counterparty_email=cp_user.email if cp_user else None,
+                    note=row.note,
+                    created_at=row.created_at,
+                )
+            )
+        return AdminWalletTransactionResponse(
+            id=txn.id,
+            transaction_group_id=txn.group_id,
+            transaction_type=txn.transaction_type.value,
+            amount=WalletService._money(txn.amount),
+            currency=txn.currency,
+            description=txn.description,
+            initiated_by_user_id=initiator.id if initiator else None,
+            initiated_by_name=(
+                (initiator_profile.business_name if initiator_profile else initiator.name) if initiator else None
+            ),
+            initiated_by_email=initiator.email if initiator else None,
+            reference_id=txn.reference_id,
+            provider_status=provider_status,
+            provider_id=provider_id,
+            failure_reason=failure_reason,
+            bank_account_holder_name=bank_name,
+            bank_account_last4=bank_last4,
+            bank_ifsc=bank_ifsc,
+            created_at=txn.created_at,
+            ledger_entries=lines,
+        )
+
+    @staticmethod
+    def admin_list_transactions(
+        db: Session,
+        page: int,
+        page_size: int,
+        transaction_type: Optional[str] = None,
+    ):
+        query = db.query(WalletTransaction)
+        if transaction_type and transaction_type.strip().lower() not in ("all", ""):
+            type_norm = transaction_type.strip().upper().replace("-", "_").replace(" ", "_")
+            try:
+                txn_type = WalletTransactionType(type_norm)
+                query = query.filter(WalletTransaction.transaction_type == txn_type)
+            except ValueError:
+                from sqlalchemy import false
+
+                query = query.filter(false())
+        total = query.count()
+        txns = (
+            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        data = [WalletService._serialize_admin_transaction(db, txn) for txn in txns]
         return data, total
+
+    @staticmethod
+    def list_admin_platform_cash(db: Session, page: int, page_size: int):
+        """Merchant wallet top-ups (money in) and user withdrawals (money out)."""
+        merchant_user_ids = db.query(MerchantProfile.user_id)
+        received_filter = and_(
+            WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP,
+            WalletTransaction.initiated_by_user_id.in_(merchant_user_ids),
+        )
+        deducted_filter = WalletTransaction.transaction_type.in_(
+            [WalletTransactionType.WITHDRAWAL, WalletTransactionType.WALLET_WITHDRAWAL]
+        )
+        query = db.query(WalletTransaction).filter(or_(received_filter, deducted_filter))
+        total = query.count()
+        total_received = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(received_filter)
+            .scalar()
+        )
+        total_deducted = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(deducted_filter)
+            .scalar()
+        )
+        rows = (
+            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        items = []
+        for txn in rows:
+            user = txn.initiated_by
+            profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
+            is_topup = txn.transaction_type == WalletTransactionType.WALLET_TOPUP
+            items.append(
+                AdminPlatformCashItem(
+                    id=txn.id,
+                    transaction_group_id=txn.group_id,
+                    movement="RECEIVED" if is_topup else "DEDUCTED",
+                    transaction_type=txn.transaction_type.value,
+                    amount=WalletService._money(txn.amount),
+                    party_name=(profile.business_name if profile else user.name) if user else None,
+                    party_email=user.email if user else None,
+                    party_phone=user.phone if user else None,
+                    party_role="merchant" if profile else "user",
+                    description=txn.description,
+                    created_at=txn.created_at,
+                )
+            )
+        return items, total, total_received, total_deducted
+
+    @staticmethod
+    def get_admin_transaction(db: Session, transaction_id: int) -> AdminWalletTransactionResponse:
+        txn = db.query(WalletTransaction).filter(WalletTransaction.id == transaction_id).first()
+        if not txn:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transaction not found.",
+            )
+        return WalletService._serialize_admin_transaction(db, txn)
 
     @staticmethod
     def _sum_money(value) -> Decimal:

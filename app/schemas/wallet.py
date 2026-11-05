@@ -466,10 +466,32 @@ class AdminWalletTransactionResponse(BaseModel):
     ledger_entries: List[AdminWalletLedgerLineResponse] = []
 
 
+class AdminPlatformCashItem(BaseModel):
+    """One row in the admin cash table: merchant top-up received or user withdrawal deducted."""
+
+    id: int
+    transaction_group_id: str
+    movement: str
+    transaction_type: str
+    amount: Decimal
+    party_name: Optional[str] = None
+    party_email: Optional[str] = None
+    party_phone: Optional[str] = None
+    party_role: str
+    description: Optional[str] = None
+    created_at: datetime
+
+
 class AdminWalletTransactionListResponse(BaseModel):
     success: bool = True
     data: List[AdminWalletTransactionResponse] = []
     total: int = 0
     page: int = 1
     page_size: int = 20
+    platform_cash: List[AdminPlatformCashItem] = []
+    platform_cash_total: int = 0
+    platform_cash_page: int = 1
+    platform_cash_page_size: int = 20
+    total_received: Decimal = Decimal("0.00")
+    total_deducted: Decimal = Decimal("0.00")
 

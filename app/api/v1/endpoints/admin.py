@@ -30,12 +30,49 @@ from app.schemas.response import (
     list_response,
     success_response,
 )
+from app.schemas.wallet import AdminWalletTransactionResponse
 from app.services.activity_log_service import ActivityLogService
 from app.services.admin_service import AdminService
 from app.services.logo_service import LogoService
 from app.services.merchant_service import MerchantService
+from app.services.wallet_service import WalletService
 
 router = APIRouter(prefix="/admin", tags=["Admin Operations"])
+
+
+@router.get(
+    "/transactions",
+    response_model=StandardListResponse[AdminWalletTransactionResponse],
+    summary="List all wallet transactions",
+    description=(
+        "Paginated list of every wallet transaction (transfers, QR cashback, top-ups, "
+        "withdrawals, admin credits/debits) with ledger line details. "
+        "Optional filter: transaction_type (e.g. P2P_TRANSFER, CASHBACK_REDEMPTION)."
+    ),
+)
+def list_all_wallet_transactions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    transaction_type: Optional[str] = Query(
+        None,
+        description="Filter by type: P2P_TRANSFER, CASHBACK_REDEMPTION, ADMIN_CREDIT, WALLET_TOPUP, etc.",
+    ),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    items, total = WalletService.admin_list_transactions(
+        db=db,
+        page=page,
+        page_size=page_size,
+        transaction_type=transaction_type,
+    )
+    return list_response(
+        data=items,
+        total_items=total,
+        page=page,
+        page_size=page_size,
+        message="Wallet transactions retrieved successfully",
+    )
 
 
 # --- Admin Dashboard ---

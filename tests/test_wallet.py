@@ -311,3 +311,85 @@ def test_websocket_merchant_receives_sale_redeemed(client: TestClient, db_sessio
         assert event["merchant_wallet_balance"] == "950.00"
         assert event["merchant_debit"] == "50.00"
         assert event["transaction_group_id"]
+
+
+def test_admin_list_all_transactions(client: TestClient, db_session: Session):
+    sender = _create_user(db_session, "txsender@example.com", "Sender")
+    recipient = _create_user(db_session, "txrecipient@example.com", "Recipient")
+    admin = _create_user(db_session, "txadmin@example.com", "Admin", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": sender.id, "amount": "200.00", "operation": "credit", "note": "seed"},
+    )
+    sender_headers = _auth_headers(client, sender.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/transfer",
+        headers=sender_headers,
+        json={"to_user_id": recipient.id, "amount": "25.00", "note": "pay"},
+    )
+
+    list_res = client.get("/api/v1/admin/transactions", headers=admin_headers)
+    assert list_res.status_code == 200
+    body = list_res.json()
+    assert body["success"] is True
+    assert body["meta"]["total_items"] >= 2
+    assert len(body["data"]) >= 2
+    assert body["data"][0].get("transaction_type") is not None
+
+    merchant = _create_merchant(db_session, "txmerchant@example.com")
+    merchant_headers = _auth_headers(client, merchant.email, "Password123!")
+    topup_res = client.post(
+        "/api/v1/wallet/topup",
+        headers=merchant_headers,
+        json={"amount": "150.00", "payment_method": "UPI", "note": "merchant add funds"},
+    )
+    assert topup_res.status_code == 200
+
+    withdraw_res = client.post(
+        "/api/v1/wallet/withdrawals",
+        headers=sender_headers,
+        json={
+            "amount": "40.00",
+            "account_holder_name": "Sender User",
+            "account_number": "1234567890",
+            "ifsc": "HDFC0001234",
+        },
+    )
+    assert withdraw_res.status_code == 201
+
+    wallet_res = client.get("/api/v1/wallet/admin/transactions", headers=admin_headers)
+    assert wallet_res.status_code == 200
+    wallet_body = wallet_res.json()
+    assert wallet_body["total"] >= 2
+    movements = {row["movement"] for row in wallet_body["platform_cash"]}
+    assert "RECEIVED" in movements
+    assert "DEDUCTED" in movements
+    assert Decimal(wallet_body["total_received"]) >= Decimal("150.00")
+    assert Decimal(wallet_body["total_deducted"]) >= Decimal("40.00")
+
+    txn_id = wallet_body["data"][0]["id"]
+    detail_res = client.get(f"/api/v1/wallet/admin/transactions/{txn_id}", headers=admin_headers)
+    assert detail_res.status_code == 200
+    assert detail_res.json()["id"] == txn_id
+    assert "ledger_entries" in detail_res.json()
+
+    missing = client.get("/api/v1/wallet/admin/transactions/999999", headers=admin_headers)
+    assert missing.status_code == 404
+
+    filtered = client.get(
+        "/api/v1/admin/transactions",
+        headers=admin_headers,
+        params={"transaction_type": "P2P_TRANSFER"},
+    )
+    assert filtered.status_code == 200
+    assert filtered.json()["meta"]["total_items"] >= 1
+    for row in filtered.json()["data"]:
+        assert row["transaction_type"] == "P2P_TRANSFER"
+
+    member = _create_user(db_session, "txmember@example.com", "Member")
+    member_headers = _auth_headers(client, member.email, "Password123!")
+    forbidden = client.get("/api/v1/admin/transactions", headers=member_headers)
+    assert forbidden.status_code == 403
