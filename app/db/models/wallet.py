@@ -228,26 +228,6 @@ class WalletTopupOrder(Base):
     merchant_profile = relationship("MerchantProfile", backref="wallet_topups")
 
 
-class WalletWithdrawal(Base):
-    __tablename__ = "wallet_withdrawals"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    payout_id = Column(String(64), nullable=True, unique=True, index=True)
-    amount = Column(Numeric(18, 2), nullable=False)
-    currency = Column(String(3), default="INR", nullable=False)
-    status = Column(String(24), default="PROCESSING", nullable=False, index=True)
-    failure_reason = Column(Text, nullable=True)
-    bank_account_holder_name = Column(String(100), nullable=False)
-    bank_account_last4 = Column(String(4), nullable=False)
-    bank_ifsc = Column(String(11), nullable=False)
-    wallet_transaction_group_id = Column(String(36), nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-
-    user = relationship("User")
-
-
 class RewardClaimStatus(str, enum.Enum):
     PENDING = "PENDING"
     REDEEMED = "REDEEMED"
