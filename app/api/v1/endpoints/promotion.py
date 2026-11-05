@@ -1,5 +1,6 @@
+import logging
 import os
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -8,7 +9,11 @@ from app.db.database import get_db
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User
 from app.schemas.promotion import (
+    PROMOTION_MEDIA_TYPE_OPTIONS,
+    PROMOTION_PLACEMENT_OPTIONS,
+    PROMOTION_TYPE_OPTIONS,
     PromotionCreateRequest,
+    PromotionOptionTypesResponse,
     PromotionResponse,
     PromotionUpdateRequest,
 )
@@ -21,6 +26,8 @@ from app.schemas.response import (
 from app.services.promotion_service import PromotionService
 from app.services.notification_service import NotificationService
 from app.services.storage_service import storage_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/promotions", tags=["Promotions Management"])
 
@@ -75,15 +82,47 @@ def list_active_hero_promotions(
     )
 
 
+def _promotion_option_types_payload() -> PromotionOptionTypesResponse:
+    return PromotionOptionTypesResponse(
+        types=PROMOTION_TYPE_OPTIONS,
+        option_types=PROMOTION_TYPE_OPTIONS,
+        placements=PROMOTION_PLACEMENT_OPTIONS,
+        media_types=PROMOTION_MEDIA_TYPE_OPTIONS,
+    )
+
+
+@router.get(
+    "/option-types",
+    response_model=StandardResponse[PromotionOptionTypesResponse],
+    summary="Promotion dropdown option types",
+    description="Returns promotion type, placement, and media type options for admin/merchant forms.",
+)
+@router.get(
+    "/types",
+    response_model=StandardResponse[PromotionOptionTypesResponse],
+    summary="Promotion option types (alias)",
+    include_in_schema=False,
+)
+@router.get(
+    "/options",
+    response_model=StandardResponse[PromotionOptionTypesResponse],
+    summary="Promotion form options (alias)",
+    include_in_schema=False,
+)
+def get_promotion_option_types():
+    return success_response(
+        data=_promotion_option_types_payload(),
+        message="Promotion option types retrieved successfully",
+    )
+
+
 @router.get("/merchant/{merchant_id}", response_model=StandardListResponse[PromotionResponse], summary="List promotions for a merchant")
 def list_merchant_promotions(
     merchant_id: int,
     db: Session = Depends(get_db),
 ):
     """Fetch all promotions submitted by a specific merchant to track approval status."""
-    promos = db.query(PromotionService.get_all(db)).filter(Promotion.merchant_id == merchant_id).all() if False else [
-        p for p in PromotionService.get_all(db) if p.merchant_id == merchant_id
-    ]
+    promos = [p for p in PromotionService.get_all(db) if p.merchant_id == merchant_id]
     return list_response(
         data=[PromotionResponse.model_validate(p) for p in promos],
         total_items=len(promos),
@@ -145,7 +184,7 @@ def create_promotion(
             data={"promo_id": promo.id, "merchant_id": promo.merchant_id, "title": promo.title},
         )
     except Exception as err:
-        print("Admin notification error on promo create:", err)
+        logger.exception("Admin notification failed on promotion create: %s", err)
 
     return success_response(
         data=PromotionResponse.model_validate(promo),
@@ -175,7 +214,7 @@ def approve_promotion(
                     data={"promo_id": promo.id},
                 )
     except Exception as err:
-        print("Notification error on promo approve:", err)
+        logger.exception("Notification failed on promotion approve: %s", err)
 
     return success_response(
         data=PromotionResponse.model_validate(promo),
@@ -207,7 +246,7 @@ def reject_promotion(
                     data={"promo_id": promo.id},
                 )
     except Exception as err:
-        print("Notification error on promo reject:", err)
+        logger.exception("Notification failed on promotion reject: %s", err)
 
     return success_response(
         data=PromotionResponse.model_validate(promo),

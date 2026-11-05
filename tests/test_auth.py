@@ -633,6 +633,30 @@ def test_phone_login_legacy_super_admin_role_string(client: TestClient, db_sessi
     assert "admin portal" in res.json()["message"].lower()
 
 
+def test_otp_types_and_type_alias_in_send(client: TestClient):
+    types_res = client.get("/api/v1/otp/types")
+    assert types_res.status_code == 200
+    payload = types_res.json()
+    assert len(payload["purposes"]) >= 4
+    assert payload["types"] == payload["purposes"]
+
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "OTP Type User",
+            "email": "otp.type@example.com",
+            "phone": "9811111111",
+            "password": "Password12345",
+        },
+    )
+    send_res = client.post(
+        "/api/v1/otp/send",
+        json={"email": "otp.type@example.com", "type": "ACCOUNT_VERIFICATION"},
+    )
+    assert send_res.status_code == 200
+    assert send_res.json()["dev_otp"]
+
+
 def test_otp_send_and_verify_by_phone(client: TestClient):
     client.post(
         "/api/v1/auth/register",

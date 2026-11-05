@@ -41,8 +41,12 @@ class OTPService:
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Email delivery is not configured. Set RESEND_API_KEY and RESEND_FROM_EMAIL.",
                     )
-                logger.info(f"[DEV OTP] Destination (Email): {clean_target} | Purpose: {purpose.value} | OTP: {otp}")
-                print(f"\n>>> [DEV OTP NOTIFICATION] To: {clean_target} | Purpose: {purpose.value} | CODE: {otp} <<<\n")
+                logger.info(
+                    "[DEV OTP] Email: %s | Purpose: %s | Code: %s",
+                    clean_target,
+                    purpose.value,
+                    otp,
+                )
             return
 
         # ── 2. PHONE / SMS CHANNEL ──
@@ -65,8 +69,13 @@ class OTPService:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="SMS delivery provider is not configured on this server.",
                 )
-            logger.info(f"[DEV OTP] Destination (Phone): {clean_target} ({mobile}) | Purpose: {purpose.value} | OTP: {otp}")
-            print(f"\n>>> [DEV OTP NOTIFICATION] To: {clean_target} ({mobile}) | Purpose: {purpose.value} | CODE: {otp} <<<\n")
+            logger.info(
+                "[DEV OTP] Phone: %s (%s) | Purpose: %s | Code: %s",
+                clean_target,
+                mobile,
+                purpose.value,
+                otp,
+            )
 
     @staticmethod
     def _send_email_resend(recipient: str, otp: str, purpose: OTPPurpose) -> None:

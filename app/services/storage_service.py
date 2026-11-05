@@ -1,4 +1,5 @@
 import base64
+import logging
 import mimetypes
 import os
 import uuid
@@ -13,6 +14,8 @@ except ImportError:
     Config = None
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class SpacesStorageService:
@@ -53,7 +56,7 @@ class SpacesStorageService:
                     config=Config(s3={"addressing_style": "virtual"}),
                 )
             except Exception as e:
-                print(f"[SpacesStorageService] Error initializing boto3 client: {e}")
+                logger.warning("Failed to initialize Spaces client: %s", e)
                 self._client = None
         return self._client
 
@@ -96,10 +99,10 @@ class SpacesStorageService:
                     ContentType=content_type,
                 )
                 public_url = f"{self.cdn_base_url}/{unique_key}"
-                print(f"[SpacesStorageService] Uploaded to Spaces: {public_url}")
+                logger.info("Uploaded to Spaces: %s", public_url)
                 return public_url
             except Exception as e:
-                print(f"[SpacesStorageService] Spaces upload failed, falling back to local: {e}")
+                logger.warning("Spaces upload failed, falling back to local storage: %s", e)
 
         # Local fallback if Spaces is unavailable
         local_dir = os.path.join("uploads", folder)
@@ -179,7 +182,7 @@ class SpacesStorageService:
                 content_type=content_type,
             )
         except Exception as e:
-            print(f"[SpacesStorageService] Error decoding base64 media: {e}")
+            logger.warning("Failed to decode base64 media: %s", e)
             return None
 
 

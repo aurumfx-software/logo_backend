@@ -25,6 +25,22 @@ def test_cors_preflight_allows_browser_origin(client: TestClient):
     )
 
 
+def test_cors_preflight_public_ip_frontend(client: TestClient):
+    """Frontend on http://168.144.18.149:5173 calling API on :8000 must pass OPTIONS."""
+    origin = "http://168.144.18.149:5173"
+    response = client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
+    assert "POST" in (response.headers.get("access-control-allow-methods") or "")
+
+
 def test_cors_preflight_sslip_frontend_port(client: TestClient):
     origin = "https://168.144.18.149.sslip.io:8443"
     response = client.options(

@@ -6,6 +6,19 @@ from app.db.models.user import User
 from app.core.security import hash_password
 
 
+def test_promotion_option_types_api(client: TestClient):
+    for path in ("/api/v1/promotions/option-types", "/api/v1/promotions/types", "/api/v1/promotions/options"):
+        res = client.get(path)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["success"] is True
+        data = body["data"]
+        assert "Featured" in data["types"]
+        assert data["option_types"] == data["types"]
+        assert "Home Top" in data["placements"]
+        assert "image" in data["media_types"]
+
+
 def test_list_promotions_active(client: TestClient, db_session):
     active = Promotion(
         title="Weekend Sale",

@@ -354,12 +354,10 @@ class AuthService:
         merchant = (
             db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
         )
-        if merchant:
-            if not merchant.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Merchant account is inactive. Please contact support.",
-                )
+        # Merchant portal login uses merchant credentials; customers/field staff with a
+        # linked profile (e.g. favorites) keep using their user password.
+        uses_merchant_credentials = merchant is not None and user.role == UserRole.MERCHANT
+        if uses_merchant_credentials:
             if not merchant.password_hash:
                 raise MerchantService._password_setup_required_exception()
             if not verify_password(login_data.password, merchant.password_hash):

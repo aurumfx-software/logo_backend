@@ -222,7 +222,10 @@ class AdminWalletAdjustRequest(BaseModel):
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = Field(None, max_length=500)
     operation: str = Field("credit", pattern="^(credit|debit)$")
-    claim_mode: bool = Field(True, description="When true for credits, sends to Redeem section until claimed")
+    claim_mode: bool = Field(
+        False,
+        description="When true for credits, sends to Redeem section until claimed instead of direct wallet credit",
+    )
 
     @field_validator("user_id", mode="before")
     @classmethod

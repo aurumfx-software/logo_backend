@@ -1,10 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api.deps import authenticate_websocket_user
-from app.db.database import SessionLocal
+from app.db.database import get_db
 from app.services.wallet_ws_manager import wallet_ws_manager
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/wallet", tags=["Wallet"])
 async def wallet_realtime_socket(
     websocket: WebSocket,
     token: str = Query(..., description="JWT access token (same as Authorization Bearer)"),
+    db: Session = Depends(get_db),
 ) -> None:
     """
     Realtime wallet events (sale QR redeemed, balances).
@@ -31,7 +32,6 @@ async def wallet_realtime_socket(
 
     Server push: ``{"event": "sale_qr.redeemed", ...}``
     """
-    db: Session = SessionLocal()
     conn = None
     try:
         user = authenticate_websocket_user(token=token, db=db)
@@ -45,4 +45,3 @@ async def wallet_realtime_socket(
     finally:
         if conn is not None:
             wallet_ws_manager.disconnect(conn)
-        db.close()

@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import WebSocket
 
@@ -25,7 +25,7 @@ class WalletWSConnection:
 
 class WalletWSManager:
     def __init__(self) -> None:
-        self._connections: Dict[int, Set[WalletWSConnection]] = {}
+        self._connections: Dict[int, List[WalletWSConnection]] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def bind_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -33,7 +33,7 @@ class WalletWSManager:
 
     async def connect(self, websocket: WebSocket, user_id: int) -> WalletWSConnection:
         conn = WalletWSConnection(websocket=websocket, user_id=user_id)
-        self._connections.setdefault(user_id, set()).add(conn)
+        self._connections.setdefault(user_id, []).append(conn)
         await self._send_json(
             conn,
             {
@@ -48,7 +48,10 @@ class WalletWSManager:
         bucket = self._connections.get(conn.user_id)
         if not bucket:
             return
-        bucket.discard(conn)
+        try:
+            bucket.remove(conn)
+        except ValueError:
+            pass
         if not bucket:
             self._connections.pop(conn.user_id, None)
 
@@ -97,7 +100,7 @@ class WalletWSManager:
 
     async def _broadcast_to_merchant(self, merchant_user_id: int, message: Dict[str, Any]) -> None:
         token = message.get("token")
-        for conn in list(self._connections.get(merchant_user_id, set())):
+        for conn in list(self._connections.get(merchant_user_id, [])):
             if conn.subscribed_tokens and token and token not in conn.subscribed_tokens:
                 continue
             try:

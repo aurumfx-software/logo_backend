@@ -8,6 +8,53 @@ from app.db.models.otp import OTPPurpose
 
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
 
+OTP_PURPOSE_ALIASES = {
+    "VERIFY": OTPPurpose.ACCOUNT_VERIFICATION,
+    "ACCOUNT_VERIFY": OTPPurpose.ACCOUNT_VERIFICATION,
+    "SIGNUP": OTPPurpose.ACCOUNT_VERIFICATION,
+    "REGISTER": OTPPurpose.ACCOUNT_VERIFICATION,
+    "RESET": OTPPurpose.PASSWORD_RESET,
+    "FORGOT_PASSWORD": OTPPurpose.PASSWORD_RESET,
+    "PASSWORD": OTPPurpose.PASSWORD_RESET,
+    "MERCHANT": OTPPurpose.MERCHANT_LOGIN,
+    "MERCHANT_OTP": OTPPurpose.MERCHANT_LOGIN,
+    "CUSTOMER": OTPPurpose.CUSTOMER_LOGIN,
+    "LOGIN": OTPPurpose.CUSTOMER_LOGIN,
+}
+
+
+def coerce_otp_purpose(value: Any) -> OTPPurpose:
+    if isinstance(value, OTPPurpose):
+        return value
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return OTPPurpose.ACCOUNT_VERIFICATION
+    raw = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+    if raw in OTP_PURPOSE_ALIASES:
+        return OTP_PURPOSE_ALIASES[raw]
+    try:
+        return OTPPurpose(raw)
+    except ValueError as exc:
+        allowed = ", ".join(p.value for p in OTPPurpose)
+        raise ValueError(f"Invalid OTP purpose '{value}'. Allowed: {allowed}") from exc
+
+
+def normalize_otp_request_payload(data: Any) -> Any:
+    if isinstance(data, dict):
+        for alias in ("type", "otp_type", "otpType", "option_type", "optionType"):
+            if alias in data and "purpose" not in data:
+                data["purpose"] = data[alias]
+    return data
+
+
+class OTPPurposeOption(BaseModel):
+    value: str
+    label: str
+
+
+class OTPPurposeListResponse(BaseModel):
+    purposes: List[OTPPurposeOption]
+    types: List[OTPPurposeOption]
+
 
 class UserBase(BaseModel):
     email: str = Field(..., json_schema_extra={"example": "test@example.com"})
@@ -310,6 +357,14 @@ class OTPChannelRequest(BaseModel):
         json_schema_extra={"example": "ACCOUNT_VERIFICATION"},
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_purpose_aliases(cls, data: Any) -> Any:
+        data = normalize_otp_request_payload(data)
+        if isinstance(data, dict) and "purpose" in data:
+            data["purpose"] = coerce_otp_purpose(data["purpose"])
+        return data
+
     @field_validator("email")
     @classmethod
     def validate_email_optional(cls, v: Optional[str]) -> Optional[str]:
@@ -350,6 +405,14 @@ class SendOTPRequest(UserBase):
         json_schema_extra={"example": "ACCOUNT_VERIFICATION"},
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_purpose_aliases(cls, data: Any) -> Any:
+        data = normalize_otp_request_payload(data)
+        if isinstance(data, dict) and "purpose" in data:
+            data["purpose"] = coerce_otp_purpose(data["purpose"])
+        return data
+
 
 class SendOTPResponse(BaseModel):
     message: str
@@ -363,6 +426,14 @@ class VerifyOTPRequest(UserBase):
         default=OTPPurpose.ACCOUNT_VERIFICATION,
         json_schema_extra={"example": "ACCOUNT_VERIFICATION"},
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_purpose_aliases(cls, data: Any) -> Any:
+        data = normalize_otp_request_payload(data)
+        if isinstance(data, dict) and "purpose" in data:
+            data["purpose"] = coerce_otp_purpose(data["purpose"])
+        return data
 
 
 class VerifyOTPResponse(BaseModel):

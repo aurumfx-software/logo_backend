@@ -1020,7 +1020,7 @@ class WalletService:
         operation: str,
         note: Optional[str] = None,
         merchant_id: Optional[int] = None,
-        claim_mode: bool = True,
+        claim_mode: bool = False,
     ) -> Tuple[Optional[WalletResponse], Optional[str], Optional[WalletTransactionType], Optional[int], Optional[str]]:
         amount = WalletService._money(amount)
 
