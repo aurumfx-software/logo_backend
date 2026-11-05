@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -594,4 +595,16 @@ class AdminService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User with ID {user_id} not found.",
             )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            # Keep stale deployed FK constraints from surfacing as an unhandled 500.
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "This user cannot be deleted because related records still "
+                    "reference the account. Update the database foreign-key "
+                    "constraints and retry."
+                ),
+            ) from exc

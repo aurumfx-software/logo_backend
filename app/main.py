@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.db.database import Base, engine
 import app.db.models  # Ensure all SQLAlchemy models are registered
 
 
@@ -46,8 +45,6 @@ async def lifespan(app: FastAPI):
     from app.services.wallet_ws_manager import wallet_ws_manager
 
     wallet_ws_manager.bind_event_loop(asyncio.get_running_loop())
-    # Ensure all tables exist in PostgreSQL (pgAdmin) on application start
-    Base.metadata.create_all(bind=engine)
     yield
 
 
