@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     RAZORPAY_WEBHOOK_SECRET: str = ""
     WALLET_TOPUP_MIN_AMOUNT: float = 100.0
     WALLET_TOPUP_MAX_AMOUNT: float = 100000.0
+    RAZORPAYX_KEY_ID: str = ""
+    RAZORPAYX_KEY_SECRET: str = ""
+    RAZORPAYX_ACCOUNT_NUMBER: str = ""
+    RAZORPAYX_WEBHOOK_SECRET: str = ""
 
     # Phone / SMS Providers (MSG91 preferred, Twilio fallback)
     MSG91_AUTH_KEY: str = ""

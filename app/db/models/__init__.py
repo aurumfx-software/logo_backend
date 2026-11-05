@@ -23,6 +23,7 @@ from app.db.models.wallet import (
     WalletTransaction,
     WalletTransactionType,
     WalletType,
+    WalletWithdrawal,
 )
 
 __all__ = [
@@ -48,6 +49,7 @@ __all__ = [
     "RevokedToken",
     "Wallet",
     "WalletType",
+    "WalletWithdrawal",
     "WalletTransaction",
     "WalletTransactionType",
     "WalletLedgerEntry",

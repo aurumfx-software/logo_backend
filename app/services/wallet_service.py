@@ -2,8 +2,12 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional, Tuple
 import uuid
+import hashlib
+import hmac
+import json
 
 from fastapi import HTTPException, status
+import httpx
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -21,6 +25,8 @@ from app.db.models.wallet import (
     WalletTransaction,
     WalletTransactionType,
     WalletType,
+    WalletTopupOrder,
+    WalletWithdrawal,
 )
 from app.schemas.wallet import (
     PlatformWalletResponse,
@@ -36,6 +42,10 @@ from app.schemas.wallet import (
     WalletTopUpResponse,
     WalletTransferRequest,
     WalletTransferResponse,
+    WalletWithdrawalRequest,
+    WalletWithdrawalResponse,
+    AdminWalletLedgerLineResponse,
+    AdminWalletTransactionResponse,
 )
 
 
@@ -161,6 +171,200 @@ class WalletService:
         return entry
 
     @staticmethod
+    def create_wallet_withdrawal(db: Session, user: User, payload: WalletWithdrawalRequest) -> WalletWithdrawalResponse:
+        if not settings.RAZORPAYX_KEY_ID or not settings.RAZORPAYX_KEY_SECRET or not settings.RAZORPAYX_ACCOUNT_NUMBER:
+            raise HTTPException(status_code=503, detail="Bank withdrawals are not configured.")
+        amount = WalletService._money(payload.amount)
+        phone = "".join(ch for ch in (user.phone or "") if ch.isdigit())
+        if len(phone) < 10:
+            raise HTTPException(status_code=400, detail="Add a valid phone number to your profile before withdrawing.")
+        user_wallet = WalletService._lock_wallet(db, WalletService.ensure_wallet_for_user(db, user.id).id)
+        company_wallet = WalletService._lock_wallet(db, WalletService.get_company_wallet(db).id)
+        if WalletService._money(user_wallet.balance) < amount:
+            raise HTTPException(status_code=400, detail="Insufficient wallet balance.")
+        if WalletService._money(company_wallet.balance) < amount:
+            raise HTTPException(status_code=400, detail="Insufficient admin wallet funds for payout.")
+        group_id = str(uuid.uuid4())
+        txn = WalletTransaction(
+            group_id=group_id, transaction_type=WalletTransactionType.WALLET_WITHDRAWAL,
+            amount=amount, currency=settings.WALLET_CURRENCY,
+            description="Wallet withdrawal to bank account", initiated_by_user_id=user.id,
+            reference_id=group_id,
+        )
+        db.add(txn)
+        db.flush()
+        WalletService._apply_ledger_line(db, txn, user_wallet, WalletLedgerDirection.DEBIT, amount,
+                                         counterparty_wallet_id=company_wallet.id, note="Bank withdrawal requested")
+        WalletService._apply_ledger_line(db, txn, company_wallet, WalletLedgerDirection.DEBIT, amount,
+                                         counterparty_wallet_id=user_wallet.id, note="Cash payout submitted")
+        withdrawal = WalletWithdrawal(
+            user_id=user.id, amount=amount, currency=settings.WALLET_CURRENCY, status="PROCESSING",
+            wallet_transaction_group_id=group_id, bank_account_holder_name=payload.account_holder_name,
+            bank_account_last4=payload.account_number.strip()[-4:], bank_ifsc=payload.ifsc.upper(),
+        )
+        db.add(withdrawal)
+        db.commit()
+        payout_payload = {
+            "account_number": settings.RAZORPAYX_ACCOUNT_NUMBER, "amount": int(amount * 100),
+            "currency": settings.WALLET_CURRENCY, "mode": payload.mode, "purpose": "cashback",
+            "queue_if_low_balance": False, "reference_id": group_id[:40], "narration": "Wallet cashback",
+            "fund_account": {
+                "account_type": "bank_account",
+                "bank_account": {"name": payload.account_holder_name, "ifsc": payload.ifsc.upper(), "account_number": payload.account_number.strip()},
+                "contact": {"name": user.name, "email": user.email, "contact": phone[-10:], "type": "customer"},
+            },
+        }
+        try:
+            response = httpx.post("https://api.razorpay.com/v1/payouts",
+                                  auth=(settings.RAZORPAYX_KEY_ID, settings.RAZORPAYX_KEY_SECRET),
+                                  headers={"X-Payout-Idempotency": group_id}, json=payout_payload, timeout=25)
+            response.raise_for_status()
+            payout = response.json()
+        except httpx.HTTPStatusError as exc:
+            db.refresh(withdrawal)
+            WalletService._refund_failed_withdrawal(db, withdrawal, "RazorpayX rejected payout")
+            raise HTTPException(status_code=502, detail="RazorpayX could not create the bank payout.") from exc
+        except httpx.HTTPError as exc:
+            try:
+                response = httpx.post("https://api.razorpay.com/v1/payouts",
+                                      auth=(settings.RAZORPAYX_KEY_ID, settings.RAZORPAYX_KEY_SECRET),
+                                      headers={"X-Payout-Idempotency": group_id}, json=payout_payload, timeout=25)
+                response.raise_for_status()
+                payout = response.json()
+            except httpx.HTTPStatusError as retry_exc:
+                db.refresh(withdrawal)
+                WalletService._refund_failed_withdrawal(db, withdrawal, "RazorpayX rejected payout")
+                raise HTTPException(status_code=502, detail="RazorpayX could not create the bank payout.") from retry_exc
+            except httpx.HTTPError:
+                raise HTTPException(status_code=503, detail="Payout status is pending provider confirmation.") from exc
+        db.refresh(withdrawal)
+        if not withdrawal.payout_id:
+            withdrawal.payout_id = payout.get("id")
+        if withdrawal.status not in {"PROCESSED", "FAILED", "REVERSED", "REJECTED", "CANCELLED"}:
+            provider_status = str(payout.get("status", "processing")).upper()
+            withdrawal.status = provider_status
+            if provider_status in {"FAILED", "REVERSED", "REJECTED", "CANCELLED"}:
+                withdrawal.status = "PROCESSING"
+                WalletService._refund_failed_withdrawal(db, withdrawal, f"RazorpayX payout {provider_status.lower()}", provider_status)
+            else:
+                db.commit()
+        db.refresh(user_wallet)
+        return WalletWithdrawalResponse(message="Withdrawal submitted", status=withdrawal.status,
+                                        payout_id=withdrawal.payout_id, failure_reason=withdrawal.failure_reason,
+                                        transaction_group_id=group_id, wallet_balance=WalletService._money(user_wallet.balance))
+
+    @staticmethod
+    def _refund_failed_withdrawal(db: Session, withdrawal: WalletWithdrawal, reason: str, final_status: str = "FAILED") -> None:
+        if withdrawal.status in {"FAILED", "REVERSED", "REJECTED", "CANCELLED", "PROCESSED"}:
+            return
+        user_wallet = WalletService._lock_wallet(db, WalletService.ensure_wallet_for_user(db, withdrawal.user_id).id)
+        company_wallet = WalletService._lock_wallet(db, WalletService.get_company_wallet(db).id)
+        group_id = str(uuid.uuid4())
+        txn = WalletTransaction(group_id=group_id, transaction_type=WalletTransactionType.ADMIN_CREDIT,
+                                amount=withdrawal.amount, currency=withdrawal.currency,
+                                description=f"Withdrawal reversal: {reason}", reference_id=withdrawal.payout_id or str(withdrawal.id))
+        db.add(txn)
+        db.flush()
+        WalletService._apply_ledger_line(db, txn, user_wallet, WalletLedgerDirection.CREDIT, withdrawal.amount,
+                                         counterparty_wallet_id=company_wallet.id, note=reason)
+        WalletService._apply_ledger_line(db, txn, company_wallet, WalletLedgerDirection.CREDIT, withdrawal.amount,
+                                         counterparty_wallet_id=user_wallet.id, note=f"Payout reversal: {reason}")
+        withdrawal.status = final_status
+        withdrawal.failure_reason = reason[:1000]
+        db.commit()
+
+    @staticmethod
+    def process_razorpayx_webhook(db: Session, raw_body: bytes, signature: str) -> None:
+        secret = settings.RAZORPAYX_WEBHOOK_SECRET
+        if not secret:
+            raise HTTPException(status_code=503, detail="RazorpayX webhooks are not configured.")
+        expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(status_code=400, detail="Invalid RazorpayX webhook signature.")
+        try:
+            event = json.loads(raw_body)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid webhook payload.") from exc
+        event_name = event.get("event")
+        payout = (event.get("payload") or {}).get("payout", {}).get("entity", {})
+        payout_id = payout.get("id")
+        if not payout_id:
+            return
+        reference_id = payout.get("reference_id")
+        withdrawal = db.query(WalletWithdrawal).filter(
+            (WalletWithdrawal.payout_id == payout_id) | (WalletWithdrawal.wallet_transaction_group_id == reference_id)
+        ).with_for_update().first()
+        if not withdrawal or withdrawal.status in {"FAILED", "REVERSED", "REJECTED", "CANCELLED", "PROCESSED"}:
+            return
+        withdrawal.payout_id = payout_id
+        if event_name == "payout.processed":
+            withdrawal.status = "PROCESSED"
+            db.commit()
+        elif event_name in {"payout.failed", "payout.reversed", "payout.rejected", "payout.cancelled"}:
+            final_status = {"payout.reversed": "REVERSED", "payout.rejected": "REJECTED", "payout.cancelled": "CANCELLED"}.get(event_name, "FAILED")
+            withdrawal.status = "PROCESSING"
+            WalletService._refund_failed_withdrawal(db, withdrawal, f"RazorpayX {event_name}", final_status)
+
+    @staticmethod
+    def get_withdrawal_status(db: Session, user: User, group_id: str) -> WalletWithdrawalResponse:
+        withdrawal = db.query(WalletWithdrawal).filter_by(wallet_transaction_group_id=group_id, user_id=user.id).first()
+        if not withdrawal:
+            raise HTTPException(status_code=404, detail="Withdrawal not found.")
+        wallet = WalletService.ensure_wallet_for_user(db, user.id)
+        return WalletWithdrawalResponse(message="Withdrawal status retrieved", status=withdrawal.status,
+                                        payout_id=withdrawal.payout_id, failure_reason=withdrawal.failure_reason,
+                                        transaction_group_id=group_id, wallet_balance=WalletService._money(wallet.balance))
+
+    @staticmethod
+    def admin_list_transactions(db: Session, page: int, page_size: int):
+        query = db.query(WalletTransaction)
+        total = query.count()
+        txns = query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        data = []
+        for txn in txns:
+            initiator = txn.initiated_by
+            initiator_profile = db.query(MerchantProfile).filter_by(user_id=initiator.id).first() if initiator else None
+            provider_status = provider_id = failure_reason = bank_name = bank_last4 = bank_ifsc = None
+            if txn.transaction_type == WalletTransactionType.WALLET_TOPUP:
+                topup = db.query(WalletTopupOrder).filter_by(wallet_transaction_group_id=txn.group_id).first()
+                if topup:
+                    provider_status, provider_id = topup.status.value, topup.razorpay_payment_id or topup.razorpay_order_id
+            elif txn.transaction_type == WalletTransactionType.WALLET_WITHDRAWAL:
+                withdrawal = db.query(WalletWithdrawal).filter_by(wallet_transaction_group_id=txn.group_id).first()
+                if withdrawal:
+                    provider_status, provider_id = withdrawal.status, withdrawal.payout_id
+                    failure_reason, bank_name, bank_last4, bank_ifsc = withdrawal.failure_reason, withdrawal.bank_account_holder_name, withdrawal.bank_account_last4, withdrawal.bank_ifsc
+            lines = []
+            for row in sorted(txn.ledger_entries, key=lambda item: item.id):
+                wallet = row.wallet
+                user = wallet.user
+                cp_wallet = row.counterparty_wallet
+                cp_user = cp_wallet.user if cp_wallet else None
+                profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
+                cp_profile = db.query(MerchantProfile).filter_by(user_id=cp_user.id).first() if cp_user else None
+                lines.append(AdminWalletLedgerLineResponse(
+                    id=row.id, direction=row.direction.value, amount=WalletService._money(row.amount),
+                    balance_after=WalletService._money(row.balance_after), wallet_id=wallet.id,
+                    wallet_type=wallet.wallet_type.value, user_id=user.id if user else None,
+                    user_name=(profile.business_name if profile else user.name) if user else None,
+                    user_email=user.email if user else None, counterparty_wallet_id=cp_wallet.id if cp_wallet else None,
+                    counterparty_user_id=cp_user.id if cp_user else None,
+                    counterparty_name=(cp_profile.business_name if cp_profile else cp_user.name) if cp_user else ("Admin wallet" if cp_wallet and cp_wallet.wallet_type == WalletType.COMPANY else None),
+                    counterparty_email=cp_user.email if cp_user else None, note=row.note, created_at=row.created_at,
+                ))
+            data.append(AdminWalletTransactionResponse(
+                id=txn.id, transaction_group_id=txn.group_id, transaction_type=txn.transaction_type.value,
+                amount=WalletService._money(txn.amount), currency=txn.currency, description=txn.description,
+                initiated_by_user_id=initiator.id if initiator else None,
+                initiated_by_name=(initiator_profile.business_name if initiator_profile else initiator.name) if initiator else None,
+                initiated_by_email=initiator.email if initiator else None, reference_id=txn.reference_id,
+                provider_status=provider_status, provider_id=provider_id, failure_reason=failure_reason,
+                bank_account_holder_name=bank_name, bank_account_last4=bank_last4, bank_ifsc=bank_ifsc,
+                created_at=txn.created_at, ledger_entries=lines,
+            ))
+        return data, total
+
+    @staticmethod
     def _sum_money(value) -> Decimal:
         return WalletService._money(Decimal(str(value or 0)))
 
@@ -173,9 +377,11 @@ class WalletService:
 
         revenue = WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
             .filter(
                 WalletLedgerEntry.wallet_id == company.id,
                 WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
             )
             .scalar()
         )

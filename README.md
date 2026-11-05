@@ -41,6 +41,16 @@ A clean, production-ready trial backend implementation for the **LOGO — Local 
 - **Validation:** [Pydantic v2](https://docs.pydantic.dev/), `pydantic-settings`
 - **Testing:** [pytest](https://docs.pytest.org/), `FastAPI TestClient`, `httpx`
 
+## Wallet cash flow
+
+Merchant wallet top-ups use Razorpay Orders and Standard Checkout through `POST /api/v1/wallet/topup/razorpay/order` and `POST /api/v1/wallet/topup/razorpay/verify`. The backend credits the merchant wallet only after the Razorpay payment signature is verified; the captured payment is also checked through the webhook. Both the merchant wallet and admin/company wallet receive ledger entries for the payment. Configure `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`; subscribe the Razorpay webhook to `payment.captured` and point it to `/api/v1/wallet/topup/razorpay/webhook`.
+
+When a customer redeems a merchant sale QR, the backend debits `CASHBACK_TOTAL_PERCENT` from the merchant wallet, credits `CASHBACK_USER_PERCENT` to the customer, and credits `CASHBACK_COMPANY_PERCENT` to the admin/company wallet. The default split is 5% total: 3% customer and 2% company. The split percentages must add up to the total. Customers can transfer wallet funds to a merchant using `/api/v1/wallet/transfer` or withdraw them to a bank account through RazorpayX.
+
+Bank withdrawals require RazorpayX to be enabled and configured with `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, `RAZORPAYX_ACCOUNT_NUMBER`, and `RAZORPAYX_WEBHOOK_SECRET`. Point the RazorpayX webhook to `/api/v1/wallet/webhooks/razorpayx` and subscribe to payout processed, failed, rejected, cancelled, and reversed events. Withdrawal funds are reserved when the payout is submitted and restored in the ledger if RazorpayX reports failure or reversal. The full bank account number is sent to RazorpayX but not retained; the ledger stores the beneficiary name, IFSC, and masked last four digits.
+
+Admins can read current balances and fee totals from `/api/v1/wallet/platform` and browse all paginated wallet transactions at `/api/v1/wallet/admin/transactions?page=1&page_size=20`. Apply the database migration with `alembic upgrade head` before using withdrawals.
+
 ---
 
 ## Project Structure

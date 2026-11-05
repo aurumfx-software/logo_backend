@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
@@ -22,10 +22,40 @@ from app.schemas.wallet import (
     WalletTopUpResponse,
     WalletTransferRequest,
     WalletTransferResponse,
+    WalletWithdrawalRequest,
+    WalletWithdrawalResponse,
+    AdminWalletTransactionListResponse,
 )
 from app.services.wallet_service import WalletService
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
+
+
+@router.post("/withdrawals", response_model=WalletWithdrawalResponse, status_code=status.HTTP_202_ACCEPTED,
+             summary="Withdraw wallet balance to a bank account")
+def withdraw_wallet(payload: WalletWithdrawalRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return WalletService.create_wallet_withdrawal(db, current_user, payload)
+
+
+@router.get("/withdrawals/{transaction_group_id}", response_model=WalletWithdrawalResponse,
+            summary="Get bank withdrawal status")
+def withdrawal_status(transaction_group_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return WalletService.get_withdrawal_status(db, current_user, transaction_group_id)
+
+
+@router.post("/webhooks/razorpayx", status_code=status.HTTP_200_OK, include_in_schema=False)
+async def razorpayx_webhook(request: Request, db: Session = Depends(get_db),
+                            signature: str = Header("", alias="X-Razorpay-Signature")):
+    WalletService.process_razorpayx_webhook(db, await request.body(), signature)
+    return {"success": True}
+
+
+@router.get("/admin/transactions", response_model=AdminWalletTransactionListResponse,
+            summary="Admin: list complete wallet transactions")
+def admin_wallet_transactions(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                              admin_user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    items, total = WalletService.admin_list_transactions(db, page, page_size)
+    return AdminWalletTransactionListResponse(data=items, total=total, page=page, page_size=page_size)
 
 
 @router.get(

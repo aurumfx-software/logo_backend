@@ -279,3 +279,76 @@ class WalletRewardClaimResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class WalletWithdrawalRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    account_holder_name: str = Field(..., min_length=3, max_length=100)
+    account_number: str = Field(..., min_length=8, max_length=34)
+    ifsc: str = Field(..., min_length=11, max_length=11, pattern="^[A-Za-z]{4}0[A-Za-z0-9]{6}$")
+    mode: str = Field("IMPS", pattern="^(IMPS|NEFT|RTGS)$")
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, value: Decimal) -> Decimal:
+        value = value.quantize(Decimal("0.01"))
+        if value < Decimal("1.00"):
+            raise ValueError("Minimum withdrawal amount is 1.00")
+        return value
+
+
+class WalletWithdrawalResponse(BaseModel):
+    success: bool = True
+    message: str
+    status: str
+    payout_id: Optional[str] = None
+    failure_reason: Optional[str] = None
+    transaction_group_id: str
+    wallet_balance: Decimal
+
+
+class AdminWalletLedgerLineResponse(BaseModel):
+    id: int
+    direction: str
+    amount: Decimal
+    balance_after: Decimal
+    wallet_id: int
+    wallet_type: str
+    user_id: Optional[int] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    counterparty_wallet_id: Optional[int] = None
+    counterparty_user_id: Optional[int] = None
+    counterparty_name: Optional[str] = None
+    counterparty_email: Optional[str] = None
+    note: Optional[str] = None
+    created_at: datetime
+
+
+class AdminWalletTransactionResponse(BaseModel):
+    id: int
+    transaction_group_id: str
+    transaction_type: str
+    amount: Decimal
+    currency: str
+    description: Optional[str] = None
+    initiated_by_user_id: Optional[int] = None
+    initiated_by_name: Optional[str] = None
+    initiated_by_email: Optional[str] = None
+    reference_id: Optional[str] = None
+    provider_status: Optional[str] = None
+    provider_id: Optional[str] = None
+    failure_reason: Optional[str] = None
+    bank_account_holder_name: Optional[str] = None
+    bank_account_last4: Optional[str] = None
+    bank_ifsc: Optional[str] = None
+    created_at: datetime
+    ledger_entries: List[AdminWalletLedgerLineResponse] = []
+
+
+class AdminWalletTransactionListResponse(BaseModel):
+    success: bool = True
+    data: List[AdminWalletTransactionResponse] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+

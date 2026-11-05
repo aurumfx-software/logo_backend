@@ -139,6 +139,7 @@ class WalletTopupService:
             )
 
         wallet = WalletService.ensure_wallet_for_user(db, topup.user_id)
+        company_wallet = WalletService.get_company_wallet(db)
         db.flush()
 
         group_id = str(uuid.uuid4())
@@ -155,13 +156,24 @@ class WalletTopupService:
         db.flush()
 
         locked = WalletService._lock_wallet(db, wallet.id)
+        locked_company = WalletService._lock_wallet(db, company_wallet.id)
         WalletService._apply_ledger_line(
             db,
             txn,
             locked,
             WalletLedgerDirection.CREDIT,
             WalletService._money(topup.amount),
-            note=f"Razorpay payment {razorpay_payment_id}",
+            counterparty_wallet_id=locked_company.id,
+            note=f"Razorpay merchant wallet funding {razorpay_payment_id}",
+        )
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked_company,
+            WalletLedgerDirection.CREDIT,
+            WalletService._money(topup.amount),
+            counterparty_wallet_id=locked.id,
+            note=f"Razorpay merchant payment received {razorpay_payment_id}",
         )
 
         now = datetime.now(timezone.utc)
