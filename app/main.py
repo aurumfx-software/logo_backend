@@ -14,30 +14,41 @@ import app.db.models  # Ensure all SQLAlchemy models are registered
 
 def _cors_settings() -> dict:
     raw = (settings.CORS_ORIGINS or "*").strip()
-    origin_regex = (settings.CORS_ORIGIN_REGEX or "").strip() or None
-    # Merge explicit regex with localhost + public IPv4 (covers direct http://IP:port frontends).
-    local_and_ip = (
-        r"https?://("
+    # Single regex (do not nest env regex — that broke matching for http://IP:port).
+    origin_regex = (
+        r"^https?://("
         r"(localhost|127\.0\.0\.1|\[::1\])"
         r"|(?:\d{1,3}\.){3}\d{1,3}"
-        r")(:\d+)?"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|(?:[\w.-]*\d+(?:\.\d+){3}\.sslip\.io)"
+        r")(:\d+)?$"
     )
-    if origin_regex:
-        inner = origin_regex[1:] if origin_regex.startswith("^") else origin_regex
-        inner = inner[:-1] if inner.endswith("$") else inner
-        origin_regex = rf"^(?:{inner}|{local_and_ip})$"
-    else:
-        origin_regex = rf"^{local_and_ip}$"
 
-    if raw == "*":
-        return {
-            "allow_origins": [],
-            "allow_origin_regex": origin_regex,
-            "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
-        }
-    origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
+    origins: list[str] = []
+    if raw != "*":
+        origins = [o.strip() for o in raw.split(",") if o.strip() and o.strip() != "*"]
+
+    extra = (settings.CORS_EXTRA_ORIGINS or "").strip()
+    if extra:
+        origins.extend(o.strip() for o in extra.split(",") if o.strip())
+
+    public_ip = (settings.SERVER_PUBLIC_IP or "").strip()
+    if public_ip:
+        for port in ("5173", "8000", "8443", "3000", "4173"):
+            origins.append(f"http://{public_ip}:{port}")
+            origins.append(f"https://{public_ip}:{port}")
+
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    unique_origins: list[str] = []
+    for o in origins:
+        if o not in seen:
+            seen.add(o)
+            unique_origins.append(o)
+
     return {
-        "allow_origins": origins,
+        "allow_origins": unique_origins,
         "allow_origin_regex": origin_regex,
         "allow_credentials": settings.CORS_ALLOW_CREDENTIALS,
     }
@@ -94,6 +105,7 @@ class _PrivateNetworkHeaderMiddleware:
         await self.app(scope, receive, send_wrapper)
 
 
+# CORS must wrap the app outermost so OPTIONS preflight is answered before other middleware.
 app.add_middleware(_PrivateNetworkHeaderMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -103,6 +115,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=86400,
 )
 
 # Standardized Error Exception Handlers

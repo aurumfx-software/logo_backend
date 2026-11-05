@@ -19,6 +19,10 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173"
     )
     CORS_ALLOW_CREDENTIALS: bool = True
+    # Optional: comma ports or full origins appended to CORS allow list (production .env).
+    CORS_EXTRA_ORIGINS: str = ""
+    # If set (e.g. 168.144.18.149), adds http://IP:5173|:8000|:8443 to allowed origins.
+    SERVER_PUBLIC_IP: str = ""
     # localhost/LAN/public IPv4/sslip.io — any port (Vite :5173, API :8000, nginx :8443).
     CORS_ORIGIN_REGEX: str = (
         r"^https?://("

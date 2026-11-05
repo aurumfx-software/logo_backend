@@ -30,3 +30,4 @@ echo "Running migrations..."
 alembic upgrade head
 
 echo "Updated to $(git rev-parse --short HEAD). Restart the API process (docker/systemd)."
+echo "Ensure .env sets SERVER_PUBLIC_IP or CORS_ORIGINS for your frontend URL (fixes OPTIONS 400 on /auth/login)."

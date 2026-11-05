@@ -35,8 +35,9 @@ ENV/
 env.bak/
 venv.bak/
 
-# Environment files - NEVER commit any env files
+# Environment files - NEVER commit secrets
 .env*
+!.env.example
 *.env
 
 # IDEs
