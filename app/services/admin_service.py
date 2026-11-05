@@ -581,5 +581,17 @@ class AdminService:
                 detail=f"User with ID {user_id} not found.",
             )
 
-        db.delete(user)
+        # Let the database apply the ON DELETE CASCADE / SET NULL constraints.
+        # ORM deletion walks backref collections and may try to NULL non-nullable
+        # child foreign keys before those database actions can run.
+        deleted = (
+            db.query(User)
+            .filter(User.id == user_id)
+            .delete(synchronize_session=False)
+        )
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found.",
+            )
         db.commit()
