@@ -282,10 +282,11 @@ class WalletRewardClaimResponse(BaseModel):
 
 class WalletWithdrawalRequest(BaseModel):
     amount: Decimal = Field(..., gt=0)
-    account_holder_name: str = Field(..., min_length=3, max_length=100)
-    account_number: str = Field(..., min_length=8, max_length=34)
-    ifsc: str = Field(..., min_length=11, max_length=11, pattern="^[A-Za-z]{4}0[A-Za-z0-9]{6}$")
-    mode: str = Field("IMPS", pattern="^(IMPS|NEFT|RTGS)$")
+    account_holder_name: str = Field(..., min_length=2, max_length=100, description="Bank account holder name")
+    account_number: str = Field(..., min_length=6, max_length=34, description="Bank account number")
+    ifsc: str = Field(..., min_length=4, max_length=11, description="Bank IFSC code")
+    payout_mode: Optional[str] = Field("IMPS", description="IMPS, NEFT, or RTGS")
+    mode: Optional[str] = None
 
     @field_validator("amount")
     @classmethod
@@ -296,14 +297,131 @@ class WalletWithdrawalRequest(BaseModel):
         return value
 
 
+class AdminWalletSummaryResponse(BaseModel):
+    success: bool = True
+    company_balance: Decimal
+    total_active_wallets_balance: Decimal
+    total_balance_across_active_wallets: Decimal
+    total_wallet_count: int
+    total_wallets_count: int
+    currency: str = "INR"
+
+
+class AdminWalletTransactionItem(BaseModel):
+    id: int
+    recipient: Optional[str] = None
+    recipient_type: Optional[str] = "user"
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_email: Optional[str] = None
+    customer_details: Optional[str] = None
+    merchant_name: Optional[str] = None
+    merchant_city: Optional[str] = None
+    merchant_details: Optional[str] = None
+    transaction_type: str
+    direction: str
+    amount: Decimal
+    balance_after: Decimal
+    note: Optional[str] = None
+    date: datetime
+
+
+class AdminWalletTransactionsResponse(BaseModel):
+    success: bool = True
+    data: List[AdminWalletTransactionItem] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+    total_pages: int = 1
+
+
+class AdminSendFundsRequest(BaseModel):
+    recipient_type: str = Field(..., description="'user' or 'merchant'")
+    user_id: Optional[Union[int, str]] = None
+    email: Optional[str] = None
+    amount: Decimal = Field(..., gt=0, description="Amount to send in INR")
+    note: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("amount")
+    @classmethod
+    def round_amount(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+
+class AdminSendFundsResponse(BaseModel):
+    success: bool = True
+    message: str
+    recipient: str
+    recipient_type: str
+    amount: Decimal
+    wallet_balance: Decimal
+    transaction_group_id: Optional[str] = None
+
+
+class MerchantTopupOrderRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0, description="Top-up amount in INR")
+    merchant_profile_id: Optional[int] = None
+
+    @field_validator("amount")
+    @classmethod
+    def round_amount(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+
+class MerchantTopupOrderResponse(BaseModel):
+    success: bool = True
+    order_id: str
+    razorpay_order_id: str
+    amount: Decimal
+    amount_paise: int
+    currency: str = "INR"
+    key_id: str
+    topup_id: int
+    merchant_profile_id: Optional[int] = None
+
+
+class MerchantTopupVerifyRequest(BaseModel):
+    order_id: Optional[str] = None
+    razorpay_order_id: Optional[str] = None
+    payment_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    signature: Optional[str] = None
+    razorpay_signature: Optional[str] = None
+
+
+class MerchantTopupVerifyResponse(BaseModel):
+    success: bool = True
+    message: str
+    wallet_balance: Decimal
+    transaction_group_id: Optional[str] = None
+
+
 class WalletWithdrawalResponse(BaseModel):
     success: bool = True
     message: str
-    status: str
+    transaction_group_id: str
+    amount: Optional[Decimal] = None
+    account_holder_name: Optional[str] = None
+    account_number_masked: Optional[str] = None
+    ifsc: Optional[str] = None
+    payout_mode: Optional[str] = "IMPS"
+    status: str = "PENDING"
     payout_id: Optional[str] = None
     failure_reason: Optional[str] = None
-    transaction_group_id: str
     wallet_balance: Decimal
+    created_at: Optional[datetime] = None
+
+
+class WalletWithdrawalStatusResponse(BaseModel):
+    success: bool = True
+    transaction_group_id: str
+    status: str
+    amount: Decimal
+    account_holder_name: str
+    account_number_masked: str
+    ifsc: str
+    payout_mode: str
+    created_at: datetime
 
 
 class AdminWalletLedgerLineResponse(BaseModel):

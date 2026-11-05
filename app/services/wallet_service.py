@@ -27,8 +27,18 @@ from app.db.models.wallet import (
     WalletType,
     WalletTopupOrder,
     WalletWithdrawal,
+    WithdrawalStatus,
 )
 from app.schemas.wallet import (
+    AdminSendFundsRequest,
+    AdminSendFundsResponse,
+    AdminWalletSummaryResponse,
+    AdminWalletTransactionItem,
+    AdminWalletTransactionsResponse,
+    MerchantTopupOrderRequest,
+    MerchantTopupOrderResponse,
+    MerchantTopupVerifyRequest,
+    MerchantTopupVerifyResponse,
     PlatformWalletResponse,
     PlatformWalletTransaction,
     SaleQRCreateRequest,
@@ -44,6 +54,7 @@ from app.schemas.wallet import (
     WalletTransferResponse,
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
+    WalletWithdrawalStatusResponse,
     AdminWalletLedgerLineResponse,
     AdminWalletTransactionResponse,
 )
@@ -1337,4 +1348,465 @@ class WalletService:
         db.refresh(locked)
         db.refresh(claim)
         return WalletService.wallet_to_response(locked), claim, group_id
+
+    @staticmethod
+    def get_admin_wallet_summary(db: Session) -> AdminWalletSummaryResponse:
+        company_wallet = WalletService.get_company_wallet(db)
+        company_balance = WalletService._money(company_wallet.balance)
+
+        total_user_balance = (
+            db.query(func.coalesce(func.sum(Wallet.balance), 0))
+            .filter(Wallet.wallet_type == WalletType.USER, Wallet.is_active == True)
+            .scalar()
+        )
+        total_wallet_count = (
+            db.query(func.count(Wallet.id))
+            .filter(Wallet.wallet_type == WalletType.USER, Wallet.is_active == True)
+            .scalar()
+        )
+
+        wallets_balance = WalletService._money(Decimal(str(total_user_balance or 0)))
+        wallet_count = int(total_wallet_count or 0)
+
+        return AdminWalletSummaryResponse(
+            success=True,
+            company_balance=company_balance,
+            total_active_wallets_balance=wallets_balance,
+            total_balance_across_active_wallets=wallets_balance,
+            total_wallet_count=wallet_count,
+            total_wallets_count=wallet_count,
+            currency="INR",
+        )
+
+    @staticmethod
+    def list_admin_wallet_transactions(
+        db: Session, page: int = 1, page_size: int = 20
+    ) -> AdminWalletTransactionsResponse:
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+
+        company = WalletService.get_company_wallet(db)
+
+        # Admin only needs company wallet commission credits & transactions
+        query = (
+            db.query(WalletLedgerEntry, WalletTransaction)
+            .join(WalletTransaction, WalletLedgerEntry.transaction_id == WalletTransaction.id)
+            .filter(WalletLedgerEntry.wallet_id == company.id)
+            .order_by(WalletLedgerEntry.id.desc())
+        )
+
+        total = query.count()
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+        items = []
+        for entry, txn in rows:
+            customer_name = None
+            customer_phone = None
+            customer_email = None
+            customer_details = None
+
+            merchant_name = None
+            merchant_city = None
+            merchant_details = None
+
+            # 1. Resolve customer & merchant from Sale QR transaction group
+            qr = None
+            if txn and txn.group_id:
+                qr = db.query(MerchantSaleQR).filter(
+                    MerchantSaleQR.wallet_transaction_group_id == txn.group_id
+                ).first()
+
+            if qr:
+                if qr.redeemed_by_user_id:
+                    cust = db.query(User).filter(User.id == qr.redeemed_by_user_id).first()
+                    if cust:
+                        customer_name = cust.name or cust.email or f"User #{cust.id}"
+                        customer_phone = cust.phone
+                        customer_email = cust.email
+                        contact = customer_phone or customer_email
+                        customer_details = f"{customer_name} ({contact})" if contact else customer_name
+
+                if qr.merchant_profile_id:
+                    merch = db.query(MerchantProfile).filter(
+                        MerchantProfile.id == qr.merchant_profile_id
+                    ).first()
+                    if merch:
+                        merchant_name = merch.business_name or f"Merchant #{merch.id}"
+                        merchant_city = merch.city
+                        merchant_details = f"{merchant_name} ({merch.city})" if merch.city else merchant_name
+
+            # 2. If not found via QR, resolve from counterparty wallet or reference
+            if not customer_name and not merchant_name:
+                cp_id = entry.counterparty_wallet_id
+                if cp_id:
+                    cp_wallet = db.query(Wallet).filter(Wallet.id == cp_id).first()
+                    if cp_wallet and cp_wallet.user_id:
+                        m = db.query(MerchantProfile).filter(
+                            MerchantProfile.user_id == cp_wallet.user_id
+                        ).first()
+                        if m:
+                            merchant_name = m.business_name or f"Merchant #{m.id}"
+                            merchant_city = m.city
+                            merchant_details = f"{merchant_name} ({m.city})" if m.city else merchant_name
+                        else:
+                            u = db.query(User).filter(User.id == cp_wallet.user_id).first()
+                            if u:
+                                customer_name = u.name or u.email or f"User #{u.id}"
+                                customer_phone = u.phone
+                                customer_email = u.email
+                                contact = customer_phone or customer_email
+                                customer_details = f"{customer_name} ({contact})" if contact else customer_name
+
+            if not customer_name and not merchant_name and txn and txn.reference_id:
+                try:
+                    ref_id = int(str(txn.reference_id).strip())
+                    m = db.query(MerchantProfile).filter(
+                        or_(MerchantProfile.id == ref_id, MerchantProfile.user_id == ref_id)
+                    ).first()
+                    if m:
+                        merchant_name = m.business_name
+                        merchant_city = m.city
+                        merchant_details = f"{m.business_name} ({m.city})" if m.city else m.business_name
+                    else:
+                        u = db.query(User).filter(User.id == ref_id).first()
+                        if u:
+                            customer_name = u.name or u.email
+                            customer_phone = u.phone
+                            customer_email = u.email
+                            contact = customer_phone or customer_email
+                            customer_details = f"{customer_name} ({contact})" if contact else customer_name
+                except ValueError:
+                    pass
+
+            txn_type_str = (
+                txn.transaction_type.value
+                if txn and hasattr(txn.transaction_type, "value")
+                else (str(txn.transaction_type) if txn else "PLATFORM_FEE")
+            )
+            dir_str = (
+                entry.direction.value
+                if hasattr(entry.direction, "value")
+                else str(entry.direction)
+            )
+
+            # Determine primary recipient label for backwards compatibility
+            recipient_label = merchant_name or customer_name or "Platform Company"
+            recipient_type = "merchant" if merchant_name else ("user" if customer_name else "company")
+
+            items.append(
+                AdminWalletTransactionItem(
+                    id=entry.id,
+                    recipient=recipient_label,
+                    recipient_type=recipient_type,
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
+                    customer_email=customer_email,
+                    customer_details=customer_details,
+                    merchant_name=merchant_name,
+                    merchant_city=merchant_city,
+                    merchant_details=merchant_details,
+                    transaction_type=txn_type_str,
+                    direction=dir_str,
+                    amount=WalletService._money(entry.amount),
+                    balance_after=WalletService._money(entry.balance_after),
+                    note=entry.note or (txn.description if txn else ""),
+                    date=entry.created_at,
+                )
+            )
+
+        return AdminWalletTransactionsResponse(
+            success=True,
+            data=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+        )
+
+    @staticmethod
+    def admin_send_funds(
+        db: Session, admin_user: User, payload: AdminSendFundsRequest
+    ) -> AdminSendFundsResponse:
+        amount = WalletService._money(payload.amount)
+        if amount <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Amount must be greater than zero.",
+            )
+
+        recip_type = (payload.recipient_type or "").strip().lower()
+        if recip_type not in ("user", "merchant"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="recipient_type must be either 'user' or 'merchant'.",
+            )
+
+        target_user = None
+        merchant_name = None
+
+        if recip_type == "merchant":
+            m = None
+            if payload.user_id is not None and str(payload.user_id).strip():
+                raw_id_str = str(payload.user_id).strip()
+                try:
+                    num_id = int(raw_id_str)
+                    m = db.query(MerchantProfile).filter(MerchantProfile.id == num_id).first()
+                    if not m:
+                        m = db.query(MerchantProfile).filter(MerchantProfile.user_id == num_id).first()
+                except ValueError:
+                    pass
+
+            if not m and payload.email:
+                clean_email = payload.email.strip().lower()
+                m = db.query(MerchantProfile).filter(func.lower(MerchantProfile.email) == clean_email).first()
+
+            if m:
+                merchant_name = m.business_name
+                if m.user_id:
+                    target_user = db.query(User).filter(User.id == m.user_id).first()
+                if not target_user:
+                    m_phone = m.phone or m.contact_number
+                    if m_phone:
+                        clean_p = m_phone.strip()[-10:]
+                        target_user = db.query(User).filter(User.phone.like(f"%{clean_p}%")).first()
+                        if target_user:
+                            m.user_id = target_user.id
+                            db.flush()
+
+            if not target_user:
+                if payload.email:
+                    target_user = db.query(User).filter(func.lower(User.email) == payload.email.strip().lower()).first()
+                elif payload.user_id is not None:
+                    try:
+                        target_user = db.query(User).filter(User.id == int(str(payload.user_id).strip())).first()
+                    except ValueError:
+                        pass
+
+            if not target_user and not m:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Merchant '{payload.email or payload.user_id}' not found.",
+                )
+        else:
+            if payload.email:
+                clean_email = payload.email.strip().lower()
+                target_user = db.query(User).filter(func.lower(User.email) == clean_email).first()
+            elif payload.user_id is not None:
+                try:
+                    target_user = db.query(User).filter(User.id == int(str(payload.user_id).strip())).first()
+                except ValueError:
+                    pass
+
+            if not target_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"User '{payload.email or payload.user_id}' not found.",
+                )
+
+        target_wallet = WalletService.ensure_wallet_for_user(db, target_user.id)
+        db.flush()
+
+        group_id = str(uuid.uuid4())
+        txn = WalletTransaction(
+            group_id=group_id,
+            transaction_type=WalletTransactionType.ADMIN_CREDIT,
+            amount=amount,
+            currency=settings.WALLET_CURRENCY,
+            description=payload.note or f"Admin funds transfer to {merchant_name or target_user.name or target_user.email}",
+            initiated_by_user_id=admin_user.id,
+            reference_id=str(target_user.id),
+        )
+        db.add(txn)
+        db.flush()
+
+        locked = WalletService._lock_wallet(db, target_wallet.id)
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked,
+            WalletLedgerDirection.CREDIT,
+            amount,
+            note=payload.note or f"Admin transfer from platform",
+        )
+
+        db.commit()
+        db.refresh(locked)
+
+        recipient_display = merchant_name or target_user.name or target_user.email or f"ID #{target_user.id}"
+        return AdminSendFundsResponse(
+            success=True,
+            message=f"Successfully sent ₹{amount} to {recipient_display}.",
+            recipient=recipient_display,
+            recipient_type=recip_type,
+            amount=amount,
+            wallet_balance=WalletService._money(locked.balance),
+            transaction_group_id=group_id,
+        )
+
+    @staticmethod
+    def create_merchant_topup_order(
+        db: Session, user: User, payload: MerchantTopupOrderRequest
+    ) -> MerchantTopupOrderResponse:
+        from app.services.wallet_topup_service import WalletTopupService
+        from app.schemas.wallet_payment import WalletTopupCreateRequest
+
+        topup_req = WalletTopupCreateRequest(
+            amount=payload.amount,
+            merchant_profile_id=payload.merchant_profile_id,
+        )
+        res = WalletTopupService.create_razorpay_topup_order(db=db, user=user, payload=topup_req)
+        return MerchantTopupOrderResponse(
+            success=True,
+            order_id=res.razorpay_order_id,
+            razorpay_order_id=res.razorpay_order_id,
+            amount=res.amount,
+            amount_paise=res.amount_paise,
+            currency=res.currency,
+            key_id=res.razorpay_key_id,
+            topup_id=res.topup_id,
+            merchant_profile_id=res.merchant_profile_id,
+        )
+
+    @staticmethod
+    def verify_merchant_topup(
+        db: Session, user: User, payload: MerchantTopupVerifyRequest
+    ) -> MerchantTopupVerifyResponse:
+        from app.services.wallet_topup_service import WalletTopupService
+        from app.schemas.wallet_payment import RazorpayTopupVerifyRequest
+
+        order_id = payload.order_id or payload.razorpay_order_id
+        payment_id = payload.payment_id or payload.razorpay_payment_id
+        sig = payload.signature or payload.razorpay_signature
+
+        if not order_id or not payment_id or not sig:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="order_id, payment_id, and signature are required.",
+            )
+
+        verify_req = RazorpayTopupVerifyRequest(
+            razorpay_order_id=order_id.strip(),
+            razorpay_payment_id=payment_id.strip(),
+            razorpay_signature=sig.strip(),
+        )
+        res = WalletTopupService.verify_and_credit(db=db, user=user, payload=verify_req)
+        return MerchantTopupVerifyResponse(
+            success=True,
+            message="Payment verified and wallet credited successfully.",
+            wallet_balance=res.wallet_balance,
+            transaction_group_id=res.transaction_group_id,
+        )
+
+    @staticmethod
+    def create_wallet_withdrawal(
+        db: Session, user: User, payload: WalletWithdrawalRequest
+    ) -> WalletWithdrawalResponse:
+        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+
+        amount = WalletService._money(payload.amount)
+        if amount <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Withdrawal amount must be greater than zero.",
+            )
+
+        wallet = WalletService.ensure_wallet_for_user(db, user.id)
+        locked = WalletService._lock_wallet(db, wallet.id)
+
+        if locked.balance < amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient wallet balance. Available: ₹{locked.balance:.2f}, Requested: ₹{amount:.2f}",
+            )
+
+        group_id = str(uuid.uuid4())
+        txn = WalletTransaction(
+            group_id=group_id,
+            transaction_type=WalletTransactionType.WITHDRAWAL,
+            amount=amount,
+            currency=settings.WALLET_CURRENCY,
+            description=f"Withdrawal to bank account {payload.account_number[-4:]} ({payload.ifsc}) via {payload.payout_mode or 'IMPS'}",
+            initiated_by_user_id=user.id,
+            reference_id=payload.account_number[-4:],
+        )
+        db.add(txn)
+        db.flush()
+
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            locked,
+            WalletLedgerDirection.DEBIT,
+            amount,
+            note=f"Bank withdrawal to {payload.account_holder_name} A/C ending {payload.account_number[-4:]}",
+        )
+
+        masked_acc = ("X" * max(0, len(payload.account_number) - 4)) + payload.account_number[-4:]
+        withdrawal = WalletWithdrawal(
+            transaction_group_id=group_id,
+            user_id=user.id,
+            wallet_id=locked.id,
+            amount=amount,
+            currency=settings.WALLET_CURRENCY,
+            account_holder_name=payload.account_holder_name.strip(),
+            account_number=masked_acc,
+            ifsc=payload.ifsc.strip().upper(),
+            payout_mode=(payload.payout_mode or "IMPS").strip().upper(),
+            status=WithdrawalStatus.PENDING,
+        )
+        db.add(withdrawal)
+        db.commit()
+        db.refresh(locked)
+        db.refresh(withdrawal)
+
+        return WalletWithdrawalResponse(
+            success=True,
+            message="Withdrawal request submitted successfully. Funds will be transferred to your bank account.",
+            transaction_group_id=group_id,
+            amount=amount,
+            account_holder_name=withdrawal.account_holder_name,
+            account_number_masked=withdrawal.account_number,
+            ifsc=withdrawal.ifsc,
+            payout_mode=withdrawal.payout_mode,
+            status=withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status),
+            wallet_balance=WalletService._money(locked.balance),
+            created_at=withdrawal.created_at,
+        )
+
+    @staticmethod
+    def get_wallet_withdrawal_status(
+        db: Session, user: User, transaction_group_id: str
+    ) -> WalletWithdrawalStatusResponse:
+        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        w = db.query(WalletWithdrawal).filter(
+            WalletWithdrawal.transaction_group_id == transaction_group_id.strip()
+        ).first()
+
+        if not w:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Withdrawal '{transaction_group_id}' not found.",
+            )
+
+        user_role_str = getattr(user.role, "value", str(user.role)).upper()
+        if w.user_id != user.id and user_role_str not in ("ADMIN", "SUPER_ADMIN"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to view this withdrawal.",
+            )
+
+        return WalletWithdrawalStatusResponse(
+            success=True,
+            transaction_group_id=w.transaction_group_id,
+            status=w.status.value if hasattr(w.status, "value") else str(w.status),
+            amount=WalletService._money(w.amount),
+            account_holder_name=w.account_holder_name,
+            account_number_masked=w.account_number,
+            ifsc=w.ifsc,
+            payout_mode=w.payout_mode,
+            created_at=w.created_at,
+        )
+
+
 

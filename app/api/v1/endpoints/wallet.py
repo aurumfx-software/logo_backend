@@ -6,8 +6,16 @@ from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.response import StandardListResponse, list_response
 from app.schemas.wallet import (
+    AdminSendFundsRequest,
+    AdminSendFundsResponse,
     AdminWalletAdjustRequest,
     AdminWalletAdjustResponse,
+    AdminWalletSummaryResponse,
+    AdminWalletTransactionsResponse,
+    MerchantTopupOrderRequest,
+    MerchantTopupOrderResponse,
+    MerchantTopupVerifyRequest,
+    MerchantTopupVerifyResponse,
     PlatformWalletResponse,
     SaleQRCreateRequest,
     SaleQRCreateResponse,
@@ -25,6 +33,7 @@ from app.schemas.wallet import (
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
     AdminWalletTransactionListResponse,
+    WalletWithdrawalStatusResponse,
 )
 from app.services.wallet_service import WalletService
 
@@ -310,4 +319,121 @@ def redeem_reward(
         "claim": WalletRewardClaimResponse.model_validate(claim),
         "transaction_group_id": group_id,
     }
+
+
+@router.get(
+    "/admin/summary",
+    response_model=AdminWalletSummaryResponse,
+    summary="Admin: Get wallet summary (Company Balance, Total Wallets Balance, Total Wallets Count)",
+)
+def get_admin_wallet_summary(
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminWalletSummaryResponse:
+    return WalletService.get_admin_wallet_summary(db=db)
+
+
+@router.get(
+    "/admin/transactions",
+    response_model=AdminWalletTransactionsResponse,
+    summary="Admin: List all wallet transactions with pagination",
+)
+def list_admin_wallet_transactions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminWalletTransactionsResponse:
+    return WalletService.list_admin_wallet_transactions(
+        db=db, page=page, page_size=page_size
+    )
+
+
+@router.post(
+    "/admin/send",
+    response_model=AdminSendFundsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Admin: Send funds directly to user or merchant wallet",
+)
+def admin_send_funds(
+    payload: AdminSendFundsRequest,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminSendFundsResponse:
+    return WalletService.admin_send_funds(
+        db=db, admin_user=current_admin, payload=payload
+    )
+
+
+# =========================================================================
+# MERCHANT WALLET TOP-UPS (RAZORPAY)
+# =========================================================================
+
+@router.post(
+    "/merchant/topups/orders",
+    response_model=MerchantTopupOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Merchant: create Razorpay top-up order",
+)
+def create_merchant_topup_order(
+    payload: MerchantTopupOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MerchantTopupOrderResponse:
+    return WalletService.create_merchant_topup_order(
+        db=db, user=current_user, payload=payload
+    )
+
+
+@router.post(
+    "/merchant/topups/verify",
+    response_model=MerchantTopupVerifyResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Merchant: confirm Razorpay top-up payment and credit wallet",
+)
+def verify_merchant_topup(
+    payload: MerchantTopupVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MerchantTopupVerifyResponse:
+    return WalletService.verify_merchant_topup(
+        db=db, user=current_user, payload=payload
+    )
+
+
+# =========================================================================
+# CUSTOMER WALLET WITHDRAWALS
+# =========================================================================
+
+@router.post(
+    "/withdrawals",
+    response_model=WalletWithdrawalResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Customer: withdraw wallet cash to bank account",
+)
+def create_wallet_withdrawal(
+    payload: WalletWithdrawalRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WalletWithdrawalResponse:
+    return WalletService.create_wallet_withdrawal(
+        db=db, user=current_user, payload=payload
+    )
+
+
+@router.get(
+    "/withdrawals/{transaction_group_id}",
+    response_model=WalletWithdrawalStatusResponse,
+    summary="Customer: check withdrawal status by transaction group ID",
+)
+def get_wallet_withdrawal_status(
+    transaction_group_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WalletWithdrawalStatusResponse:
+    return WalletService.get_wallet_withdrawal_status(
+        db=db, user=current_user, transaction_group_id=transaction_group_id
+    )
+
+
 

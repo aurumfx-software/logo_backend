@@ -39,6 +39,7 @@ class WalletTransactionType(str, enum.Enum):
     ADMIN_DEBIT = "ADMIN_DEBIT"
     WALLET_TOPUP = "WALLET_TOPUP"
     WALLET_WITHDRAWAL = "WALLET_WITHDRAWAL"
+    WITHDRAWAL = "WITHDRAWAL"
 
 
 class WalletTopupStatus(str, enum.Enum):
@@ -289,4 +290,50 @@ class WalletRewardClaim(Base):
 
     recipient_user = relationship("User", foreign_keys=[recipient_user_id])
     merchant_profile = relationship("MerchantProfile", backref="reward_claims")
+
+
+class WithdrawalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    REJECTED = "REJECTED"
+
+
+class WalletWithdrawal(Base):
+    """Customer wallet withdrawal to bank account."""
+
+    __tablename__ = "wallet_withdrawals"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    transaction_group_id = Column(String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    wallet_id = Column(Integer, ForeignKey("wallets.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount = Column(Numeric(18, 2), nullable=False)
+    currency = Column(String(3), default="INR", nullable=False)
+    account_holder_name = Column(String(255), nullable=False)
+    account_number = Column(String(64), nullable=False)
+    ifsc = Column(String(32), nullable=False)
+    payout_mode = Column(String(16), default="IMPS", nullable=False)
+    status = Column(
+        Enum(WithdrawalStatus, name="withdrawal_status", native_enum=False),
+        default=WithdrawalStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    admin_note = Column(String(500), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    wallet = relationship("Wallet", foreign_keys=[wallet_id])
 
