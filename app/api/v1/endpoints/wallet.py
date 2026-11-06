@@ -65,8 +65,8 @@ def admin_wallet_transactions(
     items, total = WalletService.admin_list_transactions(
         db, page, page_size, transaction_type=transaction_type
     )
-    cash_items, cash_total, total_received, total_deducted = WalletService.list_admin_platform_cash(
-        db, cash_page, cash_page_size
+    cash_items, cash_total, total_received, total_deducted, real_balance = (
+        WalletService.list_admin_platform_cash(db, cash_page, cash_page_size)
     )
     return AdminWalletTransactionListResponse(
         data=items,
@@ -79,6 +79,7 @@ def admin_wallet_transactions(
         platform_cash_page_size=cash_page_size,
         total_received=total_received,
         total_deducted=total_deducted,
+        real_balance=real_balance,
     )
 
 

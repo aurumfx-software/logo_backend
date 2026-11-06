@@ -69,6 +69,9 @@ class PlatformWalletResponse(BaseModel):
     cashback_distributed: Decimal
     gross_sales_volume: Decimal
     qr_redemptions: int
+    total_received: Decimal = Decimal("0.00")
+    total_deducted: Decimal = Decimal("0.00")
+    real_balance: Decimal = Decimal("0.00")
     transactions: List[PlatformWalletTransaction] = []
     total: int = 0
     page: int = 1
@@ -307,6 +310,9 @@ class AdminWalletSummaryResponse(BaseModel):
     total_balance_across_active_wallets: Decimal
     total_wallet_count: int
     total_wallets_count: int
+    total_received: Decimal = Decimal("0.00")
+    total_deducted: Decimal = Decimal("0.00")
+    real_balance: Decimal = Decimal("0.00")
     currency: str = "INR"
 
 
@@ -494,4 +500,5 @@ class AdminWalletTransactionListResponse(BaseModel):
     platform_cash_page_size: int = 20
     total_received: Decimal = Decimal("0.00")
     total_deducted: Decimal = Decimal("0.00")
+    real_balance: Decimal = Decimal("0.00")
 

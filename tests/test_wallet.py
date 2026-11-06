@@ -369,6 +369,9 @@ def test_admin_list_all_transactions(client: TestClient, db_session: Session):
     assert "DEDUCTED" in movements
     assert Decimal(wallet_body["total_received"]) >= Decimal("150.00")
     assert Decimal(wallet_body["total_deducted"]) >= Decimal("40.00")
+    assert Decimal(wallet_body["real_balance"]) == (
+        Decimal(wallet_body["total_received"]) - Decimal(wallet_body["total_deducted"])
+    )
 
     txn_id = wallet_body["data"][0]["id"]
     detail_res = client.get(f"/api/v1/wallet/admin/transactions/{txn_id}", headers=admin_headers)

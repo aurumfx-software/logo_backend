@@ -290,8 +290,8 @@ class WalletService:
         return data, total
 
     @staticmethod
-    def list_admin_platform_cash(db: Session, page: int, page_size: int):
-        """Merchant wallet top-ups (money in) and user withdrawals (money out)."""
+    def platform_cash_totals(db: Session):
+        """Merchant top-ups received, user withdrawals deducted, and the net balance."""
         merchant_user_ids = db.query(MerchantProfile.user_id)
         received_filter = and_(
             WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP,
@@ -300,8 +300,6 @@ class WalletService:
         deducted_filter = WalletTransaction.transaction_type.in_(
             [WalletTransactionType.WITHDRAWAL, WalletTransactionType.WALLET_WITHDRAWAL]
         )
-        query = db.query(WalletTransaction).filter(or_(received_filter, deducted_filter))
-        total = query.count()
         total_received = WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
             .filter(received_filter)
@@ -312,6 +310,17 @@ class WalletService:
             .filter(deducted_filter)
             .scalar()
         )
+        real_balance = WalletService._money(total_received - total_deducted)
+        return received_filter, deducted_filter, total_received, total_deducted, real_balance
+
+    @staticmethod
+    def list_admin_platform_cash(db: Session, page: int, page_size: int):
+        """Merchant wallet top-ups (money in) and user withdrawals (money out)."""
+        received_filter, deducted_filter, total_received, total_deducted, real_balance = (
+            WalletService.platform_cash_totals(db)
+        )
+        query = db.query(WalletTransaction).filter(or_(received_filter, deducted_filter))
+        total = query.count()
         rows = (
             query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
             .offset((page - 1) * page_size)
@@ -338,7 +347,7 @@ class WalletService:
                     created_at=txn.created_at,
                 )
             )
-        return items, total, total_received, total_deducted
+        return items, total, total_received, total_deducted, real_balance
 
     @staticmethod
     def get_admin_transaction(db: Session, transaction_id: int) -> AdminWalletTransactionResponse:
@@ -438,9 +447,13 @@ class WalletService:
 
         user_pct = float(settings.CASHBACK_USER_PERCENT)
         company_pct = float(settings.CASHBACK_COMPANY_PERCENT)
+        _, _, total_received, total_deducted, real_balance = WalletService.platform_cash_totals(db)
         return PlatformWalletResponse(
             currency=company.currency or settings.WALLET_CURRENCY,
             balance=WalletService._money(company.balance),
+            total_received=total_received,
+            total_deducted=total_deducted,
+            real_balance=real_balance,
             customer_cashback_percent=user_pct,
             platform_fee_percent=company_pct,
             total_shop_deduction_percent=user_pct + company_pct,
@@ -1342,10 +1355,14 @@ class WalletService:
 
         wallets_balance = WalletService._money(Decimal(str(total_user_balance or 0)))
         wallet_count = int(total_wallet_count or 0)
+        _, _, total_received, total_deducted, real_balance = WalletService.platform_cash_totals(db)
 
         return AdminWalletSummaryResponse(
             success=True,
             company_balance=company_balance,
+            total_received=total_received,
+            total_deducted=total_deducted,
+            real_balance=real_balance,
             total_active_wallets_balance=wallets_balance,
             total_balance_across_active_wallets=wallets_balance,
             total_wallet_count=wallet_count,

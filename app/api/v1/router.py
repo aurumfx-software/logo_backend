@@ -6,6 +6,7 @@ from app.api.v1.endpoints import (
     complaint,
     customer,
     favorite,
+    geography,
     health,
     logo,
     merchant,
@@ -13,6 +14,7 @@ from app.api.v1.endpoints import (
     otp,
     product,
     promotion,
+    report,
     subscription,
     user,
     wallet,
@@ -38,6 +40,8 @@ api_router.include_router(favorite.router)
 api_router.include_router(notification.router)
 api_router.include_router(complaint.router)
 api_router.include_router(admin.router)
+api_router.include_router(report.router)
+api_router.include_router(geography.router)
 api_router.include_router(wallet.router)
 api_router.include_router(wallet_payment.router)
 api_router.include_router(wallet_ws.router)
