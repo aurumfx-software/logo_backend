@@ -306,6 +306,7 @@ class WalletWithdrawalRequest(BaseModel):
 class AdminWalletSummaryResponse(BaseModel):
     success: bool = True
     company_balance: Decimal
+    total_commission: Decimal = Decimal("0.00")
     total_active_wallets_balance: Decimal
     total_balance_across_active_wallets: Decimal
     total_wallet_count: int

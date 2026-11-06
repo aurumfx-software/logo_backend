@@ -540,6 +540,27 @@ class MerchantService:
             .first()
         )
         if not merchant:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                if user.email:
+                    merchant = (
+                        db.query(MerchantProfile)
+                        .filter(MerchantProfile.email.ilike(user.email.strip()))
+                        .order_by(MerchantProfile.id.desc())
+                        .first()
+                    )
+                if not merchant and user.phone:
+                    merchant = (
+                        db.query(MerchantProfile)
+                        .filter(MerchantProfile.phone == user.phone.strip())
+                        .order_by(MerchantProfile.id.desc())
+                        .first()
+                    )
+                if merchant and not merchant.user_id:
+                    merchant.user_id = user.id
+                    db.commit()
+                    db.refresh(merchant)
+        if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Merchant profile not found for this account.",

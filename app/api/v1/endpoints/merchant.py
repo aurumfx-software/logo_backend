@@ -757,6 +757,33 @@ def get_discovery_metadata(
     )
 
 
+
+@router.get(
+    "/my-merchants",
+    summary="Get list of merchants owned by current user",
+    description="Returns all merchant profiles associated with current authenticated user.",
+)
+def get_my_merchants_list(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.db.models.merchant import MerchantProfile
+    merchants = (
+        db.query(MerchantProfile)
+        .filter(MerchantProfile.user_id == current_user.id)
+        .order_by(MerchantProfile.id.desc())
+        .all()
+    )
+    if not merchants and current_user.email:
+        merchants = (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.email.ilike(current_user.email))
+            .order_by(MerchantProfile.id.desc())
+            .all()
+        )
+    return [MerchantService.build_merchant_response(m) for m in merchants]
+
+
 @router.get(
     "/{merchant_id}",
     response_model=MerchantProfileResponse,

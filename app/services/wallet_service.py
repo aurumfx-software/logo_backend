@@ -1340,7 +1340,20 @@ class WalletService:
     @staticmethod
     def get_admin_wallet_summary(db: Session) -> AdminWalletSummaryResponse:
         company_wallet = WalletService.get_company_wallet(db)
-        company_balance = WalletService._money(company_wallet.balance)
+
+        # Pure merchant customer payment commissions earned by platform (from QR sales / cashback redemptions)
+        total_commission = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company_wallet.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
+            .scalar()
+        )
+
+        company_balance = total_commission
 
         total_user_balance = (
             db.query(func.coalesce(func.sum(Wallet.balance), 0))
@@ -1360,6 +1373,7 @@ class WalletService:
         return AdminWalletSummaryResponse(
             success=True,
             company_balance=company_balance,
+            total_commission=total_commission,
             total_received=total_received,
             total_deducted=total_deducted,
             real_balance=real_balance,

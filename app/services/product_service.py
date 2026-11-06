@@ -68,6 +68,9 @@ class ProductService:
         category: Optional[str] = None,
         district: Optional[str] = None,
         search: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> List[CustomerProduct]:
@@ -80,8 +83,14 @@ class ProductService:
         if category and category.lower() != "all":
             q = q.filter(CustomerProduct.category.ilike(f"%{category.strip()}%"))
 
-        if district and district.lower() != "all":
+        if district and district.lower() != "all" and "all kerala" not in district.lower():
             q = q.filter(CustomerProduct.district.ilike(f"%{district.strip()}%"))
+
+        if min_price is not None:
+            q = q.filter(CustomerProduct.price >= min_price)
+
+        if max_price is not None:
+            q = q.filter(CustomerProduct.price <= max_price)
 
         if search and search.strip():
             kw = f"%{search.strip()}%"
@@ -91,10 +100,44 @@ class ProductService:
                     CustomerProduct.description.ilike(kw),
                     CustomerProduct.seller_name.ilike(kw),
                     CustomerProduct.city.ilike(kw),
+                    CustomerProduct.category.ilike(kw),
                 )
             )
 
-        return q.order_by(desc(CustomerProduct.created_at)).offset(offset).limit(limit).all()
+        if sort_by == "price_asc":
+            q = q.order_by(CustomerProduct.price.asc())
+        elif sort_by == "price_desc":
+            q = q.order_by(CustomerProduct.price.desc())
+        elif sort_by == "popular":
+            q = q.order_by(desc(CustomerProduct.views_count))
+        else:
+            q = q.order_by(desc(CustomerProduct.created_at))
+
+        return q.offset(offset).limit(limit).all()
+
+    @staticmethod
+    def get_product_categories(db: Session) -> List[str]:
+        """Return distinct active product categories with fallback defaults."""
+        rows = (
+            db.query(CustomerProduct.category)
+            .filter(CustomerProduct.is_active == True, CustomerProduct.category.isnot(None))
+            .distinct()
+            .all()
+        )
+        cats = [r[0].strip() for r in rows if r[0] and r[0].strip()]
+        defaults = [
+            "Fashion & Handloom",
+            "Organic & Agro",
+            "Handicrafts & Decor",
+            "Electronics & Gadgets",
+            "Home & Living",
+            "Spices & Tea",
+            "Beauty & Wellness",
+        ]
+        for d in defaults:
+            if d not in cats:
+                cats.append(d)
+        return cats
 
     @staticmethod
     def get_product_by_id(db: Session, product_id: int) -> CustomerProduct:

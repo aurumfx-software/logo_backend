@@ -32,14 +32,36 @@ def get_public_products(
     category: Optional[str] = Query(None, description="Filter by category"),
     district: Optional[str] = Query(None, description="Filter by district"),
     search: Optional[str] = Query(None, description="Keyword search in product title/desc"),
+    sort_by: Optional[str] = Query(None, description="Sorting: newest, price_asc, price_desc, popular"),
+    min_price: Optional[float] = Query(None, description="Minimum price filter"),
+    max_price: Optional[float] = Query(None, description="Maximum price filter"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     products = ProductService.get_public_products(
-        db=db, category=category, district=district, search=search, limit=limit, offset=offset
+        db=db,
+        category=category,
+        district=district,
+        search=search,
+        sort_by=sort_by,
+        min_price=min_price,
+        max_price=max_price,
+        limit=limit,
+        offset=offset,
     )
     return [ProductResponse.model_validate(p) for p in products]
+
+
+@router.get(
+    "/products/categories",
+    response_model=List[str],
+    summary="List All Distinct Product Categories",
+)
+def get_product_categories(
+    db: Session = Depends(get_db),
+) -> List[str]:
+    return ProductService.get_product_categories(db=db)
 
 
 @router.get(

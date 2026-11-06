@@ -220,18 +220,38 @@ def upload_avatar(
             detail="Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.",
         )
 
-    upload_dir = os.path.join("uploads", "avatars")
-    os.makedirs(upload_dir, exist_ok=True)
+    avatar_url = None
+    try:
+        from app.services.storage_service import storage_service
+        avatar_url = storage_service.upload_file(file, folder="avatars")
+    except Exception:
+        avatar_url = None
 
-    unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-    file_path = os.path.join(upload_dir, unique_filename)
+    if not avatar_url:
+        upload_dir = os.path.join("uploads", "avatars")
+        os.makedirs(upload_dir, exist_ok=True)
+        unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+        file_path = os.path.join(upload_dir, unique_filename)
+        file.file.seek(0)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        avatar_url = f"/static/avatars/{unique_filename}"
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    avatar_url = f"/static/avatars/{unique_filename}"
     current_user.profile_picture = avatar_url
+
+    # If this user is a merchant or has linked merchant profiles, sync photo_1
+    try:
+        from app.db.models.merchant import MerchantProfile
+        merchants = db.query(MerchantProfile).filter(MerchantProfile.user_id == current_user.id).all()
+        for m in merchants:
+            m.photo_1 = avatar_url
+            if hasattr(m, 'profile_picture'):
+                m.profile_picture = avatar_url
+    except Exception:
+        pass
+
     db.commit()
+    db.refresh(current_user)
 
     return AvatarUploadResponse(
         message="Profile picture uploaded successfully.",
