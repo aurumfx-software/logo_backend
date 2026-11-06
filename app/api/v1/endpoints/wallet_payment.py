@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -6,6 +8,7 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User
+from app.db.models.wallet import WalletTopupOrder
 from app.schemas.auth import GenericMessageResponse
 from app.schemas.wallet_payment import (
     RazorpayTopupOrderResponse,
@@ -132,8 +135,56 @@ def render_razorpay_checkout_page(
     prefill_contact: str = Query("", description="Customer phone number"),
     prefill_email: str = Query("", description="Customer email"),
     redirect_url: str = Query("", description="Deep-link or return URL for app"),
+    db: Session = Depends(get_db),
 ):
-    key_id = settings.RAZORPAY_KEY_ID or "rzp_test_TvBAWzKfk5F60i"
+    if not RazorpayService.is_configured():
+        return HTMLResponse(
+            content=_checkout_message(
+                "Razorpay is not configured",
+                "Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to the same test or live key that created the order.",
+            ),
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    topup = (
+        db.query(WalletTopupOrder)
+        .filter(WalletTopupOrder.razorpay_order_id == order_id.strip())
+        .first()
+    )
+    try:
+        remote = RazorpayService.fetch_order(order_id.strip())
+    except Exception as exc:
+        detail = getattr(exc, "detail", None) or "Razorpay could not open this order."
+        return HTMLResponse(content=_checkout_message("Payment could not start", str(detail)), status_code=400)
+
+    amount_paise = int(remote.get("amount") or 0)
+    if amount_paise <= 0:
+        amount_paise = RazorpayService.checkout_amount_paise(
+            amount, topup.amount_paise if topup else None
+        )
+    currency = str(remote.get("currency") or (topup.currency if topup else "INR") or "INR")
+    contact = RazorpayService.checkout_contact(prefill_contact)
+    email = RazorpayService.checkout_email(prefill_email)
+    options = {
+        "key": settings.RAZORPAY_KEY_ID,
+        "amount": amount_paise,
+        "currency": currency,
+        "name": name[:80],
+        "description": description[:120],
+        "order_id": order_id.strip(),
+        "theme": {"color": "#7C3AED"},
+    }
+    prefill = {}
+    if prefill_name.strip():
+        prefill["name"] = prefill_name.strip()[:80]
+    if contact:
+        prefill["contact"] = contact
+    if email:
+        prefill["email"] = email
+    if prefill:
+        options["prefill"] = prefill
+    options_json = json.dumps(options)
+    redirect_json = json.dumps(redirect_url)
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -184,48 +235,33 @@ def render_razorpay_checkout_page(
   </div>
 
   <script>
-    const options = {{
-      key: "{key_id}",
-      amount: {amount},
-      currency: "INR",
-      name: "{name}",
-      description: "{description}",
-      image: "https://aurumfx-images.sgp1.digitaloceanspaces.com/logo.png",
-      order_id: "{order_id}",
-      prefill: {{
-        name: "{prefill_name}",
-        contact: "{prefill_contact}",
-        email: "{prefill_email}"
-      }},
-      theme: {{ color: "#7C3AED" }},
-      handler: function(response) {{
+    const options = {options_json};
+    const redirectUrl = {redirect_json};
+    options.handler = function(response) {{
         document.getElementById('spinner').style.display = 'none';
         document.getElementById('title').innerText = 'Payment Successful!';
         document.getElementById('desc').innerText = 'Returning to app...';
         document.getElementById('status').innerHTML = '<div class="success">✓ Verified by Razorpay</div>';
 
-        const redirect = "{redirect_url}";
-        if (redirect) {{
-          const sep = redirect.includes('?') ? '&' : '?';
-          const returnUrl = redirect + sep + 'status=success' +
+        if (redirectUrl) {{
+          const sep = redirectUrl.includes('?') ? '&' : '?';
+          const returnUrl = redirectUrl + sep + 'status=success' +
             '&razorpay_payment_id=' + encodeURIComponent(response.razorpay_payment_id || '') +
             '&razorpay_order_id=' + encodeURIComponent(response.razorpay_order_id || '') +
             '&razorpay_signature=' + encodeURIComponent(response.razorpay_signature || '');
           window.location.href = returnUrl;
         }}
-      }},
-      modal: {{
-        ondismiss: function() {{
-          document.getElementById('spinner').style.display = 'none';
-          document.getElementById('title').innerText = 'Payment Cancelled';
-          document.getElementById('desc').innerText = 'You can retry payment or return to the app.';
-          document.getElementById('retry-btn').style.display = 'block';
+      }};
+    options.modal = {{
+      ondismiss: function() {{
+        document.getElementById('spinner').style.display = 'none';
+        document.getElementById('title').innerText = 'Payment Cancelled';
+        document.getElementById('desc').innerText = 'You can retry payment or return to the app.';
+        document.getElementById('retry-btn').style.display = 'block';
 
-          const redirect = "{redirect_url}";
-          if (redirect) {{
-            const sep = redirect.includes('?') ? '&' : '?';
-            window.location.href = redirect + sep + 'status=cancelled';
-          }}
+        if (redirectUrl) {{
+          const sep = redirectUrl.includes('?') ? '&' : '?';
+          window.location.href = redirectUrl + sep + 'status=cancelled';
         }}
       }}
     }};
@@ -251,3 +287,17 @@ def render_razorpay_checkout_page(
 </body>
 </html>"""
     return HTMLResponse(content=html_content)
+
+
+def _checkout_message(title: str, detail: str) -> str:
+    safe_title = json.dumps(title)
+    safe_detail = json.dumps(detail)
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payment</title></head>
+<body style="font-family: sans-serif; background:#0f172a; color:#f8fafc; display:flex; min-height:100vh; align-items:center; justify-content:center;">
+<div style="max-width:420px; padding:24px;"><h2 id="title"></h2><p id="desc"></p></div>
+<script>
+document.getElementById('title').textContent = {safe_title};
+document.getElementById('desc').textContent = {safe_detail};
+</script></body></html>"""
