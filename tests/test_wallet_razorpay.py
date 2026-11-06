@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
+from app.services.razorpay_service import RazorpayService
 from app.services.wallet_service import WalletService
 
 
@@ -87,3 +88,23 @@ def test_razorpay_topup_dev_flow(client: TestClient, db_session: Session):
     )
     assert dup.status_code == 200
     assert "already credited" in dup.json()["message"].lower()
+
+
+def test_checkout_amount_and_contact():
+    assert RazorpayService.checkout_amount_paise(500, 50000) == 50000
+    assert RazorpayService.checkout_amount_paise(500, None) == 50000
+    assert RazorpayService.checkout_amount_paise(25000, None) == 25000
+    assert RazorpayService.checkout_contact("+91 98765 43210") == "9876543210"
+    assert RazorpayService.checkout_contact("123") == ""
+    assert RazorpayService.checkout_email("shop@example.com") == "shop@example.com"
+    assert RazorpayService.checkout_email("user@logo.customer") == ""
+
+
+def test_checkout_page_without_razorpay_key(client: TestClient):
+    res = client.get(
+        "/api/v1/wallet/topup/razorpay/checkout",
+        params={"order_id": "order_test_missing", "amount": 50000},
+    )
+    assert res.status_code == 503
+    assert "not configured" in res.text.lower()
+    assert "rzp_test_TvBAWzKfk5F60i" not in res.text

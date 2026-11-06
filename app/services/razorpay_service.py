@@ -81,6 +81,51 @@ class RazorpayService:
         return resp.json()
 
     @staticmethod
+    def fetch_order(order_id: str) -> Dict[str, Any]:
+        """Load the Razorpay order so checkout uses the same amount and key."""
+        if order_id.startswith("order_dev_"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This is a local test order. Razorpay checkout needs a real order from the configured key.",
+            )
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(
+                f"{RazorpayService.API_BASE}/orders/{order_id}",
+                auth=RazorpayService._auth(),
+            )
+        if resp.status_code >= 400:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Razorpay rejected this order. Create a new top-up order and try again.",
+            )
+        return resp.json()
+
+    @staticmethod
+    def checkout_amount_paise(query_amount: int, stored_paise: Optional[int] = None) -> int:
+        """Checkout amount must match the order in paise. Callers sometimes send rupees."""
+        if stored_paise and stored_paise > 0:
+            return int(stored_paise)
+        if query_amount < 1000:
+            return query_amount * 100
+        return query_amount
+
+    @staticmethod
+    def checkout_contact(value: str) -> str:
+        digits = "".join(ch for ch in (value or "") if ch.isdigit())
+        if digits.startswith("91") and len(digits) == 12:
+            digits = digits[2:]
+        if len(digits) == 10 and digits[0] in "6789":
+            return digits
+        return ""
+
+    @staticmethod
+    def checkout_email(value: str) -> str:
+        email = (value or "").strip()
+        if "@" not in email or " " in email or email.endswith("@logo.customer"):
+            return ""
+        return email[:120]
+
+    @staticmethod
     def verify_payment_signature(
         razorpay_order_id: str,
         razorpay_payment_id: str,
