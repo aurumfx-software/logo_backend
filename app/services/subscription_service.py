@@ -393,26 +393,42 @@ class SubscriptionService:
 
         if paid and paid > 0:
             try:
+                import uuid
+                import logging
                 from app.services.wallet_service import WalletService
-                from app.db.models.wallet import WalletTransaction, WalletTransactionType, WalletTransactionStatus
+                from app.db.models.wallet import (
+                    WalletTransaction,
+                    WalletTransactionType,
+                    WalletLedgerDirection,
+                )
                 company_wallet = WalletService.get_company_wallet(db)
                 locked_company = WalletService._lock_wallet(db, company_wallet.id)
-                locked_company.balance += paid
+                group_id = str(uuid.uuid4())
                 txn = WalletTransaction(
-                    wallet_id=locked_company.id,
-                    transaction_type=WalletTransactionType.COMMISSION_RECEIVED,
+                    group_id=group_id,
+                    transaction_type=WalletTransactionType.ADMIN_CREDIT,
                     amount=paid,
                     currency=pkg.currency or "INR",
-                    running_balance=locked_company.balance,
-                    status=WalletTransactionStatus.COMPLETED,
-                    reference_id=payload.payment_reference or f"SUB-{sub.id}",
                     description=f"Subscription Revenue: {pkg.name} from {user.name or user.phone} (₹{paid})",
                     initiated_by_user_id=user.id,
+                    reference_id=payload.payment_reference or f"SUB-{sub.id}",
                 )
                 db.add(txn)
                 db.flush()
+
+                WalletService._apply_ledger_line(
+                    db,
+                    txn,
+                    locked_company,
+                    WalletLedgerDirection.CREDIT,
+                    paid,
+                    counterparty_wallet_id=None,
+                    note=f"Subscription fee for package '{pkg.name}' (User #{user.id})",
+                )
+                db.commit()
             except Exception as e:
-                pass
+                import logging
+                logging.getLogger(__name__).error(f"Failed to record subscription revenue to company wallet: {e}", exc_info=True)
 
         if SubscriptionService._audience_value(pkg) == "USER":
             SubscriptionService._apply_user_entitlements(db, user.id)

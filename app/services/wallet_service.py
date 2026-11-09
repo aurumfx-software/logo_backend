@@ -211,29 +211,46 @@ class WalletService:
         lines = []
         for row in sorted(txn.ledger_entries, key=lambda item: item.id):
             wallet = row.wallet
-            user = wallet.user
+            user = wallet.user if wallet else None
             cp_wallet = row.counterparty_wallet
             cp_user = cp_wallet.user if cp_wallet else None
             profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
             cp_profile = db.query(MerchantProfile).filter_by(user_id=cp_user.id).first() if cp_user else None
+
+            # Identify display type and name clearly for Admin Ledgers
+            if wallet and wallet.wallet_type == WalletType.COMPANY:
+                effective_wallet_type = "COMPANY"
+                display_name = "Platform / Company Wallet"
+            elif profile:
+                effective_wallet_type = "MERCHANT"
+                display_name = profile.business_name
+            else:
+                effective_wallet_type = "USER"
+                display_name = user.name if user else None
+
+            if cp_wallet and cp_wallet.wallet_type == WalletType.COMPANY:
+                cp_display_name = "Platform / Company Wallet"
+            elif cp_profile:
+                cp_display_name = cp_profile.business_name
+            elif cp_user:
+                cp_display_name = cp_user.name
+            else:
+                cp_display_name = None
+
             lines.append(
                 AdminWalletLedgerLineResponse(
                     id=row.id,
                     direction=row.direction.value,
                     amount=WalletService._money(row.amount),
                     balance_after=WalletService._money(row.balance_after),
-                    wallet_id=wallet.id,
-                    wallet_type=wallet.wallet_type.value,
+                    wallet_id=wallet.id if wallet else 0,
+                    wallet_type=effective_wallet_type,
                     user_id=user.id if user else None,
-                    user_name=(profile.business_name if profile else user.name) if user else None,
+                    user_name=display_name,
                     user_email=user.email if user else None,
                     counterparty_wallet_id=cp_wallet.id if cp_wallet else None,
                     counterparty_user_id=cp_user.id if cp_user else None,
-                    counterparty_name=(
-                        (cp_profile.business_name if cp_profile else cp_user.name)
-                        if cp_user
-                        else ("Admin wallet" if cp_wallet and cp_wallet.wallet_type == WalletType.COMPANY else None)
-                    ),
+                    counterparty_name=cp_display_name,
                     counterparty_email=cp_user.email if cp_user else None,
                     note=row.note,
                     created_at=row.created_at,
@@ -291,12 +308,8 @@ class WalletService:
 
     @staticmethod
     def platform_cash_totals(db: Session):
-        """Merchant top-ups received, user withdrawals deducted, and the net balance."""
-        merchant_user_ids = db.query(MerchantProfile.user_id)
-        received_filter = and_(
-            WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP,
-            WalletTransaction.initiated_by_user_id.in_(merchant_user_ids),
-        )
+        """All top-ups received into the platform (merchants & users), withdrawals deducted, and the net balance."""
+        received_filter = WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP
         deducted_filter = WalletTransaction.transaction_type.in_(
             [WalletTransactionType.WITHDRAWAL, WalletTransactionType.WALLET_WITHDRAWAL]
         )
@@ -1060,13 +1073,14 @@ class WalletService:
         company_wallet = WalletService.get_company_wallet(db)
         db.flush()
 
+        merchant_name = merchant.business_name if merchant else "Merchant"
         group_id = str(uuid.uuid4())
         txn = WalletTransaction(
             group_id=group_id,
             transaction_type=WalletTransactionType.CASHBACK_REDEMPTION,
             amount=merchant_debit,
             currency=settings.WALLET_CURRENCY,
-            description=f"Cashback redemption for sale QR {sale_qr.token}",
+            description=f"Cashback redemption at {merchant_name} (Sale: ₹{sale_amount})",
             initiated_by_user_id=customer.id,
             reference_id=sale_qr.token,
         )
@@ -1084,7 +1098,7 @@ class WalletService:
             WalletLedgerDirection.DEBIT,
             merchant_debit,
             counterparty_wallet_id=locked_user.id,
-            note=f"{_percent_label(user_pct + company_pct)}% cashback on sale {sale_amount}",
+            note=f"{_percent_label(user_pct + company_pct)}% cashback deduction from {merchant_name} on sale ₹{sale_amount}",
         )
         WalletService._apply_ledger_line(
             db,
@@ -1093,7 +1107,7 @@ class WalletService:
             WalletLedgerDirection.CREDIT,
             user_cb,
             counterparty_wallet_id=locked_merchant.id,
-            note=f"{_percent_label(user_pct)}% user cashback on sale {sale_amount}",
+            note=f"{_percent_label(user_pct)}% customer cashback from {merchant_name} on sale ₹{sale_amount}",
         )
         WalletService._apply_ledger_line(
             db,
@@ -1102,7 +1116,7 @@ class WalletService:
             WalletLedgerDirection.CREDIT,
             company_fee,
             counterparty_wallet_id=locked_merchant.id,
-            note=f"{_percent_label(company_pct)}% platform fee on sale {sale_amount}",
+            note=f"{_percent_label(company_pct)}% admin platform fee from {merchant_name} on sale ₹{sale_amount}",
         )
 
         sale_qr.status = SaleQRStatus.REDEEMED
@@ -1341,7 +1355,7 @@ class WalletService:
     def get_admin_wallet_summary(db: Session) -> AdminWalletSummaryResponse:
         company_wallet = WalletService.get_company_wallet(db)
 
-        # Pure merchant customer payment commissions earned by platform (from QR sales / cashback redemptions)
+        # Platform fee commissions earned from QR sales / cashback redemptions
         total_commission = WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
             .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
@@ -1353,7 +1367,22 @@ class WalletService:
             .scalar()
         )
 
-        company_balance = total_commission
+        # Revenue earned from subscriptions / admin fee credits
+        total_subscription_revenue = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company_wallet.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                or_(
+                    WalletTransaction.transaction_type == WalletTransactionType.ADMIN_CREDIT,
+                    WalletTransaction.description.ilike("%Subscription%"),
+                ),
+            )
+            .scalar()
+        )
+
+        company_balance = WalletService._money(total_commission + total_subscription_revenue)
 
         total_user_balance = (
             db.query(func.coalesce(func.sum(Wallet.balance), 0))
