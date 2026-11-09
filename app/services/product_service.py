@@ -177,8 +177,8 @@ class ProductService:
             stock_status=data.stock_status or "IN_STOCK",
             district=data.district or seller.district,
             city=data.city or seller.city,
-            is_active=True if is_admin else False,
-            approval_status="APPROVED" if is_admin else "PENDING",  # Admin gets pending request to allow
+            is_active=True,
+            approval_status="APPROVED",
         )
         db.add(new_product)
         db.commit()

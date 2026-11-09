@@ -33,6 +33,8 @@ class ComplaintService:
                 or_(
                     Complaint.subject.ilike(s),
                     Complaint.user.ilike(s),
+                    Complaint.user_phone.ilike(s),
+                    Complaint.user_email.ilike(s),
                     Complaint.merchant.ilike(s),
                     Complaint.category.ilike(s),
                     Complaint.complaint_code.ilike(s),

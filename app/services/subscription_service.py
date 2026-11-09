@@ -391,6 +391,29 @@ class SubscriptionService:
         db.commit()
         db.refresh(sub)
 
+        if paid and paid > 0:
+            try:
+                from app.services.wallet_service import WalletService
+                from app.db.models.wallet import WalletTransaction, WalletTransactionType, WalletTransactionStatus
+                company_wallet = WalletService.get_company_wallet(db)
+                locked_company = WalletService._lock_wallet(db, company_wallet.id)
+                locked_company.balance += paid
+                txn = WalletTransaction(
+                    wallet_id=locked_company.id,
+                    transaction_type=WalletTransactionType.COMMISSION_RECEIVED,
+                    amount=paid,
+                    currency=pkg.currency or "INR",
+                    running_balance=locked_company.balance,
+                    status=WalletTransactionStatus.COMPLETED,
+                    reference_id=payload.payment_reference or f"SUB-{sub.id}",
+                    description=f"Subscription Revenue: {pkg.name} from {user.name or user.phone} (₹{paid})",
+                    initiated_by_user_id=user.id,
+                )
+                db.add(txn)
+                db.flush()
+            except Exception as e:
+                pass
+
         if SubscriptionService._audience_value(pkg) == "USER":
             SubscriptionService._apply_user_entitlements(db, user.id)
         else:

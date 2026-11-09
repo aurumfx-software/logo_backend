@@ -477,7 +477,7 @@ def list_merchants(
     status: Optional[str] = Query(None, description="Filter by status/approval status (e.g. pending, approved, all)"),
     approval_status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
     target_status = approval_status or status
