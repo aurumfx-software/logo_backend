@@ -703,3 +703,43 @@ def test_otp_send_and_verify_by_phone(client: TestClient):
     assert reuse_res.status_code == 400
 
 
+def test_upload_avatar_from_admin_origin(client: TestClient):
+    client.post(
+        "/api/v1/auth/register",
+        json={"name": "Avatar User", "email": "avatar.user@example.com", "password": "Password123!"},
+    )
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "avatar.user@example.com", "password": "Password123!"},
+    )
+    token = login.json()["access_token"]
+    origin = "https://168.144.18.149.sslip.io:8443"
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+        b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    preflight = client.options(
+        "/api/v1/auth/upload-avatar",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+
+    uploaded = client.post(
+        "/api/v1/auth/upload-avatar",
+        headers={"Authorization": f"Bearer {token}", "Origin": origin},
+        files={"avatar": ("face.png", png, "image/png")},
+    )
+    assert uploaded.status_code == 200
+    url = uploaded.json()["profile_picture_url"]
+    assert url.startswith("http")
+    assert "/static/avatars/" in url
+    assert uploaded.headers["access-control-allow-origin"] == origin
+    assert uploaded.headers["cross-origin-resource-policy"] == "cross-origin"
+
+

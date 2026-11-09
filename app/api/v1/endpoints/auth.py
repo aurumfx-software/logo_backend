@@ -1,9 +1,7 @@
 import os
-import shutil
-import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -38,6 +36,7 @@ from app.services.auth_service import AuthService
 from app.services.oauth_service import GoogleOAuthService
 from app.services.otp_delivery import OTPDeliveryService
 from app.services.otp_service import OTPService
+from app.services.storage_service import SpacesStorageService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -201,42 +200,94 @@ def update_profile(
     return SafeUserResponse.model_validate(updated_user)
 
 
+_AVATAR_FIELDS = ("file", "avatar", "image", "profile_picture", "photo")
+_AVATAR_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+_AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _public_base_url(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    proto = forwarded or request.url.scheme or "https"
+    host = (
+        (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _absolute_avatar_url(request: Request, stored_url: str) -> str:
+    if stored_url.startswith("http://") or stored_url.startswith("https://"):
+        if stored_url.startswith("http://") and _public_base_url(request).startswith("https://"):
+            path = stored_url.split("://", 1)[-1]
+            path = path[path.find("/") :] if "/" in path else ""
+            if path.startswith("/static/"):
+                return f"{_public_base_url(request)}{path}"
+        return stored_url
+    if stored_url.startswith("/"):
+        return f"{_public_base_url(request)}{stored_url}"
+    return stored_url
+
+
 @router.post(
     "/upload-avatar",
     response_model=AvatarUploadResponse,
     summary="Upload user avatar image",
-    description="Uploads a profile picture (JPEG, PNG, WEBP), saves it securely, and updates the user profile.",
+    description=(
+        "Uploads a profile picture (JPEG, PNG, WEBP) from the admin site. "
+        "Accepts multipart field file, avatar, image, profile_picture, or photo, "
+        "or a JSON body with a data-URL image. Returns an absolute image URL."
+    ),
 )
-def upload_avatar(
-    file: UploadFile = File(...),
+async def upload_avatar(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AvatarUploadResponse:
-    ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.",
-        )
-
+    content_type = (request.headers.get("content-type") or "").lower()
+    storage = SpacesStorageService()
     avatar_url = None
-    try:
-        from app.services.storage_service import storage_service
-        avatar_url = storage_service.upload_file(file, folder="avatars")
-    except Exception:
-        avatar_url = None
+
+    if "application/json" in content_type:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid avatar payload.")
+        raw = next((body.get(name) for name in _AVATAR_FIELDS if body.get(name)), None)
+        if not isinstance(raw, str) or not raw.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Send the image as file, avatar, image, or profile_picture.",
+            )
+        avatar_url = storage.upload_base64_media(raw.strip(), folder="avatars")
+    else:
+        form = await request.form()
+        upload = next((form.get(name) for name in _AVATAR_FIELDS if form.get(name)), None)
+        if not hasattr(upload, "read") or not hasattr(upload, "filename"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Send the image as multipart field file, avatar, image, profile_picture, or photo.",
+            )
+        file_ext = os.path.splitext(upload.filename or "")[1].lower()
+        media_type = (upload.content_type or "").split(";")[0].strip().lower()
+        if file_ext not in _AVATAR_EXTENSIONS:
+            file_ext = _AVATAR_TYPES.get(media_type, "")
+        if file_ext not in _AVATAR_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid image format. Allowed formats: JPG, JPEG, PNG, WEBP.",
+            )
+        upload.filename = f"avatar{file_ext}"
+        avatar_url = storage.upload_file(upload, folder="avatars")
 
     if not avatar_url:
-        upload_dir = os.path.join("uploads", "avatars")
-        os.makedirs(upload_dir, exist_ok=True)
-        unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-        file_path = os.path.join(upload_dir, unique_filename)
-        file.file.seek(0)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        avatar_url = f"/static/avatars/{unique_filename}"
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Avatar image is empty.")
 
+    avatar_url = _absolute_avatar_url(request, avatar_url)
     current_user.profile_picture = avatar_url
 
     # If this user is a merchant or has linked merchant profiles, sync photo_1

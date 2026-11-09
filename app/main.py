@@ -69,6 +69,8 @@ async def ensure_cors_headers(request: Request, call_next):
     if origin and is_origin_allowed(origin):
         if not response.headers.get("access-control-allow-origin"):
             apply_cors_headers(response, origin)
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
 
