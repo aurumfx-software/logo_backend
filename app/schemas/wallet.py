@@ -431,6 +431,8 @@ class WalletWithdrawalStatusResponse(BaseModel):
     account_number_masked: str
     ifsc: str
     payout_mode: str
+    payout_id: Optional[str] = None
+    failure_reason: Optional[str] = None
     created_at: datetime
 
 

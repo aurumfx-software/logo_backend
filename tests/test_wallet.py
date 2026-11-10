@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -359,6 +360,8 @@ def test_admin_list_all_transactions(client: TestClient, db_session: Session):
         },
     )
     assert withdraw_res.status_code == 201
+    assert withdraw_res.json()["payout_id"].startswith("pout_dev_")
+    assert withdraw_res.json()["status"] == "PROCESSING"
 
     wallet_res = client.get("/api/v1/wallet/admin/transactions", headers=admin_headers)
     assert wallet_res.status_code == 200
@@ -396,3 +399,57 @@ def test_admin_list_all_transactions(client: TestClient, db_session: Session):
     member_headers = _auth_headers(client, member.email, "Password123!")
     forbidden = client.get("/api/v1/admin/transactions", headers=member_headers)
     assert forbidden.status_code == 403
+
+
+def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Session, monkeypatch):
+    user = _create_user(db_session, "payout.user@example.com", "Payout User")
+    admin = _create_user(db_session, "payout.admin@example.com", "Admin", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": user.id, "amount": "80.00", "operation": "credit"},
+    )
+
+    def fake_payout(**kwargs):
+        assert kwargs["amount"] == Decimal("30.00")
+        assert kwargs["mode"] == "IMPS"
+        assert kwargs["account_number"] == "1234567890"
+        return {"id": "pout_live_1", "status": "processed", "fund_account_id": "fa_1"}
+
+    monkeypatch.setattr("app.services.wallet_service.RazorpayXService.create_payout", fake_payout)
+    headers = _auth_headers(client, user.email, "Password123!")
+    res = client.post(
+        "/api/v1/wallet/withdrawals",
+        headers=headers,
+        json={
+            "amount": "30.00",
+            "account_holder_name": "Payout User",
+            "account_number": "1234567890",
+            "ifsc": "HDFC0001234",
+            "payout_mode": "IMPS",
+        },
+    )
+    assert res.status_code == 201
+    body = res.json()
+    assert body["payout_id"] == "pout_live_1"
+    assert body["status"] == "COMPLETED"
+    assert body["wallet_balance"] == "50.00"
+
+    def fail_payout(**kwargs):
+        raise HTTPException(status_code=502, detail="RazorpayX payout failed: low balance")
+
+    monkeypatch.setattr("app.services.wallet_service.RazorpayXService.create_payout", fail_payout)
+    failed = client.post(
+        "/api/v1/wallet/withdrawals",
+        headers=headers,
+        json={
+            "amount": "10.00",
+            "account_holder_name": "Payout User",
+            "account_number": "1234567890",
+            "ifsc": "HDFC0001234",
+        },
+    )
+    assert failed.status_code == 502
+    me = client.get("/api/v1/wallet/me", headers=headers)
+    assert me.json()["wallet"]["balance"] == "50.00"

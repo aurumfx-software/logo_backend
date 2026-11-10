@@ -295,6 +295,10 @@ class WalletWithdrawal(Base):
     account_number = Column(String(64), nullable=False)
     ifsc = Column(String(32), nullable=False)
     payout_mode = Column(String(16), default="IMPS", nullable=False)
+    payout_id = Column(String(64), nullable=True, unique=True, index=True)
+    fund_account_id = Column(String(64), nullable=True)
+    razorpay_status = Column(String(32), nullable=True)
+    failure_reason = Column(String(500), nullable=True)
     status = Column(
         Enum(WithdrawalStatus, name="withdrawal_status", native_enum=False),
         default=WithdrawalStatus.PENDING,

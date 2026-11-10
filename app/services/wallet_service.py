@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.services.razorpayx_service import RazorpayXService
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
 from app.db.models.wallet import (
@@ -203,8 +204,8 @@ class WalletService:
                 provider_status = (
                     withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
                 )
-                provider_id = withdrawal.payout_mode
-                failure_reason = withdrawal.admin_note
+                provider_id = withdrawal.payout_id or withdrawal.payout_mode
+                failure_reason = withdrawal.failure_reason or withdrawal.admin_note
                 bank_name = withdrawal.account_holder_name
                 bank_last4 = (withdrawal.account_number or "")[-4:] or None
                 bank_ifsc = withdrawal.ifsc
@@ -1777,6 +1778,26 @@ class WalletService:
             note=f"Bank withdrawal to {payload.account_holder_name} A/C ending {payload.account_number[-4:]}",
         )
 
+        payout_mode = (payload.payout_mode or payload.mode or "IMPS").strip().upper()
+        try:
+            payout = RazorpayXService.create_payout(
+            amount=amount,
+            account_holder_name=payload.account_holder_name.strip(),
+            account_number=payload.account_number.strip(),
+            ifsc=payload.ifsc.strip().upper(),
+            mode=payout_mode,
+            reference_id=group_id,
+            user_name=user.name,
+            user_email=user.email,
+            user_phone=user.phone,
+            user_id=user.id,
+            )
+        except HTTPException:
+            db.rollback()
+            raise
+        razorpay_status = str(payout.get("status") or "processing")
+        local_status = WithdrawalStatus(RazorpayXService.local_status(razorpay_status))
+
         masked_acc = ("X" * max(0, len(payload.account_number) - 4)) + payload.account_number[-4:]
         withdrawal = WalletWithdrawal(
             transaction_group_id=group_id,
@@ -1787,17 +1808,25 @@ class WalletService:
             account_holder_name=payload.account_holder_name.strip(),
             account_number=masked_acc,
             ifsc=payload.ifsc.strip().upper(),
-            payout_mode=(payload.payout_mode or "IMPS").strip().upper(),
-            status=WithdrawalStatus.PENDING,
+            payout_mode=payout_mode,
+            payout_id=payout.get("id"),
+            fund_account_id=payout.get("fund_account_id"),
+            razorpay_status=razorpay_status,
+            status=local_status,
         )
         db.add(withdrawal)
         db.commit()
         db.refresh(locked)
         db.refresh(withdrawal)
 
+        sent = local_status == WithdrawalStatus.COMPLETED
         return WalletWithdrawalResponse(
             success=True,
-            message="Withdrawal request submitted successfully. Funds will be transferred to your bank account.",
+            message=(
+                "Money sent to your bank account."
+                if sent
+                else "RazorpayX is sending the money to your bank account."
+            ),
             transaction_group_id=group_id,
             amount=amount,
             account_holder_name=withdrawal.account_holder_name,
@@ -1805,6 +1834,7 @@ class WalletService:
             ifsc=withdrawal.ifsc,
             payout_mode=withdrawal.payout_mode,
             status=withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status),
+            payout_id=withdrawal.payout_id,
             wallet_balance=WalletService._money(locked.balance),
             created_at=withdrawal.created_at,
         )
@@ -1831,6 +1861,10 @@ class WalletService:
                 detail="Not authorized to view this withdrawal.",
             )
 
+        if w.payout_id and w.status == WithdrawalStatus.PROCESSING:
+            WalletService.apply_payout_update(db, w.payout_id, RazorpayXService.fetch_payout(w.payout_id).get("status"))
+            db.refresh(w)
+
         return WalletWithdrawalStatusResponse(
             success=True,
             transaction_group_id=w.transaction_group_id,
@@ -1840,7 +1874,52 @@ class WalletService:
             account_number_masked=w.account_number,
             ifsc=w.ifsc,
             payout_mode=w.payout_mode,
+            payout_id=w.payout_id,
+            failure_reason=w.failure_reason,
             created_at=w.created_at,
+        )
+
+    @staticmethod
+    def apply_payout_update(db: Session, payout_id: str, razorpay_status: Optional[str], failure_reason: Optional[str] = None) -> None:
+        if not payout_id:
+            return
+        withdrawal = db.query(WalletWithdrawal).filter(WalletWithdrawal.payout_id == payout_id).first()
+        if not withdrawal:
+            return
+        local = RazorpayXService.local_status(razorpay_status)
+        withdrawal.razorpay_status = (razorpay_status or withdrawal.razorpay_status or "")[:32]
+        if failure_reason:
+            withdrawal.failure_reason = failure_reason[:500]
+        if local == "FAILED" and withdrawal.status != WithdrawalStatus.FAILED:
+            WalletService._refund_failed_withdrawal(db, withdrawal)
+            withdrawal.status = WithdrawalStatus.FAILED
+        elif local == "COMPLETED":
+            withdrawal.status = WithdrawalStatus.COMPLETED
+        elif withdrawal.status != WithdrawalStatus.FAILED:
+            withdrawal.status = WithdrawalStatus.PROCESSING
+        db.commit()
+
+    @staticmethod
+    def _refund_failed_withdrawal(db: Session, withdrawal: WalletWithdrawal) -> None:
+        wallet = WalletService._lock_wallet(db, withdrawal.wallet_id)
+        txn = WalletTransaction(
+            group_id=str(uuid.uuid4()),
+            transaction_type=WalletTransactionType.ADMIN_CREDIT,
+            amount=withdrawal.amount,
+            currency=withdrawal.currency or settings.WALLET_CURRENCY,
+            description=f"Withdrawal refund. RazorpayX payout {withdrawal.payout_id} failed.",
+            initiated_by_user_id=withdrawal.user_id,
+            reference_id=withdrawal.payout_id,
+        )
+        db.add(txn)
+        db.flush()
+        WalletService._apply_ledger_line(
+            db,
+            txn,
+            wallet,
+            WalletLedgerDirection.CREDIT,
+            WalletService._money(withdrawal.amount),
+            note="Bank withdrawal returned because RazorpayX payout failed",
         )
 
 
