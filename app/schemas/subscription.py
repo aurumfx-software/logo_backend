@@ -139,3 +139,5 @@ class ActiveSubscriptionSummary(BaseModel):
     is_subscriber: bool = False
     subscription_plan: Optional[str] = None
     merchant_has_active_subscription: bool = False
+    merchant_profile_id: Optional[int] = None
+    merchant_business_name: Optional[str] = None

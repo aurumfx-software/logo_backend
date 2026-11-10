@@ -422,6 +422,32 @@ class WalletWithdrawalResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class AdminWithdrawalItem(BaseModel):
+    id: int
+    transaction_group_id: str
+    user_id: int
+    user_name: Optional[str] = None
+    user_phone: Optional[str] = None
+    user_email: Optional[str] = None
+    amount: Decimal
+    account_holder_name: str
+    account_number_masked: str
+    ifsc: str
+    payout_mode: str
+    status: str
+    payout_id: Optional[str] = None
+    failure_reason: Optional[str] = None
+    created_at: datetime
+
+
+class AdminWithdrawalListResponse(BaseModel):
+    success: bool = True
+    data: List[AdminWithdrawalItem] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 class WalletWithdrawalStatusResponse(BaseModel):
     success: bool = True
     transaction_group_id: str

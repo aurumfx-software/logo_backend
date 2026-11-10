@@ -360,8 +360,8 @@ def test_admin_list_all_transactions(client: TestClient, db_session: Session):
         },
     )
     assert withdraw_res.status_code == 201
-    assert withdraw_res.json()["payout_id"].startswith("pout_dev_")
-    assert withdraw_res.json()["status"] == "PROCESSING"
+    assert withdraw_res.json()["status"] == "PENDING"
+    assert withdraw_res.json()["payout_id"] is None
 
     wallet_res = client.get("/api/v1/wallet/admin/transactions", headers=admin_headers)
     assert wallet_res.status_code == 200
@@ -431,7 +431,17 @@ def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Sessi
         },
     )
     assert res.status_code == 201
-    body = res.json()
+    assert res.json()["status"] == "PENDING"
+    group_id = res.json()["transaction_group_id"]
+
+    listed = client.get("/api/v1/wallet/admin/withdrawals", headers=admin_headers, params={"status": "PENDING"})
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["data"][0]["account_number_masked"].endswith("7890")
+
+    sent = client.post(f"/api/v1/wallet/admin/withdrawals/{group_id}/send", headers=admin_headers)
+    assert sent.status_code == 200
+    body = sent.json()
     assert body["payout_id"] == "pout_live_1"
     assert body["status"] == "COMPLETED"
     assert body["wallet_balance"] == "50.00"
@@ -440,7 +450,7 @@ def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Sessi
         raise HTTPException(status_code=502, detail="RazorpayX payout failed: low balance")
 
     monkeypatch.setattr("app.services.wallet_service.RazorpayXService.create_payout", fail_payout)
-    failed = client.post(
+    second = client.post(
         "/api/v1/wallet/withdrawals",
         headers=headers,
         json={
@@ -450,6 +460,11 @@ def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Sessi
             "ifsc": "HDFC0001234",
         },
     )
+    assert second.status_code == 201
+    failed = client.post(
+        f"/api/v1/wallet/admin/withdrawals/{second.json()['transaction_group_id']}/send",
+        headers=admin_headers,
+    )
     assert failed.status_code == 502
     me = client.get("/api/v1/wallet/me", headers=headers)
-    assert me.json()["wallet"]["balance"] == "50.00"
+    assert me.json()["wallet"]["balance"] == "40.00"

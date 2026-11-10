@@ -99,9 +99,9 @@ def get_my_active_subscriptions(
             message="No active subscription",
         )
     user_subs, merchant_subs, user = SubscriptionService.get_active_summary(db=db, user=current_user)
-    merchant_flag = any(
-        s.merchant_profile_id
-        for s in merchant_subs
+    shop = SubscriptionService.merchant_for_account(db, user)
+    merchant_flag = any(s.merchant_profile_id for s in merchant_subs) or bool(
+        shop and shop.has_active_subscription
     )
     summary = ActiveSubscriptionSummary(
         user_subscriptions=[SubscriptionService._subscription_to_response(s) for s in user_subs],
@@ -110,6 +110,8 @@ def get_my_active_subscriptions(
         is_subscriber=user.is_subscriber,
         subscription_plan=user.subscription_plan,
         merchant_has_active_subscription=merchant_flag,
+        merchant_profile_id=shop.id if shop else None,
+        merchant_business_name=shop.business_name if shop else None,
     )
     return success_response(data=summary, message="Active subscription summary retrieved")
 

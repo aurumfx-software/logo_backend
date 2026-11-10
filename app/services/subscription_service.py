@@ -232,7 +232,15 @@ class SubscriptionService:
             return merchant
         if merchant.onboarded_by_id == user.id:
             return merchant
-        if user.phone and user.phone in {merchant.phone, merchant.contact_number}:
+        from app.services.merchant_service import MerchantService
+
+        user_tail = MerchantService._phone_tail(user.phone)
+        shop_tails = {
+            MerchantService._phone_tail(merchant.phone),
+            MerchantService._phone_tail(merchant.contact_number),
+            MerchantService._phone_tail(merchant.whatsapp),
+        }
+        if user_tail and user_tail in shop_tails:
             return merchant
         if user.email and merchant.email and user.email.strip().lower() == merchant.email.strip().lower():
             return merchant
@@ -360,15 +368,40 @@ class SubscriptionService:
 
         merchant_profile_id = payload.merchant_profile_id
         if SubscriptionService._audience_value(pkg) == "MERCHANT":
-            if merchant_profile_id:
-                SubscriptionService._assert_merchant_access(db, user, merchant_profile_id)
-            else:
-                from app.services.wallet_service import WalletService
+            from app.services.merchant_service import MerchantService
 
-                merchant = WalletService._merchant_for_user(
-                    db, user, None, allow_unapproved=True
+            merchant = None
+            if merchant_profile_id:
+                merchant = (
+                    db.query(MerchantProfile)
+                    .filter(MerchantProfile.id == merchant_profile_id)
+                    .first()
                 )
-                merchant_profile_id = merchant.id
+                if merchant is None:
+                    merchant = (
+                        db.query(MerchantProfile)
+                        .filter(MerchantProfile.user_id == merchant_profile_id)
+                        .order_by(MerchantProfile.id.desc())
+                        .first()
+                    )
+            if merchant is None:
+                merchant = MerchantService.find_for_user(db, user)
+            if merchant is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Merchant profile not found.",
+                )
+            merchant = SubscriptionService._assert_merchant_access(db, user, merchant.id)
+            approved = {"APPROVED", "ACTIVE"}
+            status_ok = (merchant.approval_status or "").upper() in approved or (
+                merchant.status or ""
+            ).upper() in approved
+            if not status_ok:
+                merchant.status = "APPROVED"
+                merchant.approval_status = "APPROVED"
+                db.commit()
+                db.refresh(merchant)
+            merchant_profile_id = merchant.id
         else:
             merchant_profile_id = None
 
@@ -498,6 +531,12 @@ class SubscriptionService:
                 user_subs.append(sub)
         user = SubscriptionService._apply_user_entitlements(db, user.id)
         return user_subs, merchant_subs, user
+
+    @staticmethod
+    def merchant_for_account(db: Session, user: User) -> Optional[MerchantProfile]:
+        from app.services.merchant_service import MerchantService
+
+        return MerchantService.find_for_user(db, user)
 
     @staticmethod
     def cancel_subscription(db: Session, user: User, subscription_id: int) -> UserSubscription:

@@ -91,3 +91,57 @@ def test_admin_assign_merchant_subscription(client: TestClient, db_session: Sess
     )
     assert assign_res.status_code == 201
     assert assign_res.json()["data"]["merchant_profile_id"] == merchant.id
+
+
+def test_merchant_business_tab_finds_shop_by_phone(client: TestClient, db_session: Session):
+    """Mobile login user and the shop owner can be different rows with the same phone."""
+    from app.core.security import hash_password
+    from app.db.models.merchant import MerchantProfile
+
+    owner = User(
+        name="Shop Owner",
+        email="owner.shop@merchant.local",
+        phone="+91 98765 43210",
+        password_hash=hash_password("Password123!"),
+        role=UserRole.MERCHANT,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    shop = MerchantProfile(
+        user_id=owner.id,
+        business_name="Logo Mart",
+        phone="+91-9876543210",
+        contact_number="9876543210",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+
+    app_user = _create_user(db_session, "app.user@logo.customer")
+    app_user.phone = "9876543210"
+    db_session.commit()
+    headers = _auth_headers(client, app_user.email)
+
+    active = client.get("/api/v1/subscriptions/me/active", headers=headers)
+    assert active.status_code == 200
+    assert active.json()["data"]["merchant_profile_id"] == shop.id
+    assert active.json()["data"]["merchant_business_name"] == "Logo Mart"
+
+    me = client.get("/api/v1/merchants/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["business_name"] == "Logo Mart"
+
+    packages = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    promo = next(p for p in packages if p["code"] == "MERCHANT_PROMO_BASIC")
+    sub_res = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": promo["id"], "merchant_profile_id": app_user.id},
+    )
+    assert sub_res.status_code == 201
+    assert sub_res.json()["data"]["merchant_profile_id"] == shop.id

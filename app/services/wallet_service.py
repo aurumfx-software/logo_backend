@@ -1779,26 +1779,6 @@ class WalletService:
         )
 
         payout_mode = (payload.payout_mode or payload.mode or "IMPS").strip().upper()
-        try:
-            payout = RazorpayXService.create_payout(
-            amount=amount,
-            account_holder_name=payload.account_holder_name.strip(),
-            account_number=payload.account_number.strip(),
-            ifsc=payload.ifsc.strip().upper(),
-            mode=payout_mode,
-            reference_id=group_id,
-            user_name=user.name,
-            user_email=user.email,
-            user_phone=user.phone,
-            user_id=user.id,
-            )
-        except HTTPException:
-            db.rollback()
-            raise
-        razorpay_status = str(payout.get("status") or "processing")
-        local_status = WithdrawalStatus(RazorpayXService.local_status(razorpay_status))
-
-        masked_acc = ("X" * max(0, len(payload.account_number) - 4)) + payload.account_number[-4:]
         withdrawal = WalletWithdrawal(
             transaction_group_id=group_id,
             user_id=user.id,
@@ -1806,13 +1786,10 @@ class WalletService:
             amount=amount,
             currency=settings.WALLET_CURRENCY,
             account_holder_name=payload.account_holder_name.strip(),
-            account_number=masked_acc,
+            account_number=payload.account_number.strip(),
             ifsc=payload.ifsc.strip().upper(),
             payout_mode=payout_mode,
-            payout_id=payout.get("id"),
-            fund_account_id=payout.get("fund_account_id"),
-            razorpay_status=razorpay_status,
-            status=local_status,
+            status=WithdrawalStatus.PENDING,
         )
         db.add(withdrawal)
         db.commit()
@@ -1821,15 +1798,14 @@ class WalletService:
 
         return WalletWithdrawalResponse(
             success=True,
-            message="Withdrawal successfully",
+            message="Withdrawal request submitted. An admin will send the money.",
             transaction_group_id=group_id,
             amount=amount,
             account_holder_name=withdrawal.account_holder_name,
-            account_number_masked=withdrawal.account_number,
+            account_number_masked=WalletService._mask_account(withdrawal.account_number),
             ifsc=withdrawal.ifsc,
             payout_mode=withdrawal.payout_mode,
-            status=withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status),
-            payout_id=withdrawal.payout_id,
+            status="PENDING",
             wallet_balance=WalletService._money(locked.balance),
             created_at=withdrawal.created_at,
         )
@@ -1866,13 +1842,137 @@ class WalletService:
             status=w.status.value if hasattr(w.status, "value") else str(w.status),
             amount=WalletService._money(w.amount),
             account_holder_name=w.account_holder_name,
-            account_number_masked=w.account_number,
+            account_number_masked=WalletService._mask_account(w.account_number),
             ifsc=w.ifsc,
             payout_mode=w.payout_mode,
             payout_id=w.payout_id,
             failure_reason=w.failure_reason,
             created_at=w.created_at,
         )
+
+    @staticmethod
+    def _mask_account(account_number: Optional[str]) -> str:
+        raw = account_number or ""
+        if len(raw) <= 4:
+            return raw
+        return ("X" * (len(raw) - 4)) + raw[-4:]
+
+    @staticmethod
+    def _withdrawal_to_response(withdrawal: WalletWithdrawal, balance: Decimal) -> WalletWithdrawalResponse:
+        status_value = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+        return WalletWithdrawalResponse(
+            success=True,
+            message="Withdrawal sent." if status_value == "COMPLETED" else "Withdrawal updated.",
+            transaction_group_id=withdrawal.transaction_group_id,
+            amount=WalletService._money(withdrawal.amount),
+            account_holder_name=withdrawal.account_holder_name,
+            account_number_masked=WalletService._mask_account(withdrawal.account_number),
+            ifsc=withdrawal.ifsc,
+            payout_mode=withdrawal.payout_mode,
+            status=status_value,
+            payout_id=withdrawal.payout_id,
+            failure_reason=withdrawal.failure_reason,
+            wallet_balance=WalletService._money(balance),
+            created_at=withdrawal.created_at,
+        )
+
+    @staticmethod
+    def list_admin_withdrawals(db: Session, page: int = 1, page_size: int = 20, status_filter: Optional[str] = None):
+        from app.schemas.wallet import AdminWithdrawalItem
+
+        query = db.query(WalletWithdrawal, User).join(User, User.id == WalletWithdrawal.user_id)
+        if status_filter and status_filter.strip().lower() not in {"", "all"}:
+            try:
+                query = query.filter(WalletWithdrawal.status == WithdrawalStatus(status_filter.strip().upper()))
+            except ValueError:
+                from sqlalchemy import false
+
+                query = query.filter(false())
+        total = query.count()
+        rows = (
+            query.order_by(WalletWithdrawal.created_at.desc(), WalletWithdrawal.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        items = []
+        for withdrawal, owner in rows:
+            status_value = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+            items.append(
+                AdminWithdrawalItem(
+                    id=withdrawal.id,
+                    transaction_group_id=withdrawal.transaction_group_id,
+                    user_id=owner.id,
+                    user_name=owner.name,
+                    user_phone=owner.phone,
+                    user_email=owner.email,
+                    amount=WalletService._money(withdrawal.amount),
+                    account_holder_name=withdrawal.account_holder_name,
+                    account_number_masked=WalletService._mask_account(withdrawal.account_number),
+                    ifsc=withdrawal.ifsc,
+                    payout_mode=withdrawal.payout_mode,
+                    status=status_value,
+                    payout_id=withdrawal.payout_id,
+                    failure_reason=withdrawal.failure_reason,
+                    created_at=withdrawal.created_at,
+                )
+            )
+        return items, total
+
+    @staticmethod
+    def admin_send_withdrawal(db: Session, transaction_group_id: str) -> WalletWithdrawalResponse:
+        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        withdrawal = (
+            db.query(WalletWithdrawal)
+            .filter(WalletWithdrawal.transaction_group_id == transaction_group_id.strip())
+            .first()
+        )
+        if not withdrawal:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Withdrawal request not found.")
+        current = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+        if current != WithdrawalStatus.PENDING.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Only a pending request can be sent. Current status is {current}.",
+            )
+        if "X" in (withdrawal.account_number or ""):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This request no longer has the full bank account number.",
+            )
+        owner = db.query(User).filter(User.id == withdrawal.user_id).first()
+        try:
+            payout = RazorpayXService.create_payout(
+                amount=WalletService._money(withdrawal.amount),
+                account_holder_name=withdrawal.account_holder_name,
+                account_number=withdrawal.account_number,
+                ifsc=withdrawal.ifsc,
+                mode=withdrawal.payout_mode or "IMPS",
+                reference_id=withdrawal.transaction_group_id,
+                user_name=owner.name if owner else withdrawal.account_holder_name,
+                user_email=owner.email if owner else None,
+                user_phone=owner.phone if owner else None,
+                user_id=withdrawal.user_id,
+            )
+        except HTTPException:
+            db.rollback()
+            raise
+        razorpay_status = str(payout.get("status") or "processing")
+        withdrawal.payout_id = payout.get("id")
+        withdrawal.fund_account_id = payout.get("fund_account_id")
+        withdrawal.razorpay_status = razorpay_status[:32]
+        withdrawal.status = WithdrawalStatus(RazorpayXService.local_status(razorpay_status))
+        db.commit()
+        db.refresh(withdrawal)
+        wallet = db.query(Wallet).filter(Wallet.id == withdrawal.wallet_id).first()
+        balance = wallet.balance if wallet else Decimal("0.00")
+        response = WalletService._withdrawal_to_response(withdrawal, balance)
+        response.message = (
+            "Money sent to the bank account."
+            if response.status == "COMPLETED"
+            else "RazorpayX is sending this withdrawal."
+        )
+        return response
 
     @staticmethod
     def apply_payout_update(db: Session, payout_id: str, razorpay_status: Optional[str], failure_reason: Optional[str] = None) -> None:

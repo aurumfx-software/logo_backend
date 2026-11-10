@@ -1,3 +1,4 @@
+import re
 from typing import Any, List, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy import String, cast, func, or_, select
@@ -532,34 +533,74 @@ class MerchantService:
         return merchant
 
     @staticmethod
-    def get_merchant_by_user_id(db: Session, user_id: int) -> MerchantProfile:
-        merchant = (
+    def _phone_tail(phone: Optional[str]) -> Optional[str]:
+        digits = re.sub(r"\D", "", phone or "")
+        if len(digits) < 10:
+            return None
+        return digits[-10:]
+
+    @staticmethod
+    def find_for_user(db: Session, user: User) -> Optional[MerchantProfile]:
+        """Shop owned by this login, including a different user row with the same phone or email."""
+        direct = (
             db.query(MerchantProfile)
-            .filter(MerchantProfile.user_id == user_id)
+            .filter(MerchantProfile.user_id == user.id)
             .order_by(MerchantProfile.id.desc())
             .first()
         )
-        if not merchant:
-            user = db.query(User).filter(User.id == user_id).first()
-            if user:
-                if user.email:
-                    merchant = (
-                        db.query(MerchantProfile)
-                        .filter(MerchantProfile.email.ilike(user.email.strip()))
-                        .order_by(MerchantProfile.id.desc())
-                        .first()
-                    )
-                if not merchant and user.phone:
-                    merchant = (
-                        db.query(MerchantProfile)
-                        .filter(MerchantProfile.phone == user.phone.strip())
-                        .order_by(MerchantProfile.id.desc())
-                        .first()
-                    )
-                if merchant and not merchant.user_id:
-                    merchant.user_id = user.id
-                    db.commit()
-                    db.refresh(merchant)
+        if direct:
+            return direct
+
+        clauses = []
+        email = (user.email or "").strip().lower()
+        tail = MerchantService._phone_tail(user.phone)
+        if email:
+            clauses.append(func.lower(MerchantProfile.email) == email)
+            clauses.append(
+                MerchantProfile.user_id.in_(
+                    select(User.id).where(func.lower(User.email) == email)
+                )
+            )
+        if tail:
+            clauses.append(MerchantProfile.phone.like(f"%{tail}"))
+            clauses.append(MerchantProfile.contact_number.like(f"%{tail}"))
+            clauses.append(MerchantProfile.whatsapp.like(f"%{tail}"))
+            clauses.append(
+                MerchantProfile.user_id.in_(
+                    select(User.id).where(User.phone.isnot(None), User.phone.like(f"%{tail}"))
+                )
+            )
+        if not clauses:
+            return None
+
+        merchant = (
+            db.query(MerchantProfile)
+            .filter(or_(*clauses))
+            .order_by(MerchantProfile.id.desc())
+            .first()
+        )
+        if not merchant or merchant.user_id == user.id:
+            return merchant
+
+        owner = db.query(User).filter(User.id == merchant.user_id).first()
+        owner_email = (owner.email or "").strip().lower() if owner and owner.email else ""
+        owner_tail = MerchantService._phone_tail(owner.phone) if owner else None
+        shop_tail = MerchantService._phone_tail(merchant.phone or merchant.contact_number or merchant.whatsapp)
+        shop_email = (merchant.email or "").strip().lower()
+        same_person = bool(
+            (email and (owner_email == email or shop_email == email))
+            or (tail and tail in {owner_tail, shop_tail})
+        )
+        if same_person:
+            merchant.user_id = user.id
+            db.commit()
+            db.refresh(merchant)
+        return merchant
+
+    @staticmethod
+    def get_merchant_by_user_id(db: Session, user_id: int) -> MerchantProfile:
+        user = db.query(User).filter(User.id == user_id).first()
+        merchant = MerchantService.find_for_user(db, user) if user else None
         if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
