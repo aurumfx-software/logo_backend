@@ -12,6 +12,7 @@ from app.schemas.product import (
     ProductResponse,
     OrderCreateRequest,
     OrderResponse,
+    OrderStatusUpdateRequest,
     SellerPermissionToggleRequest,
 )
 from app.services.product_service import ProductService
@@ -175,8 +176,61 @@ def get_my_orders(
         if o.product:
             item.product_name = o.product.name
             item.product_image = o.product.images[0] if o.product.images else None
+            item.seller_name = o.product.seller_name
+            item.seller_phone = o.product.seller_phone
+            item.seller_whatsapp = o.product.seller_whatsapp
         out.append(item)
     return out
+
+
+@router.get(
+    "/customer/products/orders/{id}",
+    response_model=OrderResponse,
+    summary="Get Seller Order Full Details",
+)
+def get_seller_order_detail(
+    id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    order = ProductService.get_seller_order_by_id(db=db, seller_id=current_user.id, order_id=id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order #{id} not found.",
+        )
+    item = OrderResponse.model_validate(order)
+    if order.product:
+        item.product_name = order.product.name
+        item.product_image = order.product.images[0] if order.product.images else None
+        item.seller_name = order.product.seller_name
+        item.seller_phone = order.product.seller_phone
+        item.seller_whatsapp = order.product.seller_whatsapp
+    return item
+
+
+@router.put(
+    "/customer/products/orders/{id}/status",
+    response_model=OrderResponse,
+    summary="Update Seller Order Status (NEW, CONTACTED, SHIPPED, DELIVERED, CANCELLED)",
+)
+def update_seller_order_status(
+    id: int,
+    data: OrderStatusUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    order = ProductService.update_seller_order_status(
+        db=db, seller_id=current_user.id, order_id=id, new_status=data.status, notes=data.notes
+    )
+    item = OrderResponse.model_validate(order)
+    if order.product:
+        item.product_name = order.product.name
+        item.product_image = order.product.images[0] if order.product.images else None
+        item.seller_name = order.product.seller_name
+        item.seller_phone = order.product.seller_phone
+        item.seller_whatsapp = order.product.seller_whatsapp
+    return item
 
 
 # =========================================================================

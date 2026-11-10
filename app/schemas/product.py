@@ -119,3 +119,9 @@ class SellerPermissionToggleRequest(BaseModel):
     can_sell_products: bool
     is_subscriber: Optional[bool] = None
     subscription_plan: Optional[str] = "500_SELLER"
+
+
+class OrderStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="NEW, CONTACTED, SHIPPED, DELIVERED, CANCELLED")
+    notes: Optional[str] = None
+

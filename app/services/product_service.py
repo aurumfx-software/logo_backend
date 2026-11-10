@@ -363,6 +363,35 @@ class ProductService:
         )
 
     @staticmethod
+    def get_seller_order_by_id(db: Session, seller_id: int, order_id: int) -> Optional[ProductOrder]:
+        return (
+            db.query(ProductOrder)
+            .filter(ProductOrder.id == order_id, ProductOrder.seller_id == seller_id)
+            .first()
+        )
+
+    @staticmethod
+    def update_seller_order_status(
+        db: Session, seller_id: int, order_id: int, new_status: str, notes: Optional[str] = None
+    ) -> ProductOrder:
+        order = (
+            db.query(ProductOrder)
+            .filter(ProductOrder.id == order_id, ProductOrder.seller_id == seller_id)
+            .first()
+        )
+        if not order:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Order #{order_id} not found.",
+            )
+        order.status = new_status.strip().upper()
+        if notes is not None:
+            order.notes = notes
+        db.commit()
+        db.refresh(order)
+        return order
+
+    @staticmethod
     def get_all_products_admin(
         db: Session,
         status_filter: Optional[str] = None,

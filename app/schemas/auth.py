@@ -247,6 +247,9 @@ class SafeUserResponse(BaseModel):
     profile_picture: Optional[str] = None
     is_active: bool = True
     is_verified: bool = False
+    can_sell_products: bool = False
+    is_subscriber: bool = False
+    subscription_plan: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
