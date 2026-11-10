@@ -1819,14 +1819,9 @@ class WalletService:
         db.refresh(locked)
         db.refresh(withdrawal)
 
-        sent = local_status == WithdrawalStatus.COMPLETED
         return WalletWithdrawalResponse(
             success=True,
-            message=(
-                "Money sent to your bank account."
-                if sent
-                else "RazorpayX is sending the money to your bank account."
-            ),
+            message="Withdrawal successfully",
             transaction_group_id=group_id,
             amount=amount,
             account_holder_name=withdrawal.account_holder_name,
