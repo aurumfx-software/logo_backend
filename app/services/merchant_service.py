@@ -526,6 +526,14 @@ class MerchantService:
     def get_merchant_by_id(db: Session, merchant_id: int) -> MerchantProfile:
         merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
         if not merchant:
+            # Fallback: check if the provided ID is the merchant owner's user_id
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(MerchantProfile.user_id == merchant_id)
+                .order_by(MerchantProfile.id.desc())
+                .first()
+            )
+        if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Merchant with ID {merchant_id} not found.",
@@ -1058,6 +1066,13 @@ class MerchantService:
     @staticmethod
     def delete_merchant(db: Session, merchant_id: int) -> bool:
         merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+        if not merchant:
+            merchant = (
+                db.query(MerchantProfile)
+                .filter(MerchantProfile.user_id == merchant_id)
+                .order_by(MerchantProfile.id.desc())
+                .first()
+            )
         if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

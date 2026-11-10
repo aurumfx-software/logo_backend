@@ -783,6 +783,45 @@ def get_my_merchants_list(
         )
     return [MerchantService.build_merchant_response(m) for m in merchants]
 
+@router.get(
+    "/me",
+    response_model=MerchantProfileResponse,
+    summary="Get current merchant's profile",
+    description="Returns the merchant profile of the currently authenticated merchant user.",
+)
+def get_current_merchant_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MerchantProfileResponse:
+    from app.db.models.merchant import MerchantProfile
+    merchant = (
+        db.query(MerchantProfile)
+        .filter(MerchantProfile.user_id == current_user.id)
+        .order_by(MerchantProfile.id.desc())
+        .first()
+    )
+    if not merchant and current_user.email:
+        merchant = (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.email.ilike(current_user.email))
+            .order_by(MerchantProfile.id.desc())
+            .first()
+        )
+    if not merchant and current_user.phone:
+        clean_p = current_user.phone.strip().replace(" ", "").replace("-", "")[-10:]
+        merchant = (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.phone.endswith(clean_p))
+            .order_by(MerchantProfile.id.desc())
+            .first()
+        )
+    if not merchant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Merchant profile not found for current user.",
+        )
+    return MerchantService.build_merchant_response(merchant)
+
 
 @router.get(
     "/{merchant_id}",

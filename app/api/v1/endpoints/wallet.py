@@ -39,6 +39,8 @@ from app.schemas.wallet import (
     AdminWalletTransactionResponse,
     AdminWithdrawalListResponse,
     WalletWithdrawalStatusResponse,
+    AdminWithdrawalListResponse,
+    AdminWithdrawalSendResponse,
 )
 from app.services.razorpayx_service import RazorpayXService
 from app.services.wallet_service import WalletService
@@ -394,6 +396,38 @@ def admin_send_funds(
 ) -> AdminSendFundsResponse:
     return WalletService.admin_send_funds(
         db=db, admin_user=current_admin, payload=payload
+    )
+
+
+@router.get(
+    "/admin/withdrawals",
+    response_model=AdminWithdrawalListResponse,
+    summary="Admin: list withdrawal requests (filter by PENDING, COMPLETED, etc.)",
+)
+def list_admin_withdrawals(
+    status: Optional[str] = Query(None, description="Filter by status (e.g. PENDING)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminWithdrawalListResponse:
+    return WalletService.list_admin_withdrawals(
+        db=db, status_filter=status, page=page, page_size=page_size
+    )
+
+
+@router.post(
+    "/admin/withdrawals/{transaction_group_id}/send",
+    response_model=AdminWithdrawalSendResponse,
+    summary="Admin: approve and send money for a PENDING withdrawal request via RazorpayX",
+)
+def admin_send_withdrawal(
+    transaction_group_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminWithdrawalSendResponse:
+    return WalletService.admin_send_withdrawal(
+        db=db, admin_user=current_admin, transaction_group_id=transaction_group_id
     )
 
 

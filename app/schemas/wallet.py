@@ -422,30 +422,44 @@ class WalletWithdrawalResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class AdminWithdrawalItem(BaseModel):
+class AdminWithdrawalItemResponse(BaseModel):
     id: int
     transaction_group_id: str
     user_id: int
     user_name: Optional[str] = None
     user_phone: Optional[str] = None
+    phone: Optional[str] = None
     user_email: Optional[str] = None
     amount: Decimal
     account_holder_name: str
     account_number_masked: str
+    masked_account_number: Optional[str] = None
     ifsc: str
     payout_mode: str
     status: str
     payout_id: Optional[str] = None
     failure_reason: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+AdminWithdrawalItem = AdminWithdrawalItemResponse
 
 
 class AdminWithdrawalListResponse(BaseModel):
     success: bool = True
-    data: List[AdminWithdrawalItem] = []
     total: int = 0
     page: int = 1
     page_size: int = 20
+    data: List[AdminWithdrawalItemResponse] = []
+    withdrawals: List[AdminWithdrawalItemResponse] = []
+
+    def __init__(self, **data_dict):
+        super().__init__(**data_dict)
+        if self.data and not self.withdrawals:
+            self.withdrawals = list(self.data)
+        elif self.withdrawals and not self.data:
+            self.data = list(self.withdrawals)
 
 
 class WalletWithdrawalStatusResponse(BaseModel):
@@ -530,4 +544,16 @@ class AdminWalletTransactionListResponse(BaseModel):
     total_received: Decimal = Decimal("0.00")
     total_deducted: Decimal = Decimal("0.00")
     real_balance: Decimal = Decimal("0.00")
+
+
+
+
+class AdminWithdrawalSendResponse(BaseModel):
+    success: bool = True
+    message: str
+    transaction_group_id: str
+    status: str
+    payout_id: Optional[str] = None
+    amount: Decimal
+
 
