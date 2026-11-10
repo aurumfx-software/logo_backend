@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -8,7 +8,7 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User
-from app.db.models.wallet import WalletTopupOrder
+from app.db.models.wallet import WalletTopupOrder, WalletTopupStatus
 from app.schemas.auth import GenericMessageResponse
 from app.schemas.wallet_payment import (
     RazorpayTopupOrderResponse,
@@ -21,6 +21,7 @@ from app.schemas.wallet_payment import (
     WalletTopupOrderStatusResponse,
 )
 from app.services.razorpay_service import RazorpayService
+from app.services.wallet_service import WalletService
 from app.services.wallet_topup_service import WalletTopupService
 
 router = APIRouter(prefix="/wallet/topup", tags=["Wallet Top-up (Razorpay)"])
@@ -67,6 +68,58 @@ def verify_razorpay_wallet_topup(
     db: Session = Depends(get_db),
 ) -> RazorpayTopupVerifyResponse:
     return WalletTopupService.verify_and_credit(db=db, user=current_user, payload=payload)
+
+
+@router.post(
+    "/razorpay/verify-checkout",
+    response_model=RazorpayTopupVerifyResponse,
+    summary="Checkout browser: verify Razorpay payment and credit wallet immediately",
+)
+def verify_checkout_payment(
+    payload: RazorpayTopupVerifyRequest,
+    db: Session = Depends(get_db),
+) -> RazorpayTopupVerifyResponse:
+    order_id = payload.razorpay_order_id.strip()
+    payment_id = payload.razorpay_payment_id.strip()
+    signature = payload.razorpay_signature.strip()
+
+    topup = (
+        db.query(WalletTopupOrder)
+        .filter(WalletTopupOrder.razorpay_order_id == order_id)
+        .with_for_update()
+        .first()
+    )
+    if not topup:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Wallet top-up order not found.",
+        )
+
+    if topup.status == WalletTopupStatus.PAID:
+        wallet = WalletService.ensure_wallet_for_user(db, topup.user_id)
+        db.refresh(wallet)
+        return RazorpayTopupVerifyResponse(
+            message="Wallet already credited for this order.",
+            topup_id=topup.id,
+            transaction_group_id=topup.wallet_transaction_group_id or "",
+            wallet_balance=WalletService._money(wallet.balance),
+            amount=WalletService._money(topup.amount),
+            razorpay_payment_id=topup.razorpay_payment_id or payment_id,
+        )
+
+    RazorpayService.verify_payment_signature(order_id, payment_id, signature)
+    topup, group_id = WalletTopupService._credit_topup_order(db, topup, payment_id)
+    wallet = WalletService.ensure_wallet_for_user(db, topup.user_id)
+    db.refresh(wallet)
+
+    return RazorpayTopupVerifyResponse(
+        message="Wallet topped up successfully.",
+        topup_id=topup.id,
+        transaction_group_id=group_id,
+        wallet_balance=WalletService._money(wallet.balance),
+        amount=WalletService._money(topup.amount),
+        razorpay_payment_id=payment_id,
+    )
 
 
 @router.post(
@@ -240,16 +293,40 @@ def render_razorpay_checkout_page(
     options.handler = function(response) {{
         document.getElementById('spinner').style.display = 'none';
         document.getElementById('title').innerText = 'Payment Successful!';
-        document.getElementById('desc').innerText = 'Returning to app...';
+        document.getElementById('desc').innerText = 'Crediting your wallet...';
         document.getElementById('status').innerHTML = '<div class="success">✓ Verified by Razorpay</div>';
 
-        if (redirectUrl) {{
-          const sep = redirectUrl.includes('?') ? '&' : '?';
-          const returnUrl = redirectUrl + sep + 'status=success' +
-            '&razorpay_payment_id=' + encodeURIComponent(response.razorpay_payment_id || '') +
-            '&razorpay_order_id=' + encodeURIComponent(response.razorpay_order_id || '') +
-            '&razorpay_signature=' + encodeURIComponent(response.razorpay_signature || '');
-          window.location.href = returnUrl;
+        // Immediately credit the wallet on backend
+        fetch('/api/v1/wallet/topup/razorpay/verify-checkout', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{
+            razorpay_order_id: response.razorpay_order_id || '',
+            razorpay_payment_id: response.razorpay_payment_id || '',
+            razorpay_signature: response.razorpay_signature || ''
+          }})
+        }}).then(function() {{
+          document.getElementById('desc').innerText = 'Wallet credited successfully! Returning to app...';
+        }}).catch(function(err) {{
+          console.warn('Verify-checkout error:', err);
+        }}).finally(function() {{
+          doRedirect();
+        }});
+
+        function doRedirect() {{
+          if (redirectUrl) {{
+            const sep = redirectUrl.includes('?') ? '&' : '?';
+            const returnUrl = redirectUrl + sep + 'status=success' +
+              '&razorpay_payment_id=' + encodeURIComponent(response.razorpay_payment_id || '') +
+              '&razorpay_order_id=' + encodeURIComponent(response.razorpay_order_id || '') +
+              '&razorpay_signature=' + encodeURIComponent(response.razorpay_signature || '');
+            
+            var btnHtml = '<a href="' + returnUrl + '" class="btn" style="background:#10b981; margin-top:16px; display:inline-block; text-decoration:none; padding:14px 20px; font-size:16px; border-radius:12px; font-weight:700;">✓ Tap to Return to Logo App</a>';
+            document.getElementById('status').innerHTML += btnHtml;
+
+            try {{ window.location.replace(returnUrl); }} catch(e) {{}}
+            try {{ window.location.href = returnUrl; }} catch(e) {{}}
+          }}
         }}
       }};
     options.modal = {{
