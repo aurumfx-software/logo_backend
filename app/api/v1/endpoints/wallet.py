@@ -431,6 +431,21 @@ def admin_send_withdrawal(
     )
 
 
+@router.post(
+    "/admin/withdrawals/{transaction_group_id}/reject",
+    response_model=WalletWithdrawalResponse,
+    summary="Admin: reject a PENDING withdrawal request and refund money to user wallet",
+)
+def admin_reject_withdrawal(
+    transaction_group_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> WalletWithdrawalResponse:
+    return WalletService.admin_reject_withdrawal(
+        db=db, admin_user=current_admin, transaction_group_id=transaction_group_id
+    )
+
+
 # =========================================================================
 # MERCHANT WALLET TOP-UPS (RAZORPAY)
 # =========================================================================

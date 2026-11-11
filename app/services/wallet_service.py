@@ -1999,6 +1999,7 @@ class WalletService:
         db: Session,
         transaction_group_id: str,
         admin_user: Optional[User] = None,
+        **kwargs,
     ) -> WalletWithdrawalResponse:
         WalletService.ensure_withdrawal_schema(db)
         withdrawal = (
@@ -2058,6 +2059,35 @@ class WalletService:
             if response.status == "COMPLETED"
             else "Payout initiated via RazorpayX."
         )
+        return response
+
+    @staticmethod
+    def admin_reject_withdrawal(
+        db: Session, transaction_group_id: str, admin_user: Optional[User] = None, reason: Optional[str] = None, **kwargs
+    ) -> WalletWithdrawalResponse:
+        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        withdrawal = (
+            db.query(WalletWithdrawal)
+            .filter(WalletWithdrawal.transaction_group_id == transaction_group_id.strip())
+            .first()
+        )
+        if not withdrawal:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Withdrawal request not found.")
+        current = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+        if current != WithdrawalStatus.PENDING.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Only a pending request can be rejected. Current status is {current}.",
+            )
+        WalletService._refund_failed_withdrawal(db, withdrawal)
+        withdrawal.status = WithdrawalStatus.REJECTED
+        withdrawal.failure_reason = (reason or "Rejected by admin")[:500]
+        db.commit()
+        db.refresh(withdrawal)
+        wallet = db.query(Wallet).filter(Wallet.id == withdrawal.wallet_id).first()
+        balance = wallet.balance if wallet else Decimal("0.00")
+        response = WalletService._withdrawal_to_response(withdrawal, balance)
+        response.message = "Withdrawal request rejected and amount refunded to user wallet."
         return response
 
     @staticmethod
