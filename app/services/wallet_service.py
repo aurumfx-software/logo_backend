@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, func, inspect, or_, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -198,6 +198,7 @@ class WalletService:
             WalletTransactionType.WALLET_WITHDRAWAL,
             WalletTransactionType.WITHDRAWAL,
         ):
+            WalletService.ensure_withdrawal_schema(db)
             withdrawal = (
                 db.query(WalletWithdrawal)
                 .filter(WalletWithdrawal.transaction_group_id == txn.group_id)
@@ -1740,10 +1741,52 @@ class WalletService:
         )
 
     @staticmethod
+    def ensure_withdrawal_schema(db: Session) -> None:
+        """Add payout columns when the live table was created before RazorpayX fields existed."""
+        if db.info.get("withdrawal_schema_ready"):
+            return
+        conn = db.connection()
+        inspector = inspect(conn)
+        if "wallet_withdrawals" not in inspector.get_table_names():
+            WalletWithdrawal.__table__.create(bind=conn, checkfirst=True)
+            db.commit()
+            db.info["withdrawal_schema_ready"] = True
+            return
+        existing = {column["name"] for column in inspector.get_columns("wallet_withdrawals")}
+        additions = [
+            ("transaction_group_id", "VARCHAR(36)"),
+            ("wallet_id", "INTEGER"),
+            ("account_holder_name", "VARCHAR(255)"),
+            ("account_number", "VARCHAR(64)"),
+            ("ifsc", "VARCHAR(32)"),
+            ("payout_mode", "VARCHAR(16)"),
+            ("payout_id", "VARCHAR(64)"),
+            ("fund_account_id", "VARCHAR(64)"),
+            ("razorpay_status", "VARCHAR(32)"),
+            ("failure_reason", "VARCHAR(500)"),
+            ("admin_note", "VARCHAR(500)"),
+        ]
+        missing = [(name, ddl) for name, ddl in additions if name not in existing]
+        if not missing:
+            db.info["withdrawal_schema_ready"] = True
+            return
+        for name, ddl in missing:
+            conn.execute(text(f"ALTER TABLE wallet_withdrawals ADD COLUMN {name} {ddl}"))
+        if "payout_id" not in existing:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_wallet_withdrawals_payout_id_model "
+                    "ON wallet_withdrawals (payout_id)"
+                )
+            )
+        db.commit()
+        db.info["withdrawal_schema_ready"] = True
+
+    @staticmethod
     def create_wallet_withdrawal(
         db: Session, user: User, payload: WalletWithdrawalRequest
     ) -> WalletWithdrawalResponse:
-        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        WalletService.ensure_withdrawal_schema(db)
 
         amount = WalletService._money(payload.amount)
         if amount <= Decimal("0.00"):
@@ -1826,7 +1869,7 @@ class WalletService:
     def get_wallet_withdrawal_status(
         db: Session, user: User, transaction_group_id: str
     ) -> WalletWithdrawalStatusResponse:
-        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        WalletService.ensure_withdrawal_schema(db)
         w = db.query(WalletWithdrawal).filter(
             WalletWithdrawal.transaction_group_id == transaction_group_id.strip()
         ).first()
@@ -1901,7 +1944,7 @@ class WalletService:
         page_size: int = 20,
         status_filter: Optional[str] = None,
     ):
-        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+        WalletService.ensure_withdrawal_schema(db)
         query = db.query(WalletWithdrawal, User).outerjoin(User, User.id == WalletWithdrawal.user_id)
         if status_filter and status_filter.strip().lower() not in {"", "all"}:
             clean_s = status_filter.strip().upper()
@@ -1944,11 +1987,20 @@ class WalletService:
                     updated_at=getattr(withdrawal, "updated_at", withdrawal.created_at),
                 )
             )
-        return items, total
+        return AdminWithdrawalListResponse(
+            data=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     @staticmethod
-    def admin_send_withdrawal(db: Session, transaction_group_id: str) -> WalletWithdrawalResponse:
-        WalletWithdrawal.__table__.create(bind=db.get_bind(), checkfirst=True)
+    def admin_send_withdrawal(
+        db: Session,
+        transaction_group_id: str,
+        admin_user: Optional[User] = None,
+    ) -> WalletWithdrawalResponse:
+        WalletService.ensure_withdrawal_schema(db)
         withdrawal = (
             db.query(WalletWithdrawal)
             .filter(WalletWithdrawal.transaction_group_id == transaction_group_id.strip())
@@ -2012,6 +2064,7 @@ class WalletService:
     def apply_payout_update(db: Session, payout_id: str, razorpay_status: Optional[str], failure_reason: Optional[str] = None) -> None:
         if not payout_id:
             return
+        WalletService.ensure_withdrawal_schema(db)
         withdrawal = db.query(WalletWithdrawal).filter(WalletWithdrawal.payout_id == payout_id).first()
         if not withdrawal:
             return

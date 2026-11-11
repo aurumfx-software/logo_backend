@@ -471,35 +471,6 @@ def verify_merchant_topup(
 # CUSTOMER WALLET WITHDRAWALS
 # =========================================================================
 
-@router.get(
-    "/admin/withdrawals",
-    response_model=AdminWithdrawalListResponse,
-    summary="Admin: withdrawal requests from the mobile app",
-)
-def list_admin_withdrawal_requests(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status_filter: Optional[str] = Query(None, alias="status", description="PENDING, PROCESSING, COMPLETED, FAILED, or all"),
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> AdminWithdrawalListResponse:
-    items, total = WalletService.list_admin_withdrawals(db, page, page_size, status_filter)
-    return AdminWithdrawalListResponse(data=items, total=total, page=page, page_size=page_size)
-
-
-@router.post(
-    "/admin/withdrawals/{transaction_group_id}/send",
-    response_model=WalletWithdrawalResponse,
-    summary="Admin: send a pending withdrawal through RazorpayX",
-)
-def admin_send_withdrawal(
-    transaction_group_id: str,
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> WalletWithdrawalResponse:
-    return WalletService.admin_send_withdrawal(db, transaction_group_id)
-
-
 @router.post(
     "/withdrawals",
     response_model=WalletWithdrawalResponse,

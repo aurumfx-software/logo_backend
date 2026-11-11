@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
@@ -361,7 +362,7 @@ def test_admin_list_all_transactions(client: TestClient, db_session: Session):
     )
     assert withdraw_res.status_code == 201
     assert withdraw_res.json()["status"] == "PENDING"
-    assert withdraw_res.json()["payout_id"] is None
+    assert not withdraw_res.json()["payout_id"]
 
     wallet_res = client.get("/api/v1/wallet/admin/transactions", headers=admin_headers)
     assert wallet_res.status_code == 200
@@ -444,7 +445,8 @@ def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Sessi
     body = sent.json()
     assert body["payout_id"] == "pout_live_1"
     assert body["status"] == "COMPLETED"
-    assert body["wallet_balance"] == "50.00"
+    balance = client.get("/api/v1/wallet/me", headers=headers)
+    assert balance.json()["wallet"]["balance"] == "50.00"
 
     def fail_payout(**kwargs):
         raise HTTPException(status_code=502, detail="RazorpayX payout failed: low balance")
@@ -468,3 +470,42 @@ def test_withdrawal_sends_razorpayx_payout(client: TestClient, db_session: Sessi
     assert failed.status_code == 502
     me = client.get("/api/v1/wallet/me", headers=headers)
     assert me.json()["wallet"]["balance"] == "40.00"
+
+
+def test_withdrawal_status_repairs_missing_payout_columns(client: TestClient, db_session: Session):
+    user = _create_user(db_session, "repair.user@example.com", "Repair User")
+    admin = _create_user(db_session, "repair.admin@example.com", "Admin", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email, "Password123!")
+    client.post(
+        "/api/v1/wallet/admin/adjust",
+        headers=admin_headers,
+        json={"user_id": user.id, "amount": "80.00", "operation": "credit"},
+    )
+    headers = _auth_headers(client, user.email, "Password123!")
+    created = client.post(
+        "/api/v1/wallet/withdrawals",
+        headers=headers,
+        json={
+            "amount": "20.00",
+            "account_holder_name": "Repair User",
+            "account_number": "1234567890",
+            "ifsc": "HDFC0001234",
+        },
+    )
+    assert created.status_code == 201
+    group_id = created.json()["transaction_group_id"]
+
+    db_session.execute(text("DROP INDEX IF EXISTS ix_wallet_withdrawals_payout_id"))
+    db_session.execute(text("ALTER TABLE wallet_withdrawals DROP COLUMN payout_id"))
+    db_session.execute(text("ALTER TABLE wallet_withdrawals DROP COLUMN fund_account_id"))
+    db_session.execute(text("ALTER TABLE wallet_withdrawals DROP COLUMN razorpay_status"))
+    db_session.commit()
+    db_session.info.pop("withdrawal_schema_ready", None)
+
+    status_res = client.get(f"/api/v1/wallet/withdrawals/{group_id}", headers=headers)
+    assert status_res.status_code == 200
+    assert status_res.json()["status"] == "PENDING"
+
+    listed = client.get("/api/v1/wallet/admin/withdrawals", headers=admin_headers)
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
