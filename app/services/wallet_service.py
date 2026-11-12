@@ -1976,6 +1976,7 @@ class WalletService:
                     user_email=owner.email if owner else None,
                     amount=WalletService._money(withdrawal.amount),
                     account_holder_name=withdrawal.account_holder_name,
+                    account_number=clean_acc,
                     account_number_masked=masked,
                     masked_account_number=masked,
                     ifsc=withdrawal.ifsc,

@@ -432,6 +432,7 @@ class AdminWithdrawalItemResponse(BaseModel):
     user_email: Optional[str] = None
     amount: Decimal
     account_holder_name: str
+    account_number: Optional[str] = None
     account_number_masked: str
     masked_account_number: Optional[str] = None
     ifsc: str
