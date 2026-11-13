@@ -145,7 +145,7 @@ def get_marketplace_page(
 )
 def buy_marketplace_item(
     data: OrderCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> OrderResponse:
     order, whatsapp_url = ProductService.create_order(db=db, data=data, buyer=current_user)
@@ -161,9 +161,11 @@ def list_my_purchases(
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> List[OrderResponse]:
+    if current_user is None:
+        return []
     orders, _total = ProductService.get_buyer_orders(
         db, current_user, status_filter=status_filter, limit=limit, offset=offset
     )
@@ -179,9 +181,11 @@ def buyer_order_history(
     status_filter: Optional[str] = Query(None, alias="status"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> OrderHistoryResponse:
+    if current_user is None:
+        return OrderHistoryResponse(limit=limit, offset=offset)
     orders, total = ProductService.get_buyer_orders(
         db, current_user, status_filter=status_filter, limit=limit, offset=offset
     )
@@ -289,7 +293,12 @@ def review_my_purchase(
 
 
 @router.get("/marketplace/wishlist", response_model=WishlistResponse, summary="My saved products")
-def list_wishlist(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> WishlistResponse:
+def list_wishlist(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> WishlistResponse:
+    if current_user is None:
+        return WishlistResponse()
     return BuyerCommerceService.list_wishlist(db, current_user)
 
 
@@ -313,8 +322,10 @@ def delete_wishlist(
 
 @router.get("/marketplace/addresses", response_model=List[AddressResponse], summary="Saved delivery addresses")
 def list_addresses(
-    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    current_user: Optional[User] = Depends(get_current_user_optional), db: Session = Depends(get_db)
 ) -> List[AddressResponse]:
+    if current_user is None:
+        return []
     return [AddressResponse.model_validate(row) for row in BuyerCommerceService.list_addresses(db, current_user)]
 
 
@@ -353,7 +364,12 @@ def delete_address(
 
 
 @router.get("/marketplace/cart", response_model=CartResponse, summary="Current server-side cart")
-def get_cart(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CartResponse:
+def get_cart(
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> CartResponse:
+    if current_user is None:
+        return CartResponse()
     return BuyerCommerceService.get_cart(db, current_user)
 
 

@@ -1,6 +1,6 @@
 from typing import Callable, List, Optional
-from fastapi import Depends, HTTPException, WebSocketException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, Request, WebSocketException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 import jwt
 
@@ -10,16 +10,52 @@ from app.db.models.user import User, UserRole
 from app.services.auth_service import AuthService
 
 # HTTP Bearer scheme with automatic Swagger UI integration
-security_scheme = HTTPBearer(auto_error=True)
-optional_security_scheme = HTTPBearer(auto_error=False)
+security_scheme = HTTPBearer(auto_error=False)
+optional_security_scheme = security_scheme
 
 
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    db: Session = Depends(get_db),
-) -> User:
-    """Validate Bearer JWT access token and return the authenticated User."""
-    token = credentials.credentials
+def _clean_token(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    token = str(value).strip().strip('"').strip("'")
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token or None
+
+
+def resolve_access_token(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials],
+) -> Optional[str]:
+    """Accept Bearer, a raw JWT, an access-token header, or a token query param."""
+    if credentials and credentials.credentials:
+        cleaned = _clean_token(credentials.credentials)
+        if cleaned:
+            return cleaned
+
+    raw = request.headers.get("authorization")
+    if raw:
+        if " " in raw:
+            scheme, creds = raw.split(" ", 1)
+            if scheme.lower() == "bearer":
+                return _clean_token(creds)
+        cleaned = _clean_token(raw)
+        if cleaned and cleaned.count(".") == 2:
+            return cleaned
+
+    for name in ("x-access-token", "x-auth-token", "access-token"):
+        token = _clean_token(request.headers.get(name))
+        if token:
+            return token
+
+    for key in ("access_token", "token"):
+        token = _clean_token(request.query_params.get(key))
+        if token:
+            return token
+    return None
+
+
+def _user_from_access_token(db: Session, token: str) -> User:
     try:
         payload = decode_token(token)
     except jwt.ExpiredSignatureError:
@@ -57,7 +93,10 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    try:
+        user = db.query(User).filter(User.id == int(user_id)).first()
+    except (TypeError, ValueError):
+        user = None
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -70,30 +109,38 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is inactive.",
         )
-
     return user
 
 
+def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Validate the access token from Bearer, a raw JWT, or a token query param."""
+    token = resolve_access_token(request, credentials)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return _user_from_access_token(db, token)
+
+
 def get_current_user_optional(
-    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security_scheme),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
     db: Session = Depends(get_db),
 ) -> User | None:
-    """Extract authenticated User if Bearer token is provided; otherwise returns None."""
-    if not credentials or not credentials.credentials:
+    """Return the user when a valid access token is sent. A missing token is not an error."""
+    token = resolve_access_token(request, credentials)
+    if not token:
         return None
     try:
-        payload = decode_token(credentials.credentials)
-        if payload.get("type") != "access":
-            return None
-        user_id = payload.get("sub")
-        if not user_id:
-            return None
-        user = db.query(User).filter(User.id == int(user_id)).first()
-        if user and user.is_active:
-            return user
-    except Exception:
+        return _user_from_access_token(db, token)
+    except HTTPException:
         return None
-    return None
 
 
 def authenticate_websocket_user(token: str, db: Session) -> User:

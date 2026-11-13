@@ -208,3 +208,21 @@ def test_buyer_can_cancel_before_shipping(client: TestClient, db_session: Sessio
     assert body["status"] == "CANCELLED"
     assert body["cancellation_reason"] == "Ordered by mistake"
     assert client.get(f"/api/v1/products/{product_id}").json()["stock_quantity"] == 2
+
+
+def test_shop_reads_without_a_token_and_raw_jwt(client: TestClient, db_session: Session):
+    guest_cart = client.get("/api/v1/marketplace/cart")
+    assert guest_cart.status_code == 200
+    assert guest_cart.json()["items"] == []
+
+    guest_orders = client.get("/api/v1/marketplace/orders/history")
+    assert guest_orders.status_code == 200
+    assert guest_orders.json()["total"] == 0
+
+    buyer = _user(db_session, "buyer.token@example.com", "Buyer", "9876500099")
+    login = client.post("/api/v1/auth/login", json={"email": buyer.email, "password": "Password123!"})
+    raw = login.json()["access_token"]
+    cart = client.get("/api/v1/marketplace/cart", headers={"Authorization": raw})
+    assert cart.status_code == 200
+    wishlist = client.get("/api/v1/marketplace/wishlist", headers={"X-Access-Token": raw})
+    assert wishlist.status_code == 200
