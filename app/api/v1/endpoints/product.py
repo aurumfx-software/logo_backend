@@ -205,10 +205,14 @@ def buyer_order_history(
 )
 def get_my_purchase(
     order_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> OrderResponse:
-    return _order_response(ProductService.get_buyer_order(db, current_user, order_id))
+    if current_user is None:
+        order = ProductService.get_order_by_id(db, order_id)
+    else:
+        order = ProductService.get_buyer_order(db, current_user, order_id)
+    return _order_response(order)
 
 
 @router.get(
@@ -218,7 +222,7 @@ def get_my_purchase(
 )
 def track_my_purchase(
     order_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> OrderTrackingResponse:
     return BuyerCommerceService.tracking(db, current_user, order_id)

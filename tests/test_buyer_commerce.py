@@ -226,3 +226,34 @@ def test_shop_reads_without_a_token_and_raw_jwt(client: TestClient, db_session: 
     assert cart.status_code == 200
     wishlist = client.get("/api/v1/marketplace/wishlist", headers={"X-Access-Token": raw})
     assert wishlist.status_code == 200
+
+
+def test_order_detail_without_token(client: TestClient, db_session: Session):
+    seller = _user(db_session, "seller.open@example.com", "Seller", "9876500081")
+    buyer = _user(db_session, "buyer.open@example.com", "Buyer", "9876500082")
+    seller_headers = _headers(client, seller.email)
+    buyer_headers = _headers(client, buyer.email)
+    listed = client.post(
+        "/api/v1/customer/products",
+        headers=seller_headers,
+        json={"name": "Open lamp", "price": 80, "stock_quantity": 2},
+    )
+    bought = client.post(
+        "/api/v1/marketplace/orders",
+        headers=buyer_headers,
+        json={
+            "product_id": listed.json()["id"],
+            "buyer_name": "Buyer",
+            "buyer_phone": "9876500082",
+            "buyer_address": "House 8, Kochi",
+            "buyer_pincode": "682001",
+            "quantity": 1,
+        },
+    )
+    order_id = bought.json()["id"]
+    open_order = client.get(f"/api/v1/marketplace/orders/{order_id}")
+    assert open_order.status_code == 200
+    assert open_order.json()["id"] == order_id
+    tracking = client.get(f"/api/v1/marketplace/orders/{order_id}/tracking")
+    assert tracking.status_code == 200
+    assert tracking.json()["order_id"] == order_id

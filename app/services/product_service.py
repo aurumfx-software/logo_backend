@@ -643,6 +643,14 @@ class ProductService:
         return orders, total
 
     @staticmethod
+    def get_order_by_id(db: Session, order_id: int) -> ProductOrder:
+        ProductService.ensure_order_schema(db)
+        order = db.query(ProductOrder).filter(ProductOrder.id == order_id).first()
+        if not order:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found.")
+        return order
+
+    @staticmethod
     def get_buyer_order(db: Session, buyer: User, order_id: int) -> ProductOrder:
         ProductService.ensure_order_schema(db)
         order = db.query(ProductOrder).filter(ProductOrder.id == order_id).first()

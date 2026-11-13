@@ -518,8 +518,11 @@ class BuyerCommerceService:
         )
 
     @staticmethod
-    def tracking(db: Session, user: User, order_id: int) -> OrderTrackingResponse:
-        order = ProductService.get_buyer_order(db, user, order_id)
+    def tracking(db: Session, user: Optional[User], order_id: int) -> OrderTrackingResponse:
+        if user is None:
+            order = ProductService.get_order_by_id(db, order_id)
+        else:
+            order = ProductService.get_buyer_order(db, user, order_id)
         current = normalize_order_status(order.status)
         events = []
         for row in _parse_events(order.courier_events):
