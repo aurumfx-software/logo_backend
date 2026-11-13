@@ -94,8 +94,10 @@ class _PrivateNetworkHeaderMiddleware:
         async def send_wrapper(message):
             if allow_private and message.get("type") == "http.response.start":
                 headers = list(message.get("headers") or [])
-                headers.append((b"access-control-allow-private-network", b"true"))
-                message = {**message, "headers": headers}
+                already = any(name.lower() == b"access-control-allow-private-network" for name, _value in headers)
+                if not already:
+                    headers.append((b"access-control-allow-private-network", b"true"))
+                    message = {**message, "headers": headers}
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
@@ -111,6 +113,7 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=86400,
+    allow_private_network=True,
 )
 app.add_middleware(_PrivateNetworkHeaderMiddleware)
 

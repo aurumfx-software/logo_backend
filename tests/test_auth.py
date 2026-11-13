@@ -597,10 +597,12 @@ def test_upload_avatar_from_admin_origin(client: TestClient):
             "Origin": origin,
             "Access-Control-Request-Method": "POST",
             "Access-Control-Request-Headers": "authorization,content-type",
+            "Access-Control-Request-Private-Network": "true",
         },
     )
     assert preflight.status_code == 200
     assert preflight.headers["access-control-allow-origin"] == origin
+    assert preflight.headers["access-control-allow-private-network"] == "true"
 
     uploaded = client.post(
         "/api/v1/auth/upload-avatar",
