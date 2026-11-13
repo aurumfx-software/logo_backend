@@ -9,7 +9,14 @@ from sqlalchemy import and_, inspect, or_, desc, text
 from sqlalchemy.orm import Session
 
 from app.db.models.user import User, UserRole
-from app.db.models.product import CustomerProduct, ProductOrder
+from app.db.models.product import (
+    CartItem,
+    CustomerProduct,
+    DeliveryAddress,
+    ProductOrder,
+    ProductReview,
+    ProductWishlist,
+)
 from app.schemas.product import (
     ProductCreateRequest,
     ProductUpdateRequest,
@@ -103,6 +110,13 @@ class ProductService:
         inspector = inspect(conn)
         if "product_orders" not in inspector.get_table_names():
             ProductOrder.__table__.create(bind=conn, checkfirst=True)
+            for table in (
+                DeliveryAddress.__table__,
+                ProductWishlist.__table__,
+                CartItem.__table__,
+                ProductReview.__table__,
+            ):
+                table.create(bind=conn, checkfirst=True)
             db.commit()
             db.info["product_order_schema_ready"] = True
             return
@@ -112,6 +126,17 @@ class ProductService:
             ("unit_price", "NUMERIC(10, 2)"),
             ("buyer_user_id", "INTEGER"),
             ("status_history", json_type),
+            ("payment_status", "VARCHAR(32)"),
+            ("payment_method", "VARCHAR(32)"),
+            ("razorpay_order_id", "VARCHAR(64)"),
+            ("razorpay_payment_id", "VARCHAR(64)"),
+            ("cancellation_reason", "VARCHAR(500)"),
+            ("cancelled_at", "TIMESTAMP"),
+            ("courier_partner", "VARCHAR(100)"),
+            ("tracking_number", "VARCHAR(64)"),
+            ("tracking_url", "VARCHAR(500)"),
+            ("estimated_delivery_at", "TIMESTAMP"),
+            ("courier_events", json_type),
         ]
         missing = [(name, ddl) for name, ddl in additions if name not in existing]
         product_columns = set()
@@ -119,9 +144,22 @@ class ProductService:
             product_columns = {column["name"] for column in inspector.get_columns("customer_products")}
             if "stock_quantity" not in product_columns:
                 missing.append(("stock_quantity", "INTEGER"))
+            if "rating_sum" not in product_columns:
+                missing.append(("rating_sum", "INTEGER"))
+            if "rating_count" not in product_columns:
+                missing.append(("rating_count", "INTEGER"))
         for name, ddl in missing:
-            table = "customer_products" if name == "stock_quantity" else "product_orders"
+            table = "customer_products" if name in {"stock_quantity", "rating_sum", "rating_count"} else "product_orders"
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        for table in (
+            DeliveryAddress.__table__,
+            ProductWishlist.__table__,
+            CartItem.__table__,
+            ProductReview.__table__,
+        ):
+            if table.name not in inspector.get_table_names():
+                table.create(bind=conn, checkfirst=True)
+                missing.append((table.name, "TABLE"))
         if missing:
             db.commit()
         db.info["product_order_schema_ready"] = True
@@ -548,6 +586,8 @@ class ProductService:
             status="PLACED",
             notes=data.notes.strip() if data.notes else None,
             status_history=[],
+            payment_status="UNPAID",
+            courier_events=[],
         )
         ProductService._record_status(order, "PLACED", data.notes)
         db.add(order)
@@ -578,7 +618,13 @@ class ProductService:
         )
 
     @staticmethod
-    def get_buyer_orders(db: Session, buyer: User) -> List[ProductOrder]:
+    def get_buyer_orders(
+        db: Session,
+        buyer: User,
+        status_filter: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[ProductOrder], int]:
         ProductService.ensure_order_schema(db)
         filters = [ProductOrder.buyer_user_id == buyer.id]
         tail = "".join(ch for ch in (buyer.phone or "") if ch.isdigit())[-10:]
@@ -589,12 +635,12 @@ class ProductService:
                     ProductOrder.buyer_phone.like(f"%{tail}"),
                 )
             )
-        return (
-            db.query(ProductOrder)
-            .filter(or_(*filters))
-            .order_by(desc(ProductOrder.created_at))
-            .all()
-        )
+        query = db.query(ProductOrder).filter(or_(*filters))
+        if status_filter and status_filter.strip().lower() not in {"", "all"}:
+            query = query.filter(ProductOrder.status == normalize_order_status(status_filter))
+        total = query.count()
+        orders = query.order_by(desc(ProductOrder.created_at)).offset(offset).limit(limit).all()
+        return orders, total
 
     @staticmethod
     def get_buyer_order(db: Session, buyer: User, order_id: int) -> ProductOrder:
@@ -615,16 +661,23 @@ class ProductService:
         return len(tail) == 10 and tail == order_tail
 
     @staticmethod
-    def cancel_buyer_order(db: Session, buyer: User, order_id: int) -> ProductOrder:
+    def cancel_buyer_order(
+        db: Session, buyer: User, order_id: int, reason: Optional[str] = None
+    ) -> ProductOrder:
         order = ProductService.get_buyer_order(db, buyer, order_id)
         current = normalize_order_status(order.status)
-        if current not in {"PLACED", "NEW", "PENDING"}:
+        if current not in {"PLACED", "CONFIRMED", "NEW", "PENDING"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This order can only be cancelled before the seller confirms it.",
+                detail="This order can only be cancelled before it is shipped.",
             )
-        ProductService._record_status(order, "CANCELLED", "Cancelled by buyer")
+        note = (reason or "Cancelled by buyer").strip()
+        ProductService._record_status(order, "CANCELLED", note)
         ProductService._restore_stock(order)
+        order.cancellation_reason = note[:500]
+        order.cancelled_at = datetime.now(timezone.utc)
+        if (order.payment_status or "").upper() == "PAID":
+            order.payment_status = "REFUND_PENDING"
         order.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(order)

@@ -70,6 +70,8 @@ class ProductResponse(BaseModel):
     rejection_reason: Optional[str] = None
     views_count: int = 0
     orders_count: int = 0
+    rating_count: int = 0
+    rating_average: float = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -136,6 +138,14 @@ class OrderResponse(BaseModel):
     status_label: Optional[str] = None
     notes: Optional[str] = None
     buyer_user_id: Optional[int] = None
+    payment_status: str = "UNPAID"
+    payment_method: Optional[str] = None
+    razorpay_order_id: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+    courier_partner: Optional[str] = None
+    tracking_number: Optional[str] = None
+    tracking_url: Optional[str] = None
+    estimated_delivery_at: Optional[datetime] = None
     delivery_steps: List[DeliveryStepResponse] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -155,4 +165,16 @@ class OrderStatusUpdateRequest(BaseModel):
         description="PLACED, CONFIRMED, SHIPPED, OUT_FOR_DELIVERY, DELIVERED, or CANCELLED",
     )
     notes: Optional[str] = None
+
+
+class OrderCancelRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class OrderHistoryResponse(BaseModel):
+    orders: List[OrderResponse] = []
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
+    has_more: bool = False
 

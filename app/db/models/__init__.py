@@ -7,7 +7,14 @@ from app.db.models.activity_log import ActivityLog
 from app.db.models.geography import ServiceArea
 from app.db.models.search_event import SearchEvent
 from app.db.models.revoked_token import RevokedToken
-from app.db.models.product import CustomerProduct, ProductOrder
+from app.db.models.product import (
+    CartItem,
+    CustomerProduct,
+    DeliveryAddress,
+    ProductOrder,
+    ProductReview,
+    ProductWishlist,
+)
 from app.db.models.promotion import Promotion
 from app.db.models.complaint import Complaint
 from app.db.models.subscription import SubscriptionPackage, UserSubscription
@@ -42,6 +49,10 @@ __all__ = [
     "UserSubscription",
     "CustomerProduct",
     "ProductOrder",
+    "DeliveryAddress",
+    "ProductWishlist",
+    "CartItem",
+    "ProductReview",
     "LogoCategory",
     "LogoStatus",
     "Logo",

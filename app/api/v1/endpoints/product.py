@@ -5,6 +5,24 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, get_admin_user_flexible, get_current_user_optional
 from app.db.database import get_db
 from app.db.models.user import User
+from app.schemas.commerce import (
+    AddressRequest,
+    AddressResponse,
+    AddressUpdateRequest,
+    CartCheckoutRequest,
+    CartItemInput,
+    CartResponse,
+    CartSyncRequest,
+    DispatchUpdateRequest,
+    OrderPaymentRequest,
+    OrderPaymentResponse,
+    OrderPaymentVerifyRequest,
+    OrderTrackingResponse,
+    ReviewCreateRequest,
+    ReviewListResponse,
+    ReviewResponse,
+    WishlistResponse,
+)
 from app.schemas.product import (
     ProductCreateRequest,
     ProductUpdateRequest,
@@ -14,9 +32,12 @@ from app.schemas.product import (
     MarketplacePageResponse,
     OrderCreateRequest,
     OrderResponse,
+    OrderCancelRequest,
+    OrderHistoryResponse,
     OrderStatusUpdateRequest,
     SellerPermissionToggleRequest,
 )
+from app.services.buyer_commerce_service import BuyerCommerceService
 from app.services.product_service import ProductService, normalize_order_status
 
 router = APIRouter(tags=["Community Products & Marketplace"])
@@ -32,6 +53,9 @@ def _product_response(product) -> ProductResponse:
         and (product.stock_status or "").upper() != "OUT_OF_STOCK"
         and (quantity is None or quantity > 0)
     )
+    count = int(getattr(product, "rating_count", 0) or 0)
+    item.rating_count = count
+    item.rating_average = round((getattr(product, "rating_sum", 0) or 0) / count, 2) if count else 0
     return item
 
 
@@ -57,6 +81,7 @@ def _order_response(order, whatsapp_url: Optional[str] = None) -> OrderResponse:
         item.status,
     )
     item.delivery_steps = [DeliveryStepResponse(**step) for step in ProductService.delivery_steps(order)]
+    item.payment_status = (getattr(order, "payment_status", None) or "UNPAID").upper()
     return item
 
 
@@ -133,10 +158,40 @@ def buy_marketplace_item(
     summary="My purchases and delivery status",
 )
 def list_my_purchases(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[OrderResponse]:
-    return [_order_response(order) for order in ProductService.get_buyer_orders(db, current_user)]
+    orders, _total = ProductService.get_buyer_orders(
+        db, current_user, status_filter=status_filter, limit=limit, offset=offset
+    )
+    return [_order_response(order) for order in orders]
+
+
+@router.get(
+    "/marketplace/orders/history",
+    response_model=OrderHistoryResponse,
+    summary="Buyer order history",
+)
+def buyer_order_history(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderHistoryResponse:
+    orders, total = ProductService.get_buyer_orders(
+        db, current_user, status_filter=status_filter, limit=limit, offset=offset
+    )
+    return OrderHistoryResponse(
+        orders=[_order_response(order) for order in orders],
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(orders) < total,
+    )
 
 
 @router.get(
@@ -152,17 +207,208 @@ def get_my_purchase(
     return _order_response(ProductService.get_buyer_order(db, current_user, order_id))
 
 
-@router.post(
-    "/marketplace/orders/{order_id}/cancel",
-    response_model=OrderResponse,
-    summary="Buyer cancels an order before the seller confirms it",
+@router.get(
+    "/marketplace/orders/{order_id}/tracking",
+    response_model=OrderTrackingResponse,
+    summary="Live delivery tracking for one purchase",
 )
-def cancel_my_purchase(
+def track_my_purchase(
     order_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+) -> OrderTrackingResponse:
+    return BuyerCommerceService.tracking(db, current_user, order_id)
+
+
+@router.post(
+    "/marketplace/orders/{order_id}/cancel",
+    response_model=OrderResponse,
+    summary="Buyer cancels an order before it is shipped",
+)
+def cancel_my_purchase(
+    order_id: int,
+    data: Optional[OrderCancelRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> OrderResponse:
-    return _order_response(ProductService.cancel_buyer_order(db, current_user, order_id))
+    reason = data.reason if data else None
+    return _order_response(ProductService.cancel_buyer_order(db, current_user, order_id, reason))
+
+
+@router.post(
+    "/marketplace/orders/{order_id}/pay",
+    response_model=OrderPaymentResponse,
+    summary="Start Razorpay, UPI, or cash-on-delivery payment",
+)
+def pay_for_order(
+    order_id: int,
+    data: OrderPaymentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderPaymentResponse:
+    return BuyerCommerceService.start_payment(db, current_user, order_id, data.method)
+
+
+@router.post(
+    "/marketplace/orders/{order_id}/pay/verify",
+    response_model=OrderPaymentResponse,
+    summary="Verify a Razorpay or UPI payment and mark the order paid",
+)
+def verify_order_payment(
+    order_id: int,
+    data: OrderPaymentVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderPaymentResponse:
+    return BuyerCommerceService.verify_payment(
+        db,
+        current_user,
+        order_id,
+        data.razorpay_order_id,
+        data.razorpay_payment_id,
+        data.razorpay_signature,
+    )
+
+
+@router.post(
+    "/marketplace/orders/{order_id}/review",
+    response_model=ReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Rate a delivered order",
+)
+def review_my_purchase(
+    order_id: int,
+    data: ReviewCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReviewResponse:
+    review = BuyerCommerceService.create_review(db, current_user, order_id, data)
+    item = ReviewResponse.model_validate(review)
+    item.buyer_name = current_user.name
+    return item
+
+
+@router.get("/marketplace/wishlist", response_model=WishlistResponse, summary="My saved products")
+def list_wishlist(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> WishlistResponse:
+    return BuyerCommerceService.list_wishlist(db, current_user)
+
+
+@router.post("/marketplace/wishlist/{product_id}", response_model=WishlistResponse, summary="Save a product")
+def save_wishlist(
+    product_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WishlistResponse:
+    return BuyerCommerceService.add_wishlist(db, current_user, product_id)
+
+
+@router.delete("/marketplace/wishlist/{product_id}", response_model=WishlistResponse, summary="Remove a saved product")
+def delete_wishlist(
+    product_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> WishlistResponse:
+    return BuyerCommerceService.remove_wishlist(db, current_user, product_id)
+
+
+@router.get("/marketplace/addresses", response_model=List[AddressResponse], summary="Saved delivery addresses")
+def list_addresses(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> List[AddressResponse]:
+    return [AddressResponse.model_validate(row) for row in BuyerCommerceService.list_addresses(db, current_user)]
+
+
+@router.post(
+    "/marketplace/addresses",
+    response_model=AddressResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Save a delivery address",
+)
+def create_address(
+    data: AddressRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AddressResponse:
+    return AddressResponse.model_validate(BuyerCommerceService.create_address(db, current_user, data))
+
+
+@router.patch("/marketplace/addresses/{address_id}", response_model=AddressResponse, summary="Update a delivery address")
+def update_address(
+    address_id: int,
+    data: AddressUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> AddressResponse:
+    return AddressResponse.model_validate(BuyerCommerceService.update_address(db, current_user, address_id, data))
+
+
+@router.delete("/marketplace/addresses/{address_id}", summary="Delete a delivery address")
+def delete_address(
+    address_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    BuyerCommerceService.delete_address(db, current_user, address_id)
+    return {"success": True, "message": "Address removed."}
+
+
+@router.get("/marketplace/cart", response_model=CartResponse, summary="Current server-side cart")
+def get_cart(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CartResponse:
+    return BuyerCommerceService.get_cart(db, current_user)
+
+
+@router.put("/marketplace/cart", response_model=CartResponse, summary="Replace the cart from the device")
+def sync_cart(
+    data: CartSyncRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CartResponse:
+    return BuyerCommerceService.sync_cart(db, current_user, data.items)
+
+
+@router.post("/marketplace/cart/items", response_model=CartResponse, summary="Add one item to the cart")
+def add_cart_item(
+    data: CartItemInput,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CartResponse:
+    return BuyerCommerceService.add_cart_item(db, current_user, data)
+
+
+@router.patch("/marketplace/cart/items/{item_id}", response_model=CartResponse, summary="Change a cart quantity")
+def update_cart_item(
+    item_id: int,
+    quantity: int = Query(..., ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CartResponse:
+    return BuyerCommerceService.update_cart_item(db, current_user, item_id, quantity)
+
+
+@router.delete("/marketplace/cart/items/{item_id}", response_model=CartResponse, summary="Remove a cart item")
+def remove_cart_item(
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CartResponse:
+    return BuyerCommerceService.remove_cart_item(db, current_user, item_id)
+
+
+@router.delete("/marketplace/cart", response_model=CartResponse, summary="Empty the cart")
+def clear_cart(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> CartResponse:
+    return BuyerCommerceService.clear_cart(db, current_user)
+
+
+@router.post("/marketplace/cart/checkout", response_model=List[OrderResponse], summary="Place orders for everything in the cart")
+def checkout_cart(
+    data: CartCheckoutRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[OrderResponse]:
+    orders, failed = BuyerCommerceService.checkout_cart(db, current_user, data.address_id, data.notes)
+    if not orders and failed:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="; ".join(failed))
+    return [_order_response(order) for order in orders]
 
 
 # =========================================================================
@@ -221,6 +467,15 @@ def get_product_by_id(
 ):
     product = ProductService.get_product_by_id(db=db, product_id=id)
     return _product_response(product)
+
+
+@router.get(
+    "/products/{id}/reviews",
+    response_model=ReviewListResponse,
+    summary="Ratings and reviews for a product",
+)
+def list_product_reviews(id: int, db: Session = Depends(get_db)) -> ReviewListResponse:
+    return BuyerCommerceService.list_product_reviews(db, id)
 
 
 @router.post(
@@ -344,6 +599,21 @@ def update_seller_order_status(
     order = ProductService.update_seller_order_status(
         db=db, seller_id=current_user.id, order_id=id, new_status=data.status, notes=data.notes
     )
+    return _order_response(order)
+
+
+@router.put(
+    "/customer/products/orders/{id}/dispatch",
+    response_model=OrderResponse,
+    summary="Seller assigns a courier and records a tracking event",
+)
+def dispatch_seller_order(
+    id: int,
+    data: DispatchUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    order = BuyerCommerceService.dispatch(db, current_user, id, data)
     return _order_response(order)
 
 
