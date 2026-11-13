@@ -90,12 +90,6 @@ def mark_notification_as_read(
     )
 
 
-@router.patch(
-    "/read-all",
-    response_model=StandardResponse[dict],
-    summary="Mark all notifications as read",
-    description="Marks all unread notifications as read for the authenticated user.",
-)
 @router.post(
     "/mark-all-read",
     response_model=StandardResponse[dict],

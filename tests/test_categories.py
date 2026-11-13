@@ -185,7 +185,3 @@ def test_field_staff_add_category_flow(client: TestClient, db_session: Session):
     assert form_data["name"] == "Artisan Bakery"
     assert form_data["icon"].startswith("/static/categories/icons/")
     assert form_data["status"] == "Active"
-
-    # 5. Field staff can access via /field-staff/categories
-    fs_res = client.get("/api/v1/field-staff/categories")
-    assert fs_res.status_code == 200

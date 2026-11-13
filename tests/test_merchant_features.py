@@ -359,20 +359,6 @@ def test_merchant_media_upload_flow(client: TestClient, db_session: Session):
     assert len(attach_res.json()["photos"]) == 1
 
 
-def test_merchant_regions_api(client: TestClient):
-    res = client.get("/api/v1/merchants/regions")
-    assert res.status_code == 200
-    data = res.json()
-    assert data["success"] is True
-    regions = data["data"]
-    assert "districts" in regions
-    assert "cities" in regions
-    assert "locations" in regions
-    assert len(regions["districts"]) > 0
-    assert "Bangalore Urban" in regions["districts"]
-    assert "Kochi" in regions["cities"]
-
-
 def test_creator_detail_and_multiple_merchants_per_field_staff(client: TestClient, db_session: Session):
     # 1. Create a field staff user
     staff = User(
@@ -637,10 +623,9 @@ def test_merchant_list_and_onboard_by_user_code(client: TestClient, db_session: 
     assert m["business_name"] == "Bakery 99"
     assert m["owner_name"] == "Baker 99"
 
-    # 2. List merchants with ?user_code=FLS_...
-    list_res = client.get(f"/api/v1/merchants/list?user_code={staff.user_code}")
+    list_res = client.get(f"/api/v1/merchants?user_code={staff.user_code}")
     assert list_res.status_code == 200
-    items = list_res.json()["data"]
+    items = list_res.json()
     assert len(items) >= 1
     assert any(item["id"] == m["id"] for item in items)
 

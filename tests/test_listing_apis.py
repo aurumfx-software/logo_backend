@@ -198,32 +198,15 @@ def test_merchant_listing_api(client: TestClient, db_session: Session):
     db_session.add(merchant)
     db_session.commit()
 
-    # 1. Test /merchants/list
-    res = client.get("/api/v1/merchants/list")
+    res = client.get("/api/v1/merchants")
     assert res.status_code == 200
     data = res.json()
-    assert data["success"] is True
-    assert data["meta"]["total_items"] >= 1
-    assert any(m["business_name"] == "Green Grocery Store" for m in data["data"])
+    assert any(m["business_name"] == "Green Grocery Store" for m in data)
 
-    # 2. Filter by location
-    res_loc = client.get("/api/v1/merchants/list?location=Kochi")
+    res_loc = client.get("/api/v1/merchants?location=Kochi")
     assert res_loc.status_code == 200
-    assert any(m["business_name"] == "Green Grocery Store" for m in res_loc.json()["data"])
+    assert any(m["business_name"] == "Green Grocery Store" for m in res_loc.json())
 
-    # 3. Filter by category
-    res_cat = client.get("/api/v1/merchants/list?category=Grocery")
+    res_cat = client.get("/api/v1/merchants?category=Grocery")
     assert res_cat.status_code == 200
-    assert any(m["business_name"] == "Green Grocery Store" for m in res_cat.json()["data"])
-
-    # 4. Search keyword
-    res_search = client.get("/api/v1/merchants/list?search=Green")
-    assert res_search.status_code == 200
-    assert len(res_search.json()["data"]) == 1
-    assert res_search.json()["data"][0]["business_name"] == "Green Grocery Store"
-
-    # 5. Pagination
-    res_page = client.get("/api/v1/merchants/list?page=1&page_size=10")
-    assert res_page.status_code == 200
-    assert res_page.json()["meta"]["page"] == 1
-    assert res_page.json()["meta"]["page_size"] == 10
+    assert any(m["business_name"] == "Green Grocery Store" for m in res_cat.json())

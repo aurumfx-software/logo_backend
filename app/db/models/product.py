@@ -34,6 +34,7 @@ class CustomerProduct(Base):
     images = Column(JSON, default=list, nullable=True)  # List of image URLs
     sizes = Column(JSON, default=list, nullable=True)   # Available sizes e.g. ["S", "M", "L", "XL"]
     stock_status = Column(String(50), default="IN_STOCK", nullable=False)
+    stock_quantity = Column(Integer, nullable=True)
 
     district = Column(String(100), nullable=True, index=True)
     city = Column(String(100), nullable=True)
@@ -68,6 +69,7 @@ class ProductOrder(Base):
     order_code = Column(String(50), unique=True, index=True, nullable=False)
     product_id = Column(Integer, ForeignKey("customer_products.id", ondelete="CASCADE"), nullable=False, index=True)
     seller_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    buyer_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Buyer information
     buyer_name = Column(String(255), nullable=False)
@@ -85,8 +87,9 @@ class ProductOrder(Base):
     total_price = Column(Numeric(10, 2), nullable=False)
 
     # Order processing status
-    status = Column(String(50), default="NEW", nullable=False, index=True)  # NEW, CONTACTED, SHIPPED, DELIVERED, CANCELLED
+    status = Column(String(50), default="PLACED", nullable=False, index=True)
     notes = Column(Text, nullable=True)
+    status_history = Column(JSON, default=list, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -101,4 +104,5 @@ class ProductOrder(Base):
     )
 
     product = relationship("CustomerProduct", backref="product_orders")
-    seller = relationship("User", backref="seller_orders")
+    seller = relationship("User", foreign_keys=[seller_id], backref="seller_orders")
+    buyer = relationship("User", foreign_keys=[buyer_user_id], backref="purchases")

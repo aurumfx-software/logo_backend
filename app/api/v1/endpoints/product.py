@@ -2,7 +2,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_admin_user_flexible
+from app.api.deps import get_current_user, get_admin_user_flexible, get_current_user_optional
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.product import (
@@ -10,14 +10,159 @@ from app.schemas.product import (
     ProductUpdateRequest,
     ProductAdminStatusUpdate,
     ProductResponse,
+    DeliveryStepResponse,
+    MarketplacePageResponse,
     OrderCreateRequest,
     OrderResponse,
     OrderStatusUpdateRequest,
     SellerPermissionToggleRequest,
 )
-from app.services.product_service import ProductService
+from app.services.product_service import ProductService, normalize_order_status
 
 router = APIRouter(tags=["Community Products & Marketplace"])
+
+
+def _product_response(product) -> ProductResponse:
+    item = ProductResponse.model_validate(product)
+    quantity = product.stock_quantity
+    item.stock_quantity = quantity
+    item.in_stock = bool(
+        product.is_active
+        and (product.approval_status or "").upper() == "APPROVED"
+        and (product.stock_status or "").upper() != "OUT_OF_STOCK"
+        and (quantity is None or quantity > 0)
+    )
+    return item
+
+
+def _order_response(order, whatsapp_url: Optional[str] = None) -> OrderResponse:
+    product = order.product
+    item = OrderResponse.model_validate(order)
+    item.product_name = product.name if product else None
+    item.product_image = product.images[0] if (product and product.images) else None
+    item.seller_name = product.seller_name if product else None
+    item.seller_phone = product.seller_phone if product else None
+    item.seller_whatsapp = product.seller_whatsapp if product else None
+    item.whatsapp_url = whatsapp_url
+    item.status = normalize_order_status(order.status or "PLACED")
+    item.status_label = next(
+        (label for key, label in (
+            ("PLACED", "Order placed"),
+            ("CONFIRMED", "Seller confirmed"),
+            ("SHIPPED", "Shipped"),
+            ("OUT_FOR_DELIVERY", "Out for delivery"),
+            ("DELIVERED", "Delivered"),
+            ("CANCELLED", "Cancelled"),
+        ) if key == item.status),
+        item.status,
+    )
+    item.delivery_steps = [DeliveryStepResponse(**step) for step in ProductService.delivery_steps(order)]
+    return item
+
+
+@router.get(
+    "/marketplace",
+    response_model=MarketplacePageResponse,
+    summary="Shop page: any listed item a customer can buy",
+)
+def get_marketplace_page(
+    category: Optional[str] = Query(None),
+    district: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query(None, description="newest, price_asc, price_desc, popular"),
+    min_price: Optional[float] = Query(None),
+    max_price: Optional[float] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> MarketplacePageResponse:
+    products = ProductService.get_public_products(
+        db=db,
+        category=category,
+        district=district,
+        search=search,
+        sort_by=sort_by,
+        min_price=min_price,
+        max_price=max_price,
+        limit=limit,
+        offset=offset,
+    )
+    total = ProductService.count_public_products(
+        db=db,
+        category=category,
+        district=district,
+        search=search,
+        min_price=min_price,
+        max_price=max_price,
+    )
+    return MarketplacePageResponse(
+        categories=ProductService.get_product_categories(db=db),
+        products=[_product_response(p) for p in products],
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(products) < total,
+        delivery_steps=[
+            "Order placed",
+            "Seller confirmed",
+            "Shipped",
+            "Out for delivery",
+            "Delivered",
+        ],
+    )
+
+
+@router.post(
+    "/marketplace/orders",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Buy a listed item",
+)
+def buy_marketplace_item(
+    data: OrderCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    order, whatsapp_url = ProductService.create_order(db=db, data=data, buyer=current_user)
+    return _order_response(order, whatsapp_url)
+
+
+@router.get(
+    "/marketplace/orders",
+    response_model=List[OrderResponse],
+    summary="My purchases and delivery status",
+)
+def list_my_purchases(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[OrderResponse]:
+    return [_order_response(order) for order in ProductService.get_buyer_orders(db, current_user)]
+
+
+@router.get(
+    "/marketplace/orders/{order_id}",
+    response_model=OrderResponse,
+    summary="One purchase with the delivery steps",
+)
+def get_my_purchase(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    return _order_response(ProductService.get_buyer_order(db, current_user, order_id))
+
+
+@router.post(
+    "/marketplace/orders/{order_id}/cancel",
+    response_model=OrderResponse,
+    summary="Buyer cancels an order before the seller confirms it",
+)
+def cancel_my_purchase(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OrderResponse:
+    return _order_response(ProductService.cancel_buyer_order(db, current_user, order_id))
 
 
 # =========================================================================
@@ -51,7 +196,7 @@ def get_public_products(
         limit=limit,
         offset=offset,
     )
-    return [ProductResponse.model_validate(p) for p in products]
+    return [_product_response(p) for p in products]
 
 
 @router.get(
@@ -75,7 +220,7 @@ def get_product_by_id(
     db: Session = Depends(get_db),
 ):
     product = ProductService.get_product_by_id(db=db, product_id=id)
-    return ProductResponse.model_validate(product)
+    return _product_response(product)
 
 
 @router.post(
@@ -87,17 +232,10 @@ def get_product_by_id(
 def place_product_order(
     data: OrderCreateRequest,
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
-    order, whatsapp_url = ProductService.create_order(db=db, data=data)
-    product = order.product
-    resp = OrderResponse.model_validate(order)
-    resp.product_name = product.name if product else None
-    resp.product_image = product.images[0] if (product and product.images) else None
-    resp.seller_name = product.seller_name if product else None
-    resp.seller_phone = product.seller_phone if product else None
-    resp.seller_whatsapp = product.seller_whatsapp if product else None
-    resp.whatsapp_url = whatsapp_url
-    return resp
+    order, whatsapp_url = ProductService.create_order(db=db, data=data, buyer=current_user)
+    return _order_response(order, whatsapp_url)
 
 
 # =========================================================================
@@ -108,7 +246,7 @@ def place_product_order(
     "/customer/products",
     response_model=ProductResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Subscribed Customer Adds Product to Sell",
+    summary="Any customer lists an item for sale",
 )
 def create_customer_product(
     data: ProductCreateRequest,
@@ -116,7 +254,7 @@ def create_customer_product(
     db: Session = Depends(get_db),
 ):
     product = ProductService.create_product(db=db, seller=current_user, data=data)
-    return ProductResponse.model_validate(product)
+    return _product_response(product)
 
 
 @router.get(
@@ -129,7 +267,7 @@ def get_my_products(
     db: Session = Depends(get_db),
 ):
     products = ProductService.get_seller_products(db=db, seller_id=current_user.id)
-    return [ProductResponse.model_validate(p) for p in products]
+    return [_product_response(p) for p in products]
 
 
 @router.put(
@@ -144,7 +282,7 @@ def update_customer_product(
     db: Session = Depends(get_db),
 ):
     product = ProductService.update_product(db=db, product_id=id, user=current_user, data=data)
-    return ProductResponse.model_validate(product)
+    return _product_response(product)
 
 
 @router.delete(
@@ -170,17 +308,7 @@ def get_my_orders(
     db: Session = Depends(get_db),
 ):
     orders = ProductService.get_seller_orders(db=db, seller_id=current_user.id)
-    out = []
-    for o in orders:
-        item = OrderResponse.model_validate(o)
-        if o.product:
-            item.product_name = o.product.name
-            item.product_image = o.product.images[0] if o.product.images else None
-            item.seller_name = o.product.seller_name
-            item.seller_phone = o.product.seller_phone
-            item.seller_whatsapp = o.product.seller_whatsapp
-        out.append(item)
-    return out
+    return [_order_response(order) for order in orders]
 
 
 @router.get(
@@ -199,20 +327,13 @@ def get_seller_order_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Order #{id} not found.",
         )
-    item = OrderResponse.model_validate(order)
-    if order.product:
-        item.product_name = order.product.name
-        item.product_image = order.product.images[0] if order.product.images else None
-        item.seller_name = order.product.seller_name
-        item.seller_phone = order.product.seller_phone
-        item.seller_whatsapp = order.product.seller_whatsapp
-    return item
+    return _order_response(order)
 
 
 @router.put(
     "/customer/products/orders/{id}/status",
     response_model=OrderResponse,
-    summary="Update Seller Order Status (NEW, CONTACTED, SHIPPED, DELIVERED, CANCELLED)",
+    summary="Seller updates delivery status",
 )
 def update_seller_order_status(
     id: int,
@@ -223,14 +344,7 @@ def update_seller_order_status(
     order = ProductService.update_seller_order_status(
         db=db, seller_id=current_user.id, order_id=id, new_status=data.status, notes=data.notes
     )
-    item = OrderResponse.model_validate(order)
-    if order.product:
-        item.product_name = order.product.name
-        item.product_image = order.product.images[0] if order.product.images else None
-        item.seller_name = order.product.seller_name
-        item.seller_phone = order.product.seller_phone
-        item.seller_whatsapp = order.product.seller_whatsapp
-    return item
+    return _order_response(order)
 
 
 # =========================================================================
@@ -254,7 +368,7 @@ def list_admin_products(
     products = ProductService.get_all_products_admin(
         db=db, status_filter=status, is_active=is_active, search=search, limit=limit, offset=offset
     )
-    return [ProductResponse.model_validate(p) for p in products]
+    return [_product_response(p) for p in products]
 
 
 @router.put(
@@ -269,7 +383,7 @@ def toggle_admin_product_status(
     admin: User = Depends(get_admin_user_flexible),
 ):
     product = ProductService.toggle_product_status(db=db, product_id=id, data=data)
-    return ProductResponse.model_validate(product)
+    return _product_response(product)
 
 
 @router.delete(
@@ -303,13 +417,7 @@ def list_admin_orders(
     )
     out = []
     for o in orders:
-        item = OrderResponse.model_validate(o)
-        if o.product:
-            item.product_name = o.product.name
-            item.product_image = o.product.images[0] if o.product.images else None
-            item.seller_name = o.product.seller_name
-            item.seller_phone = o.product.seller_phone
-        out.append(item)
+        out.append(_order_response(o))
     return out
 
 

@@ -12,6 +12,7 @@ class ProductCreateRequest(BaseModel):
     images: List[str] = Field(default_factory=list, description="List of product photo URLs")
     sizes: List[str] = Field(default_factory=list, description="Available sizes e.g. ['S', 'M', 'L'] or ['Free Size']")
     stock_status: str = Field("IN_STOCK", description="IN_STOCK or OUT_OF_STOCK")
+    stock_quantity: Optional[int] = Field(None, ge=0, description="Units available. Omit when stock is not counted.")
     district: Optional[str] = Field(None, max_length=100)
     city: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=255)
@@ -29,6 +30,7 @@ class ProductUpdateRequest(BaseModel):
     images: Optional[List[str]] = None
     sizes: Optional[List[str]] = None
     stock_status: Optional[str] = None
+    stock_quantity: Optional[int] = Field(None, ge=0)
     district: Optional[str] = None
     city: Optional[str] = None
     location: Optional[str] = None
@@ -58,6 +60,8 @@ class ProductResponse(BaseModel):
     images: List[str] = []
     sizes: List[str] = []
     stock_status: str
+    stock_quantity: Optional[int] = None
+    in_stock: bool = True
     district: Optional[str] = None
     city: Optional[str] = None
     location: Optional[str] = None
@@ -70,6 +74,26 @@ class ProductResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeliveryStepResponse(BaseModel):
+    key: str
+    label: str
+    done: bool = False
+    current: bool = False
+    at: Optional[datetime] = None
+
+
+class MarketplacePageResponse(BaseModel):
+    title: str = "Buy and sell anything"
+    subtitle: str = "Any customer can list an item. Buyers can purchase it and follow delivery."
+    categories: List[str] = []
+    products: List[ProductResponse] = []
+    total: int = 0
+    limit: int = 20
+    offset: int = 0
+    has_more: bool = False
+    delivery_steps: List[str] = []
 
 
 class OrderCreateRequest(BaseModel):
@@ -109,8 +133,12 @@ class OrderResponse(BaseModel):
     unit_price: float
     total_price: float
     status: str
+    status_label: Optional[str] = None
     notes: Optional[str] = None
+    buyer_user_id: Optional[int] = None
+    delivery_steps: List[DeliveryStepResponse] = []
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -122,6 +150,9 @@ class SellerPermissionToggleRequest(BaseModel):
 
 
 class OrderStatusUpdateRequest(BaseModel):
-    status: str = Field(..., description="NEW, CONTACTED, SHIPPED, DELIVERED, CANCELLED")
+    status: str = Field(
+        ...,
+        description="PLACED, CONFIRMED, SHIPPED, OUT_FOR_DELIVERY, DELIVERED, or CANCELLED",
+    )
     notes: Optional[str] = None
 

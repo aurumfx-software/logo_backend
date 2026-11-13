@@ -6,7 +6,6 @@ from app.api.deps import require_admin, require_any_authenticated
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.admin import (
-    AdminDashboardCards,
     AdminDashboardStats,
     AdminUserCreateRequest,
     AdminUserDetailResponse,
@@ -17,7 +16,6 @@ from app.schemas.admin import (
 )
 from app.schemas.activity_log import ActivityLogListResponse, ActivityLogResponse
 from app.schemas.auth import GenericMessageResponse
-from app.schemas.logo import LogoListResponse, LogoRejectRequest, LogoResponse
 from app.schemas.merchant import (
     MerchantProfileResponse,
     MerchantRejectRequest,
@@ -33,7 +31,6 @@ from app.schemas.response import (
 from app.schemas.wallet import AdminWalletTransactionResponse
 from app.services.activity_log_service import ActivityLogService
 from app.services.admin_service import AdminService
-from app.services.logo_service import LogoService
 from app.services.merchant_service import MerchantService
 from app.services.wallet_service import WalletService
 
@@ -87,83 +84,6 @@ def get_dashboard_stats(
     db: Session = Depends(get_db),
 ) -> AdminDashboardStats:
     return AdminService.get_dashboard_stats(db=db)
-
-
-@router.get(
-    "/dashboard/cards",
-    response_model=StandardResponse[AdminDashboardCards],
-    summary="Admin dashboard cards",
-    description=(
-        "Returns Total Users, Total Merchants, Total Searches, and Revenue (INR). "
-        "change_percent compares the last 30 days with the 30 days before that. "
-        "Searches are counted from merchant search requests. "
-        "Revenue is subscription payments plus company-wallet cashback fees."
-    ),
-)
-def get_dashboard_cards(
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> StandardResponse[AdminDashboardCards]:
-    return success_response(
-        data=AdminService.get_dashboard_cards(db=db),
-        message="Dashboard cards retrieved",
-    )
-
-
-# --- Logo Moderation & Approval ---
-@router.get(
-    "/logos/pending",
-    response_model=LogoListResponse,
-    summary="List pending logos for moderation",
-    description="Returns all logos awaiting administrator review with status PENDING.",
-)
-def list_pending_logos(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> LogoListResponse:
-    return LogoService.search_logos(
-        db=db,
-        logo_status="PENDING",
-        skip=skip,
-        limit=limit,
-        current_user=current_admin,
-    )
-
-
-@router.post(
-    "/logos/{logo_id}/approve",
-    response_model=LogoResponse,
-    summary="Approve a logo",
-    description="Approves a pending logo submission, making it publicly searchable and visible.",
-)
-def approve_logo(
-    logo_id: int,
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> LogoResponse:
-    return LogoService.approve_logo(db=db, admin_user=current_admin, logo_id=logo_id)
-
-
-@router.post(
-    "/logos/{logo_id}/reject",
-    response_model=LogoResponse,
-    summary="Reject a logo",
-    description="Rejects a logo with an official rejection reason, hiding it from public search.",
-)
-def reject_logo(
-    logo_id: int,
-    data: LogoRejectRequest,
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> LogoResponse:
-    return LogoService.reject_logo(
-        db=db,
-        admin_user=current_admin,
-        logo_id=logo_id,
-        rejection_reason=data.rejection_reason,
-    )
 
 
 # --- User Management ---

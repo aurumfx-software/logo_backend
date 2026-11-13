@@ -1,11 +1,11 @@
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, optional_security_scheme, require_role, require_admin
+from app.api.deps import get_current_user, optional_security_scheme
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
@@ -33,7 +33,6 @@ from app.schemas.auth import (
     VerifyOTPResponse,
 )
 from app.services.auth_service import AuthService
-from app.services.oauth_service import GoogleOAuthService
 from app.services.otp_delivery import OTPDeliveryService
 from app.services.otp_service import OTPService
 from app.services.storage_service import SpacesStorageService
@@ -401,43 +400,3 @@ def reset_password(
 ) -> GenericMessageResponse:
     AuthService.reset_password(db=db, reset_data=reset_req)
     return GenericMessageResponse(message="Password has been reset successfully. You can now log in.")
-
-
-@router.get(
-    "/google",
-    summary="Google OAuth 2.0 Login URL",
-    description="Returns the Google OAuth 2.0 authorization URL for client redirection.",
-)
-def google_login() -> dict:
-    return GoogleOAuthService.get_authorization_url()
-
-
-@router.get(
-    "/google/callback",
-    response_model=TokenResponse,
-    summary="Google OAuth 2.0 Callback",
-    description="Handles OAuth callback from Google, authenticates user, and returns LOGO JWT tokens.",
-)
-async def google_callback(
-    code: str = Query(..., description="Authorization code returned by Google"),
-    state: str = Query(..., description="State parameter for CSRF mitigation"),
-    db: Session = Depends(get_db),
-) -> TokenResponse:
-    _, token_pair = await GoogleOAuthService.exchange_code_and_authenticate(
-        db=db, code=code
-    )
-    return token_pair
-
-
-@router.get(
-    "/admin-test",
-    response_model=GenericMessageResponse,
-    summary="Admin role test endpoint",
-    description="Protected endpoint accessible only by users with the ADMIN role.",
-)
-def admin_only_test(
-    admin_user: User = Depends(require_admin),
-) -> GenericMessageResponse:
-    return GenericMessageResponse(
-        message=f"Welcome, Administrator {admin_user.name}. You have verified admin access."
-    )

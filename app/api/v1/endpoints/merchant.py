@@ -29,7 +29,6 @@ from app.schemas.merchant import (
     MerchantOnboardingResponse,
     MerchantPhotosUploadResponse,
     MerchantProfileResponse,
-    MerchantRegionResponse,
     MerchantRegisterRequest,
     MerchantRegisterResponse,
     MerchantRejectRequest,
@@ -253,22 +252,6 @@ def upload_merchant_media_by_id(
         files=files,
         merchant_id=merchant_id,
         db=db,
-    )
-
-
-@router.get(
-    "/regions",
-    response_model=StandardResponse[MerchantRegionResponse],
-    summary="Get districts, cities, and locations hierarchy",
-    description="Returns distinct districts, cities, and locations for field staff onboarding dropdowns.",
-)
-def get_merchant_regions(
-    db: Session = Depends(get_db),
-) -> StandardResponse[MerchantRegionResponse]:
-    regions = MerchantService.get_region_metadata(db=db)
-    return success_response(
-        data=MerchantRegionResponse(**regions),
-        message="Regions retrieved successfully",
     )
 
 
@@ -520,59 +503,6 @@ def list_merchants(
         merchants=merchants,
         merge_users=True,
         include_creator=False,
-    )
-
-
-@router.get(
-    "/list",
-    response_model=StandardListResponse[MerchantProfileResponse],
-    summary="List merchants with filters and pagination",
-    description="Returns a paginated list of merchants with filters. Can be filtered by creator user_code (e.g. FLS_1).",
-)
-def list_merchants_paginated(
-    search: Optional[str] = Query(None, description="Search by business name, location, address, or service"),
-    category: Optional[str] = Query(None, description="Filter by category (e.g. Salon, Spa, Cafe)"),
-    location: Optional[str] = Query(None, description="Filter by location/city"),
-    service: Optional[str] = Query(None, description="Filter by specific service offered"),
-    user_code: Optional[str] = Query(None, description="Filter by creator user code (e.g. FLS_1)"),
-    is_verified: Optional[bool] = Query(None, description="Filter by verified status"),
-    status: Optional[str] = Query(None, description="Filter by status (pending, approved, all)"),
-    approval_status: Optional[str] = Query(None),
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    current_user: Optional[User] = Depends(get_current_user_optional),
-    db: Session = Depends(get_db),
-) -> StandardListResponse[MerchantProfileResponse]:
-    target_status = approval_status or status
-    if target_status and target_status.lower() in ("all", "any"):
-        target_status = None
-    elif target_status:
-        target_status = target_status.upper()
-
-    public_only = target_status is None or target_status == "APPROVED"
-    skip = (page - 1) * page_size
-    results, total = MerchantService.search_merchants(
-        db=db,
-        query=search,
-        location=location,
-        service=service,
-        category=category,
-        is_verified=is_verified,
-        approval_status=target_status,
-        skip=skip,
-        limit=page_size,
-        public_only=public_only,
-        current_user=current_user,
-        user_code=user_code,
-    )
-    if search and search.strip():
-        AdminService.record_search(db, "merchant_list", search)
-    return list_response(
-        data=[MerchantService.build_merchant_response(m) for m in results],
-        total_items=total,
-        page=page,
-        page_size=page_size,
-        message=f"Retrieved {len(results)} merchant(s)",
     )
 
 

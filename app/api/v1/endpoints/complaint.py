@@ -135,8 +135,6 @@ def update_complaint(
 
 
 @router.patch("/{complaint_id}/resolve", response_model=StandardResponse[ComplaintResponse], summary="Resolve complaint")
-@router.patch("/{complaint_id}/fix", response_model=StandardResponse[ComplaintResponse], summary="Fix complaint (Alias)")
-@router.post("/{complaint_id}/fix", response_model=StandardResponse[ComplaintResponse], summary="Fix complaint (POST Alias)")
 @router.post("/{complaint_id}/resolve", response_model=StandardResponse[ComplaintResponse], summary="Resolve complaint (POST Alias)")
 def resolve_complaint(
     complaint_id: int,

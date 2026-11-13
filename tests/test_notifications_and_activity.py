@@ -205,7 +205,7 @@ def test_notification_and_activity_logs_api(client: TestClient, db_session: Sess
     assert read_res.json()["data"]["is_read"] is True
 
     # 4. Mark all as read
-    read_all_res = client.patch("/api/v1/notifications/read-all", headers=merchant_headers)
+    read_all_res = client.post("/api/v1/notifications/mark-all-read", headers=merchant_headers)
     assert read_all_res.status_code == 200
     assert "Marked" in read_all_res.json()["message"]
 

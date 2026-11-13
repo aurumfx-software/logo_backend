@@ -1,7 +1,6 @@
-import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
@@ -42,7 +41,6 @@ from app.schemas.wallet import (
     AdminWithdrawalListResponse,
     AdminWithdrawalSendResponse,
 )
-from app.services.razorpayx_service import RazorpayXService
 from app.services.wallet_service import WalletService
 
 router = APIRouter(prefix="/wallet", tags=["Wallet"])
@@ -515,35 +513,6 @@ def get_wallet_withdrawal_status(
     return WalletService.get_wallet_withdrawal_status(
         db=db, user=current_user, transaction_group_id=transaction_group_id
     )
-
-
-@router.post(
-    "/webhooks/razorpayx",
-    summary="RazorpayX payout webhook",
-    description="Marks a withdrawal completed, or returns the money to the wallet if the payout fails.",
-)
-async def razorpayx_payout_webhook(
-    request: Request,
-    db: Session = Depends(get_db),
-    x_razorpay_signature: str = Header(default="", alias="X-Razorpay-Signature"),
-):
-    body = await request.body()
-    RazorpayXService.verify_webhook_signature(body, x_razorpay_signature)
-    try:
-        payload = json.loads(body.decode() or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    event = str(payload.get("event") or "")
-    entity = ((payload.get("payload") or {}).get("payout") or {}).get("entity") or {}
-    if event.startswith("payout.") and entity.get("id"):
-        details = entity.get("status_details") or {}
-        WalletService.apply_payout_update(
-            db,
-            str(entity.get("id")),
-            entity.get("status"),
-            entity.get("failure_reason") or details.get("description"),
-        )
-    return {"success": True, "message": "Webhook received"}
 
 
 

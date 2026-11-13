@@ -210,5 +210,4 @@ def root():
     return {
         "service": settings.APP_NAME,
         "docs": "/docs",
-        "health": f"{settings.API_V1_STR}/health",
     }

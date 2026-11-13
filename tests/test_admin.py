@@ -36,23 +36,16 @@ def test_admin_dashboard_stats(client: TestClient, db_session: Session):
     admin, admin_token, _ = setup_admin_and_users(client, db_session)
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
-    # Create category and logo
     cat_res = client.post("/api/v1/categories", json={"name": "Gaming & Esports"}, headers=admin_headers)
-    cat_id = cat_res.json()["id"]
+    assert cat_res.status_code == 201
 
-    client.post("/api/v1/logos", json={"title": "Viper Gaming", "category_id": cat_id, "image_url": "https://example.com/viper.png"}, headers=admin_headers)
-
-    # Fetch stats
     stats_res = client.get("/api/v1/admin/dashboard/stats", headers=admin_headers)
     assert stats_res.status_code == 200
     stats = stats_res.json()
 
     assert stats["total_users"] >= 2
     assert stats["total_admins"] >= 1
-    assert stats["total_logos"] >= 1
-    assert stats["pending_logos"] >= 1
     assert stats["total_categories"] >= 1
-    assert len(stats["recent_pending_logos"]) >= 1
     assert len(stats["category_distribution"]) >= 1
 
 

@@ -43,11 +43,11 @@ A clean, production-ready trial backend implementation for the **LOGO — Local 
 
 ## Wallet cash flow
 
-Merchant wallet top-ups use Razorpay Orders and Standard Checkout through `POST /api/v1/wallet/topup/razorpay/order` and `POST /api/v1/wallet/topup/razorpay/verify`. The backend credits the merchant wallet only after the Razorpay payment signature is verified; the captured payment is also checked through the webhook. Both the merchant wallet and admin/company wallet receive ledger entries for the payment. Configure `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`; subscribe the Razorpay webhook to `payment.captured` and point it to `/api/v1/wallet/topup/razorpay/webhook`.
+Merchant wallet top-ups use Razorpay Orders and Standard Checkout through `POST /api/v1/wallet/topup/razorpay/order` and `POST /api/v1/wallet/topup/razorpay/verify`. The backend credits the merchant wallet only after the authenticated verify call checks the Razorpay payment signature. Both the merchant wallet and admin/company wallet receive ledger entries for the payment. Configure `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
 
 When a customer redeems a merchant sale QR, the backend debits `CASHBACK_TOTAL_PERCENT` from the merchant wallet, credits `CASHBACK_USER_PERCENT` to the customer, and credits `CASHBACK_COMPANY_PERCENT` to the admin/company wallet. The default split is 5% total: 3% customer and 2% company. The split percentages must add up to the total. Customers can transfer wallet funds to a merchant using `/api/v1/wallet/transfer` or withdraw them to a bank account through RazorpayX.
 
-Bank withdrawals require RazorpayX to be enabled and configured with `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, `RAZORPAYX_ACCOUNT_NUMBER`, and `RAZORPAYX_WEBHOOK_SECRET`. Point the RazorpayX webhook to `/api/v1/wallet/webhooks/razorpayx` and subscribe to payout processed, failed, rejected, cancelled, and reversed events. Withdrawal funds are reserved when the payout is submitted and restored in the ledger if RazorpayX reports failure or reversal. The full bank account number is sent to RazorpayX but not retained; the ledger stores the beneficiary name, IFSC, and masked last four digits.
+Bank withdrawals are a request from the app. An admin sends the money with RazorpayX from the admin withdrawals section. Configure `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, and `RAZORPAYX_ACCOUNT_NUMBER`. The wallet is debited when the request is placed. The full bank account number is sent to RazorpayX when the admin sends the payout; list responses show the beneficiary name, IFSC, and a masked account number.
 
 Admins can read current balances and fee totals from `/api/v1/wallet/platform` and browse all paginated wallet transactions at `/api/v1/wallet/admin/transactions?page=1&page_size=20`. Apply the database migration with `alembic upgrade head` before using withdrawals.
 
@@ -70,8 +70,7 @@ logo-backend/
 │   │       ├── router.py        # Aggregator for v1 API endpoints
 │   │       └── endpoints/
 │   │           ├── __init__.py
-│   │           ├── health.py    # Health check endpoint (GET /api/v1/health)
-│   │           └── auth.py      # Auth, OTP, OAuth, and Role testing endpoints
+│   │           ├── auth.py      # Auth endpoints
 │   │
 │   ├── core/
 │   │   ├── __init__.py
@@ -243,27 +242,13 @@ Once the server is running, visit:
 
 In Swagger UI:
 - Click the **Authorize** button (padlock icon) at the top right.
-- Paste your Bearer `access_token` to authenticate protected endpoints (such as `GET /api/v1/auth/me` and `GET /api/v1/auth/admin-test`).
+- Paste your Bearer `access_token` to authenticate protected endpoints (such as `GET /api/v1/auth/me`).
 
 ---
 
 ## API Walkthrough & Testing Examples
 
-### 1. Health Check
-```bash
-curl -X GET "http://127.0.0.1:8000/api/v1/health"
-```
-**Response (200 OK):**
-```json
-{
-  "status": "ok",
-  "service": "LOGO Backend"
-}
-```
-
----
-
-### 2. User Registration
+### 1. User Registration
 Registers a new user. The default role assigned is **`PUBLIC_USER`**. Passwords are encrypted with bcrypt.
 ```bash
 curl -X POST "http://127.0.0.1:8000/api/v1/auth/register" \
@@ -390,23 +375,6 @@ For local development, when `ENVIRONMENT=development`, generated OTPs are printe
        "new_password": "NewSecurePassword123"
      }'
    ```
-
----
-
-### 8. Role-Based Authorization
-The endpoint `GET /api/v1/auth/admin-test` is protected by `require_role(UserRole.ADMIN)`:
-- Calling with a `PUBLIC_USER` or `MERCHANT` token results in **`403 Forbidden`**.
-- Calling with an `ADMIN` token returns **`200 OK`**.
-
----
-
-### 9. Google OAuth 2.0
-- If unconfigured, calling `GET /api/v1/auth/google` returns HTTP 501 with instructions.
-- To configure:
-  1. Visit Google Cloud Console -> APIs & Credentials -> Create OAuth 2.0 Client IDs.
-  2. Set Authorized Redirect URI to: `http://localhost:8000/api/v1/auth/google/callback`
-  3. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` to `.env`.
-  4. Access `GET /api/v1/auth/google` to receive the authorization redirect URL.
 
 ---
 
