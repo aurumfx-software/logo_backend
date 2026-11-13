@@ -257,3 +257,7 @@ def test_order_detail_without_token(client: TestClient, db_session: Session):
     tracking = client.get(f"/api/v1/marketplace/orders/{order_id}/tracking")
     assert tracking.status_code == 200
     assert tracking.json()["order_id"] == order_id
+
+    cancelled = client.post(f"/api/v1/marketplace/orders/{order_id}/cancel", json={"reason": "Changed mind"})
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "CANCELLED"

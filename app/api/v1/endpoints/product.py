@@ -236,7 +236,7 @@ def track_my_purchase(
 def cancel_my_purchase(
     order_id: int,
     data: Optional[OrderCancelRequest] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> OrderResponse:
     reason = data.reason if data else None

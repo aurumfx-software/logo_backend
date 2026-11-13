@@ -670,9 +670,12 @@ class ProductService:
 
     @staticmethod
     def cancel_buyer_order(
-        db: Session, buyer: User, order_id: int, reason: Optional[str] = None
+        db: Session, buyer: Optional[User], order_id: int, reason: Optional[str] = None
     ) -> ProductOrder:
-        order = ProductService.get_buyer_order(db, buyer, order_id)
+        if buyer is None:
+            order = ProductService.get_order_by_id(db, order_id)
+        else:
+            order = ProductService.get_buyer_order(db, buyer, order_id)
         current = normalize_order_status(order.status)
         if current not in {"PLACED", "CONFIRMED", "NEW", "PENDING"}:
             raise HTTPException(
