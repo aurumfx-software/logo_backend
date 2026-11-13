@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Any
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductCreateRequest(BaseModel):
@@ -72,6 +72,11 @@ class ProductResponse(BaseModel):
     orders_count: int = 0
     rating_count: int = 0
     rating_average: float = 0
+
+    @field_validator("views_count", "orders_count", "rating_count", mode="before")
+    @classmethod
+    def missing_count_is_zero(cls, value):
+        return 0 if value is None else value
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -139,6 +144,11 @@ class OrderResponse(BaseModel):
     notes: Optional[str] = None
     buyer_user_id: Optional[int] = None
     payment_status: str = "UNPAID"
+
+    @field_validator("payment_status", mode="before")
+    @classmethod
+    def missing_payment_is_unpaid(cls, value):
+        return "UNPAID" if not value else str(value).upper()
     payment_method: Optional[str] = None
     razorpay_order_id: Optional[str] = None
     cancellation_reason: Optional[str] = None

@@ -70,3 +70,27 @@ def test_list_products_public(client: TestClient, db_session):
     assert isinstance(data, list)
     assert len(data) == 1
     assert data[0]["name"] == "Handmade Bag"
+    assert data[0]["rating_count"] == 0
+
+    from types import SimpleNamespace
+    from app.schemas.product import ProductResponse
+
+    legacy = ProductResponse.model_validate(
+        SimpleNamespace(
+            id=1,
+            seller_id=1,
+            name="Old listing",
+            category="General",
+            price=10,
+            stock_status="IN_STOCK",
+            is_active=True,
+            approval_status="APPROVED",
+            views_count=None,
+            orders_count=None,
+            rating_count=None,
+            images=[],
+            sizes=[],
+        )
+    )
+    assert legacy.rating_count == 0
+    assert legacy.rating_average == 0
