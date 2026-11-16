@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     RAZORPAYX_WEBHOOK_SECRET: str = ""
 
     # Marketplace checkout fees shown to the buyer before payment.
-    CHECKOUT_MIN_ORDER_VALUE: float = 0
+    CHECKOUT_MIN_ORDER_VALUE: float = 150
     CHECKOUT_FREE_DELIVERY_ABOVE: float = 499
     CHECKOUT_DELIVERY_FEE: float = 40
     CHECKOUT_COD_AVAILABLE: bool = True

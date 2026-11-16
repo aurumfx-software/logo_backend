@@ -561,6 +561,16 @@ class ProductService:
 
         unit_p = Decimal(str(product.price)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         total_p = (unit_p * data.quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Enforce Minimum Order Amount: ₹150 (Both Online & COD)
+        MIN_ORDER_AMOUNT = Decimal("150.00")
+        if total_p < MIN_ORDER_AMOUNT:
+            req_qty = int(math.ceil(float(MIN_ORDER_AMOUNT) / float(unit_p))) if unit_p > 0 else 1
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Minimum order amount is ₹150. Please increase quantity to at least {req_qty} (Total: ₹{unit_p * req_qty}) to place this order.",
+            )
+
         code = generate_order_code()
 
         # Ensure unique order code
