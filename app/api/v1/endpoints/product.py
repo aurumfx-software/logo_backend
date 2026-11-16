@@ -23,6 +23,7 @@ from app.schemas.commerce import (
     ReviewResponse,
     WishlistResponse,
 )
+from app.schemas.seller_portal import CheckoutRulesResponse, SellerAnalyticsResponse
 from app.schemas.product import (
     ProductCreateRequest,
     ProductUpdateRequest,
@@ -39,8 +40,18 @@ from app.schemas.product import (
 )
 from app.services.buyer_commerce_service import BuyerCommerceService
 from app.services.product_service import ProductService, normalize_order_status
+from app.services.seller_portal_service import SellerPortalService
 
 router = APIRouter(tags=["Community Products & Marketplace"])
+
+
+@router.get(
+    "/orders/checkout-rules",
+    response_model=CheckoutRulesResponse,
+    summary="Delivery fee, COD fee, and online discount rules",
+)
+def get_checkout_rules() -> CheckoutRulesResponse:
+    return CheckoutRulesResponse(success=True, data=SellerPortalService.checkout_rules())
 
 
 def _product_response(product) -> ProductResponse:
@@ -543,6 +554,22 @@ def get_my_products(
 ):
     products = ProductService.get_seller_products(db=db, seller_id=current_user.id)
     return [_product_response(p) for p in products]
+
+
+@router.get(
+    "/customer/products/seller-analytics",
+    response_model=SellerAnalyticsResponse,
+    summary="Seller revenue and order pipeline",
+)
+def get_seller_analytics(
+    period: str = Query("all", description="all, this_month, or this_year"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SellerAnalyticsResponse:
+    return SellerAnalyticsResponse(
+        success=True,
+        data=SellerPortalService.seller_analytics(db, current_user, period),
+    )
 
 
 @router.put(

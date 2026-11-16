@@ -15,7 +15,13 @@ from app.schemas.auth import (
     SafeUserResponse,
 )
 from app.schemas.customer import CustomerLocationUpdateRequest, CustomerProfileResponse
+from app.schemas.seller_portal import (
+    SellerBankDetailsResponse,
+    SellerBankDetailsRequest,
+    SellerBankSaveResponse,
+)
 from app.services.auth_service import AuthService
+from app.services.seller_portal_service import SellerPortalService
 
 router = APIRouter(prefix="/customer", tags=["Customer"])
 
@@ -108,3 +114,40 @@ def update_customer_location(
     db.commit()
     db.refresh(current_user)
     return CustomerProfileResponse.model_validate(current_user)
+
+
+@router.get(
+    "/seller/bank-details",
+    response_model=SellerBankDetailsResponse,
+    summary="Get the logged-in seller's bank and UPI details",
+)
+def get_seller_bank_details(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SellerBankDetailsResponse:
+    row = SellerPortalService.get_bank_details(db, current_user)
+    if row is None:
+        return SellerBankDetailsResponse(
+            success=True,
+            data=None,
+            message="No bank details configured yet.",
+        )
+    return SellerBankDetailsResponse(success=True, data=SellerPortalService.to_bank_details(row))
+
+
+@router.put(
+    "/seller/bank-details",
+    response_model=SellerBankSaveResponse,
+    summary="Save or update the logged-in seller's bank and UPI details",
+)
+def save_seller_bank_details(
+    data: SellerBankDetailsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SellerBankSaveResponse:
+    row = SellerPortalService.save_bank_details(db, current_user, data)
+    return SellerBankSaveResponse(
+        success=True,
+        message="Seller bank details saved successfully",
+        data=SellerPortalService.to_bank_details(row),
+    )

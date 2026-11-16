@@ -198,3 +198,24 @@ class ProductReview(Base):
     product = relationship("CustomerProduct", backref="reviews")
     order = relationship("ProductOrder", backref="review")
     buyer = relationship("User", backref="product_reviews")
+
+
+class SellerBankDetail(Base):
+    __tablename__ = "seller_bank_details"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    account_holder_name = Column(String(255), nullable=False)
+    bank_name = Column(String(255), nullable=False)
+    account_number = Column(String(18), nullable=False)
+    ifsc_code = Column(String(11), nullable=False)
+    upi_id = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    user = relationship("User", backref="seller_bank_detail")

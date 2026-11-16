@@ -14,6 +14,7 @@ from app.db.models.product import (
     ProductOrder,
     ProductReview,
     ProductWishlist,
+    SellerBankDetail,
 )
 from app.db.models.promotion import Promotion
 from app.db.models.complaint import Complaint
@@ -53,6 +54,7 @@ __all__ = [
     "ProductWishlist",
     "CartItem",
     "ProductReview",
+    "SellerBankDetail",
     "LogoCategory",
     "LogoStatus",
     "Logo",

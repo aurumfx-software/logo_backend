@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     RAZORPAYX_ACCOUNT_NUMBER: str = ""
     RAZORPAYX_WEBHOOK_SECRET: str = ""
 
+    # Marketplace checkout fees shown to the buyer before payment.
+    CHECKOUT_MIN_ORDER_VALUE: float = 0
+    CHECKOUT_FREE_DELIVERY_ABOVE: float = 499
+    CHECKOUT_DELIVERY_FEE: float = 40
+    CHECKOUT_COD_AVAILABLE: bool = True
+    CHECKOUT_COD_FEE: float = 40
+    CHECKOUT_FREE_COD_ABOVE: float = 500
+    CHECKOUT_ONLINE_DISCOUNT_PERCENTAGE: float = 6
+    CHECKOUT_ONLINE_DISCOUNT_MAX_AMOUNT: float = 100
+
     # Phone / SMS Providers (MSG91 preferred, Twilio fallback)
     MSG91_AUTH_KEY: str = ""
     MSG91_TEMPLATE_ID: str = ""
