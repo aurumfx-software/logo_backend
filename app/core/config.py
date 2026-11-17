@@ -124,8 +124,8 @@ class Settings(BaseSettings):
     CHECKOUT_COD_AVAILABLE: bool = True
     CHECKOUT_COD_FEE: float = 40
     CHECKOUT_FREE_COD_ABOVE: float = 500
-    CHECKOUT_ONLINE_DISCOUNT_PERCENTAGE: float = 6
-    CHECKOUT_ONLINE_DISCOUNT_MAX_AMOUNT: float = 100
+    CHECKOUT_ONLINE_DISCOUNT_PERCENTAGE: float = 0
+    CHECKOUT_ONLINE_DISCOUNT_MAX_AMOUNT: float = 0
 
     # Phone / SMS Providers (MSG91 preferred, Twilio fallback)
     MSG91_AUTH_KEY: str = ""
