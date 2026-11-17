@@ -29,6 +29,70 @@ def _headers(client: TestClient, email: str) -> dict:
     return {"Authorization": f"Bearer {res.json()['access_token']}"}
 
 
+def test_stock_is_saved_reduced_and_can_be_added_again(client: TestClient, db_session: Session):
+    seller = _user(db_session, "seller.stock@example.com", "Seller")
+    buyer = _user(db_session, "buyer.stock@example.com", "Buyer")
+    seller_headers = _headers(client, seller.email)
+    buyer_headers = _headers(client, buyer.email)
+
+    listed = client.post(
+        "/api/v1/customer/products",
+        headers=seller_headers,
+        json={"name": "Clay pot", "price": 150, "stock_quantity": 1},
+    )
+    assert listed.status_code == 201
+    body = listed.json()
+    product_id = body["id"]
+    assert body["stock_quantity"] == 1
+    assert body["stock_status"] == "IN_STOCK"
+    assert body["can_add_stock"] is False
+
+    bought = client.post(
+        "/api/v1/marketplace/orders",
+        headers=buyer_headers,
+        json={
+            "product_id": product_id,
+            "buyer_name": "Buyer",
+            "buyer_phone": "9876500002",
+            "buyer_address": "House 12, Marine Drive",
+            "buyer_pincode": "682031",
+            "quantity": 1,
+        },
+    )
+    assert bought.status_code == 201
+
+    empty = client.get(f"/api/v1/products/{product_id}")
+    assert empty.status_code == 200
+    assert empty.json()["stock_quantity"] == 0
+    assert empty.json()["stock_status"] == "OUT_OF_STOCK"
+    assert empty.json()["in_stock"] is False
+    assert empty.json()["can_add_stock"] is True
+
+    blocked = client.post(
+        "/api/v1/marketplace/orders",
+        headers=buyer_headers,
+        json={
+            "product_id": product_id,
+            "buyer_name": "Buyer",
+            "buyer_phone": "9876500002",
+            "buyer_address": "House 12, Marine Drive",
+            "buyer_pincode": "682031",
+            "quantity": 1,
+        },
+    )
+    assert blocked.status_code == 400
+
+    restocked = client.post(
+        f"/api/v1/customer/products/{product_id}/add-stock",
+        headers=seller_headers,
+        json={"quantity": 4},
+    )
+    assert restocked.status_code == 200
+    assert restocked.json()["stock_quantity"] == 4
+    assert restocked.json()["stock_status"] == "IN_STOCK"
+    assert restocked.json()["can_add_stock"] is False
+
+
 def test_any_customer_can_sell_and_buyer_tracks_delivery(client: TestClient, db_session: Session):
     seller = _user(db_session, "seller.market@example.com", "Seller")
     buyer = _user(db_session, "buyer.market@example.com", "Buyer")

@@ -393,7 +393,7 @@ class ProductService:
             original_price=data.original_price,
             images=data.images or [],
             sizes=data.sizes or [],
-            stock_status=(data.stock_status or "IN_STOCK").strip().upper(),
+            stock_status="OUT_OF_STOCK" if data.stock_quantity == 0 else "IN_STOCK",
             stock_quantity=data.stock_quantity,
             district=data.district or seller.district,
             city=data.city or seller.city,
@@ -405,6 +405,27 @@ class ProductService:
         db.commit()
         db.refresh(new_product)
         return new_product
+
+    @staticmethod
+    def add_stock(db: Session, product_id: int, user: User, quantity: int) -> CustomerProduct:
+        product = db.query(CustomerProduct).filter(CustomerProduct.id == product_id).first()
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product {product_id} not found",
+            )
+        is_admin = user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN)
+        if not is_admin and product.seller_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to edit this product.",
+            )
+        current = product.stock_quantity or 0
+        product.stock_quantity = current + quantity
+        product.stock_status = "IN_STOCK"
+        db.commit()
+        db.refresh(product)
+        return product
 
     @staticmethod
     def update_product(

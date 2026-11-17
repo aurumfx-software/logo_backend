@@ -12,7 +12,7 @@ class ProductCreateRequest(BaseModel):
     images: List[str] = Field(default_factory=list, description="List of product photo URLs")
     sizes: List[str] = Field(default_factory=list, description="Available sizes e.g. ['S', 'M', 'L'] or ['Free Size']")
     stock_status: str = Field("IN_STOCK", description="IN_STOCK or OUT_OF_STOCK")
-    stock_quantity: Optional[int] = Field(None, ge=0, description="Units available. Omit when stock is not counted.")
+    stock_quantity: int = Field(..., ge=0, description="Units available when the product is listed.")
     district: Optional[str] = Field(None, max_length=100)
     city: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=255)
@@ -40,6 +40,10 @@ class ProductUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class AddStockRequest(BaseModel):
+    quantity: int = Field(..., ge=1, le=100000, description="Units to add back to this product.")
+
+
 class ProductAdminStatusUpdate(BaseModel):
     is_active: Optional[bool] = Field(None, description="Toggle On/Off product visibility")
     approval_status: Optional[str] = Field(None, description="APPROVED, DENIED, or PENDING")
@@ -62,6 +66,7 @@ class ProductResponse(BaseModel):
     stock_status: str
     stock_quantity: Optional[int] = None
     in_stock: bool = True
+    can_add_stock: bool = False
     district: Optional[str] = None
     city: Optional[str] = None
     location: Optional[str] = None

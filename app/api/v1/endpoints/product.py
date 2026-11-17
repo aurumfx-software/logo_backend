@@ -25,6 +25,7 @@ from app.schemas.commerce import (
 )
 from app.schemas.seller_portal import CheckoutRulesResponse, SellerAnalyticsResponse
 from app.schemas.product import (
+    AddStockRequest,
     ProductCreateRequest,
     ProductUpdateRequest,
     ProductAdminStatusUpdate,
@@ -64,6 +65,7 @@ def _product_response(product) -> ProductResponse:
         and (product.stock_status or "").upper() != "OUT_OF_STOCK"
         and (quantity is None or quantity > 0)
     )
+    item.can_add_stock = quantity == 0
     count = int(getattr(product, "rating_count", 0) or 0)
     item.rating_count = count
     item.rating_average = round((getattr(product, "rating_sum", 0) or 0) / count, 2) if count else 0
@@ -570,6 +572,21 @@ def get_seller_analytics(
         success=True,
         data=SellerPortalService.seller_analytics(db, current_user, period),
     )
+
+
+@router.post(
+    "/customer/products/{id}/add-stock",
+    response_model=ProductResponse,
+    summary="Add units when a product is out of stock",
+)
+def add_product_stock(
+    id: int,
+    data: AddStockRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    product = ProductService.add_stock(db=db, product_id=id, user=current_user, quantity=data.quantity)
+    return _product_response(product)
 
 
 @router.put(
