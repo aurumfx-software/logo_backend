@@ -61,3 +61,6 @@ query
 # Local DB dumps (may contain credentials or PII)
 *_backup.sql
 render_live_data_backup.sql
+
+# Scratch
+scratch/
