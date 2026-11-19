@@ -157,6 +157,7 @@ class OrderResponse(BaseModel):
     payment_method: Optional[str] = None
     razorpay_order_id: Optional[str] = None
     cancellation_reason: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
     courier_partner: Optional[str] = None
     tracking_number: Optional[str] = None
     tracking_url: Optional[str] = None
@@ -180,6 +181,7 @@ class OrderStatusUpdateRequest(BaseModel):
         description="PLACED, CONFIRMED, SHIPPED, OUT_FOR_DELIVERY, DELIVERED, or CANCELLED",
     )
     notes: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class OrderCancelRequest(BaseModel):

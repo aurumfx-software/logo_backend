@@ -761,6 +761,11 @@ class ProductService:
         ProductService._assert_status_transition(order.status, new_status)
         if normalize_order_status(new_status) == "CANCELLED":
             ProductService._restore_stock(order)
+            note_text = (notes or "Cancelled by seller").strip()
+            order.cancellation_reason = note_text[:500]
+            order.cancelled_at = datetime.now(timezone.utc)
+            if (order.payment_status or "").upper() == "PAID":
+                order.payment_status = "REFUND_PENDING"
         ProductService._record_status(order, new_status, notes)
         if notes is not None:
             order.notes = notes

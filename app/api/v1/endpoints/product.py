@@ -660,8 +660,9 @@ def update_seller_order_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    effective_notes = (data.reason or data.notes) if (data.status or "").upper() == "CANCELLED" else data.notes
     order = ProductService.update_seller_order_status(
-        db=db, seller_id=current_user.id, order_id=id, new_status=data.status, notes=data.notes
+        db=db, seller_id=current_user.id, order_id=id, new_status=data.status, notes=effective_notes
     )
     return _order_response(order)
 
