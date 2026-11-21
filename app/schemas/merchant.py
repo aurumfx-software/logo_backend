@@ -83,6 +83,7 @@ class MerchantProfileResponse(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     location: Optional[str] = None
+    place: Optional[str] = None
     landmark: Optional[str] = None
     address: Optional[str] = None
     latitude: Optional[float] = None
@@ -157,6 +158,7 @@ class MerchantOnboardingRequest(BaseModel):
     district: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Bangalore Urban"})
     state: Optional[str] = Field(None, max_length=100, json_schema_extra={"example": "Karnataka"})
     location: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Indiranagar"})
+    place: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Feroke"})
     city_region: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Bangalore"})
     landmark: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "Near Metro Station"})
 
@@ -402,6 +404,7 @@ class MerchantUpdateRequest(BaseModel):
     district: Optional[str] = Field(None, max_length=100)
     state: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=255)
+    place: Optional[str] = Field(None, max_length=255)
     city_region: Optional[str] = Field(None, max_length=255)
     landmark: Optional[str] = Field(None, max_length=255)
     latitude: Optional[float] = None

@@ -105,6 +105,11 @@ class MerchantProfile(Base):
     approved_by = relationship("User", foreign_keys=[approved_by_id])
     onboarded_by = relationship("User", foreign_keys=[onboarded_by_id])
 
+    @property
+    def place(self):
+        return self.landmark or self.location or self.city or None
+
+
 
 class MerchantFavorite(Base):
     __tablename__ = "merchant_favorites"

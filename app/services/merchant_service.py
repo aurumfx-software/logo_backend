@@ -385,8 +385,9 @@ class MerchantService:
         # 2. Normalize location fields: District, City, Location
         district = data.district.strip() if data.district else None
         city = (data.city or data.city_region or "").strip() or None
-        location = (data.location or data.city_region or data.city or "General").strip()
-        landmark = data.landmark.strip() if data.landmark else None
+        place_val = (getattr(data, "place", None) or "").strip()
+        location = (place_val or data.location or data.city_region or data.city or "General").strip()
+        landmark = place_val if place_val else (data.landmark.strip() if data.landmark else None)
 
         # 3. Normalize contact/phone number
         clean_phone = re.sub(r"[\s\-()]", "", data.phone_number)
@@ -954,6 +955,9 @@ class MerchantService:
             merchant.address = data.address.strip()
         if data.city is not None:
             merchant.city = data.city.strip()
+        if getattr(data, "place", None) is not None and data.place.strip():
+            merchant.landmark = data.place.strip()
+            merchant.location = data.place.strip()
         if data.district is not None:
             merchant.district = data.district.strip()
         if data.state is not None:
