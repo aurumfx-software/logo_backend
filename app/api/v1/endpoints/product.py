@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_admin_user_flexible, get_current_user_optional
 from app.db.database import get_db
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.schemas.commerce import (
     AddressRequest,
     AddressResponse,
