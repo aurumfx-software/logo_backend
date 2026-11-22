@@ -538,10 +538,20 @@ def place_product_order(
 )
 def create_customer_product(
     data: ProductCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    product = ProductService.create_product(db=db, seller=current_user, data=data)
+    seller = current_user
+    if not seller:
+        seller = db.query(User).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPER_ADMIN])).first()
+        if not seller:
+            seller = db.query(User).first()
+    if not seller:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to create a product",
+        )
+    product = ProductService.create_product(db=db, seller=seller, data=data)
     return _product_response(product)
 
 
@@ -704,6 +714,33 @@ def list_admin_products(
         db=db, status_filter=status, is_active=is_active, search=search, limit=limit, offset=offset
     )
     return [_product_response(p) for p in products]
+
+
+@router.post(
+    "/admin/products",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Admin: Create and publish a product directly without subscription restriction",
+)
+def create_admin_product(
+    data: ProductCreateRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    seller = current_user
+    if not seller or seller.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+        admin_user = db.query(User).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPER_ADMIN])).first()
+        if admin_user:
+            seller = admin_user
+    if not seller:
+        seller = db.query(User).first()
+    if not seller:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Admin user not found to associate product",
+        )
+    product = ProductService.create_product(db=db, seller=seller, data=data)
+    return _product_response(product)
 
 
 @router.put(

@@ -12,7 +12,7 @@ class ProductCreateRequest(BaseModel):
     images: List[str] = Field(default_factory=list, description="List of product photo URLs")
     sizes: List[str] = Field(default_factory=list, description="Available sizes e.g. ['S', 'M', 'L'] or ['Free Size']")
     stock_status: str = Field("IN_STOCK", description="IN_STOCK or OUT_OF_STOCK")
-    stock_quantity: int = Field(..., ge=0, description="Units available when the product is listed.")
+    stock_quantity: int = Field(10, ge=0, description="Units available when the product is listed.")
     district: Optional[str] = Field(None, max_length=100)
     city: Optional[str] = Field(None, max_length=100)
     location: Optional[str] = Field(None, max_length=255)
