@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 from typing import Optional
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -345,3 +347,52 @@ def upload_banner_media(
         },
         message=f"Banner {media_type} uploaded successfully to CDN",
     )
+
+
+class SliderSettingsPayload(BaseModel):
+    interval_seconds: int = Field(default=4, ge=2, le=60)
+
+
+@router.get("/settings/slider", summary="Get global slider speed settings")
+def get_slider_settings(db: Session = Depends(get_db)):
+    """
+    Public endpoint: Returns global slider speed interval in seconds.
+    """
+    from app.db.models.promotion import Promotion
+    config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
+    if config and config.description:
+        try:
+            data = json.loads(config.description)
+            return success_response(data=data, message="Slider settings retrieved")
+        except Exception:
+            pass
+    return success_response(data={"interval_seconds": 4}, message="Default slider settings")
+
+
+@router.put("/settings/slider", summary="Update global slider speed settings")
+def update_slider_settings(
+    payload: SliderSettingsPayload,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_admin_user_flexible),
+):
+    """
+    Admin endpoint: Updates global slider speed interval across all ad carousels.
+    """
+    from app.db.models.promotion import Promotion
+    sec = max(2, min(int(payload.interval_seconds), 60))
+    data = {"interval_seconds": sec}
+    config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
+    if not config:
+        config = Promotion(
+            title="System Slider Settings",
+            type="SYSTEM_CONFIG",
+            placement="SYSTEM_CONFIG_SLIDER",
+            status="active",
+            description=json.dumps(data),
+        )
+        db.add(config)
+    else:
+        config.description = json.dumps(data)
+    db.commit()
+    return success_response(data=data, message="Slider settings updated successfully")
+

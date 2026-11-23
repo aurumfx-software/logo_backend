@@ -15,7 +15,7 @@ class PromotionService:
         search: Optional[str] = None,
         placement: Optional[str] = None,
     ) -> List[Promotion]:
-        query = db.query(Promotion)
+        query = db.query(Promotion).filter(Promotion.type != "SYSTEM_CONFIG")
         if status_filter and status_filter.lower() != "all":
             query = query.filter(Promotion.status == status_filter.lower())
         if placement:
@@ -153,7 +153,8 @@ class PromotionService:
         from app.db.models.merchant import MerchantProfile
 
         query = db.query(Promotion).filter(
-            or_(Promotion.status == "active", Promotion.status == "approved")
+            or_(Promotion.status == "active", Promotion.status == "approved"),
+            Promotion.type != "SYSTEM_CONFIG",
         )
         if placement:
             query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
