@@ -121,8 +121,24 @@ class UserRegisterRequest(UserBase):
         return v
 
 
-class UserLoginRequest(UserBase):
+class UserLoginRequest(BaseModel):
+    """Sign in with an email address or a login ID such as RAH48291."""
+
+    email: str = Field(..., json_schema_extra={"example": "test@example.com"})
     password: str = Field(..., json_schema_extra={"example": "TestPassword123"})
+
+    @field_validator("email")
+    @classmethod
+    def email_or_login_id(cls, value: str) -> str:
+        clean = str(value or "").strip()
+        if not clean:
+            raise ValueError("Email or login ID is required")
+        if "@" in clean:
+            lowered = clean.lower()
+            if not re.match(EMAIL_REGEX, lowered):
+                raise ValueError("Invalid email format")
+            return lowered
+        return clean.upper()
 
 
 class UserPhoneLoginRequest(BaseModel):
@@ -229,6 +245,7 @@ class CustomerRegisterRequest(BaseModel):
 class SafeUserResponse(BaseModel):
     id: int
     user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "ADM_1"})
+    login_id: Optional[str] = Field(None, description="Login ID from the name, e.g. RAJ48291", json_schema_extra={"example": "ANJ48291"})
     name: str
     email: str
     phone: Optional[str] = None
@@ -323,6 +340,7 @@ class CustomerRegisterResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user_code: Optional[str] = None
+    login_id: Optional[str] = None
     role: Optional[str] = None
 
 
@@ -331,6 +349,7 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user_code: Optional[str] = Field(None, description="Formatted user code, e.g. ADM_1, FLS_1, SAD_1", json_schema_extra={"example": "FLS_1"})
+    login_id: Optional[str] = Field(None, description="Login ID from the name, e.g. RAJ48291")
     role: Optional[str] = Field(None, description="User role: SUPER_ADMIN, ADMIN, FIELD_STAFF", json_schema_extra={"example": "FIELD_STAFF"})
     user: Optional[SafeUserResponse] = None
 

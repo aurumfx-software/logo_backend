@@ -323,6 +323,9 @@ class MerchantService:
             is_verified=False,
         )
         db.add(user)
+        db.flush()
+        from app.services.auth_service import AuthService
+        AuthService.assign_login_id(db, user)
         db.commit()
         db.refresh(user)
 
@@ -359,7 +362,11 @@ class MerchantService:
             entity_type="MERCHANT",
             entity_id=merchant.id,
             user_id=user.id,
-            details={"business_name": merchant.business_name, "location": merchant.location},
+            details={
+                "business_name": merchant.business_name,
+                "location": merchant.location,
+                "login_id": user.login_id,
+            },
         )
 
         return user, merchant
@@ -436,10 +443,19 @@ class MerchantService:
                 is_verified=False,
             )
             db.add(user)
+            db.flush()
+            from app.services.auth_service import AuthService
+            AuthService.assign_login_id(db, user)
             db.commit()
             db.refresh(user)
         elif user.role not in (UserRole.MERCHANT, UserRole.SUPER_ADMIN, UserRole.ADMIN):
             user.role = UserRole.MERCHANT
+            db.commit()
+            db.refresh(user)
+
+        if user and not user.login_id and user.role == UserRole.MERCHANT:
+            from app.services.auth_service import AuthService
+            AuthService.assign_login_id(db, user)
             db.commit()
             db.refresh(user)
 

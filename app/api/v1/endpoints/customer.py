@@ -48,6 +48,7 @@ def register_customer(
         refresh_token=tokens.refresh_token,
         token_type=tokens.token_type,
         user_code=tokens.user_code,
+        login_id=tokens.login_id,
         role=tokens.role,
     )
 

@@ -4,6 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 import jwt
 
@@ -35,6 +36,43 @@ from app.services.wallet_service import WalletService
 
 class AuthService:
     """Service handling registration, authentication, token rotation, and password reset."""
+
+    @staticmethod
+    def ensure_login_id_column(db: Session) -> None:
+        if db.info.get("login_id_ready"):
+            return
+        conn = db.connection()
+        inspector = inspect(conn)
+        if "users" in inspector.get_table_names():
+            columns = {column["name"] for column in inspector.get_columns("users")}
+            if "login_id" not in columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN login_id VARCHAR(20)"))
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_login_id ON users (login_id)"))
+                db.commit()
+        db.info["login_id_ready"] = True
+
+    @staticmethod
+    def login_prefix(name: str, fallback: str = "USR") -> str:
+        letters = "".join(ch for ch in (name or "").upper() if "A" <= ch <= "Z")
+        if len(letters) >= 3:
+            return letters[:3]
+        return (letters + fallback)[:3]
+
+    @staticmethod
+    def assign_login_id(db: Session, user: User) -> str:
+        AuthService.ensure_login_id_column(db)
+        if user.login_id:
+            return user.login_id
+        fallback = "MER" if UserRole.coerce(user.role) == UserRole.MERCHANT else "USR"
+        prefix = AuthService.login_prefix(user.name, fallback)
+        for _ in range(30):
+            candidate = f"{prefix}{secrets.randbelow(90000) + 10000}"
+            taken = db.query(User.id).filter(User.login_id == candidate).first()
+            if not taken:
+                user.login_id = candidate
+                return candidate
+        user.login_id = f"{prefix}{secrets.randbelow(900000) + 100000}"
+        return user.login_id
 
     @staticmethod
     def normalize_phone(phone: str) -> str:
@@ -234,6 +272,7 @@ class AuthService:
         )
         db.add(new_user)
         db.flush()
+        AuthService.assign_login_id(db, new_user)
         WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
@@ -287,6 +326,8 @@ class AuthService:
         )
         db.add(new_user)
         db.flush()
+        if assigned_role in (UserRole.MERCHANT, UserRole.FIELD_STAFF):
+            AuthService.assign_login_id(db, new_user)
         WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
@@ -338,13 +379,17 @@ class AuthService:
 
     @staticmethod
     def authenticate_user(db: Session, login_data: UserLoginRequest) -> User:
-        clean_email = login_data.email.strip().lower()
-        user = db.query(User).filter(User.email == clean_email).first()
+        AuthService.ensure_login_id_column(db)
+        identifier = login_data.email.strip()
+        if "@" in identifier:
+            user = db.query(User).filter(User.email == identifier.lower()).first()
+        else:
+            user = db.query(User).filter(User.login_id == identifier.upper()).first()
 
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password.",
+                detail="Invalid email, login ID, or password.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -363,21 +408,21 @@ class AuthService:
             if not verify_password(login_data.password, merchant.password_hash):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid email or password.",
+                    detail="Invalid email, login ID, or password.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
         else:
             if not user.password_hash:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid email or password.",
+                    detail="Invalid email, login ID, or password.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
 
             if not verify_password(login_data.password, user.password_hash):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid email or password.",
+                    detail="Invalid email, login ID, or password.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
 
@@ -387,6 +432,8 @@ class AuthService:
                 detail="User account is inactive. Please contact support.",
             )
 
+        if UserRole.coerce(user.role) in (UserRole.MERCHANT, UserRole.FIELD_STAFF) and not user.login_id:
+            AuthService.assign_login_id(db, user)
         user.last_active = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)
@@ -404,6 +451,7 @@ class AuthService:
             refresh_token=refresh_token,
             token_type="bearer",
             user_code=user.user_code,
+            login_id=user.login_id,
             role=role_val,
             user=SafeUserResponse.model_validate(user),
         )

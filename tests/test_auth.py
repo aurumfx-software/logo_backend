@@ -125,7 +125,7 @@ def test_login_wrong_password(client: TestClient):
     }
     response = client.post("/api/v1/auth/login", json=login_payload)
     assert response.status_code == 401
-    assert "Invalid email or password" in response.json()["detail"]
+    assert "Invalid email, login ID, or password" in response.json()["detail"]
 
 
 # 5. JWT protected endpoint & Current user endpoint
