@@ -23,6 +23,18 @@ class MerchantRegisterRequest(BaseModel):
     merchant_photos: Optional[List[str]] = Field(default_factory=list, json_schema_extra={"example": ["https://example.com/photos/store1.jpg"]})
     contact_number: str = Field(..., min_length=7, max_length=50, json_schema_extra={"example": "9876543210"})
     address: str = Field(..., min_length=5, max_length=500, json_schema_extra={"example": "Door No 14/204, Toll Junction, Edappally, Kochi - 682024"})
+    cashback_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Customer commission percent. Zero is allowed and sets both commissions to zero.",
+    )
+    company_fee_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Merchant commission percent. Zero is allowed and sets both commissions to zero.",
+    )
 
     @field_validator("email")
     @classmethod
@@ -182,8 +194,20 @@ class MerchantOnboardingRequest(BaseModel):
         None,
         min_length=8,
         max_length=100,
-        description="Optional merchant login password (omit for onboarded merchants without login yet)",
+        description="Optional merchant login password. Leave it out when the merchant will set a password later.",
         json_schema_extra={"example": "MerchantPass123"},
+    )
+    cashback_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Customer commission percent. Zero is allowed and sets both commissions to zero.",
+    )
+    company_fee_percent: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Merchant commission percent. Zero is allowed and sets both commissions to zero.",
     )
 
     # Social & Web links
@@ -297,6 +321,9 @@ class MerchantOnboardingRequest(BaseModel):
 
             if not data.get("address"):
                 data["address"] = data.get("location") or "Kerala, India"
+
+            if isinstance(data.get("password"), str) and not data["password"].strip():
+                data["password"] = None
         return data
 
     @field_validator("email")

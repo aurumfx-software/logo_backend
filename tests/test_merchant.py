@@ -284,3 +284,49 @@ def test_merchant_logout(client: TestClient):
 
     me = client.get("/api/v1/merchants/me", headers=headers)
     assert me.status_code == 401
+
+
+def test_create_merchant_accepts_password_and_zero_commission(client: TestClient):
+    created = client.post(
+        "/api/v1/merchants",
+        json={
+            "business_name": "Zero Commission Shop",
+            "owner_name": "Nila Menon",
+            "phone_number": "9876504411",
+            "email": "zero.shop@example.com",
+            "password": "ZeroPass123",
+            "district": "Ernakulam",
+            "city": "Kochi",
+            "location": "Edappally",
+            "category": "Retail",
+            "cashback_percent": 0,
+            "company_fee_percent": 4,
+        },
+    )
+    assert created.status_code == 201
+    merchant = created.json()["merchant"]
+    assert merchant["cashback_percent"] == 0
+    assert merchant["company_fee_percent"] == 0
+    assert merchant["has_password"] is True
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "zero.shop@example.com", "password": "ZeroPass123"},
+    )
+    assert login.status_code == 200
+
+    updated = client.put(
+        f"/api/v1/merchants/{merchant['id']}",
+        json={"cashback_percent": 5, "company_fee_percent": 2},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["cashback_percent"] == 5
+    assert updated.json()["company_fee_percent"] == 2
+
+    cleared = client.put(
+        f"/api/v1/merchants/{merchant['id']}",
+        json={"company_fee_percent": 0},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["cashback_percent"] == 0
+    assert cleared.json()["company_fee_percent"] == 0

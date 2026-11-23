@@ -48,6 +48,24 @@ class MerchantService:
         )
 
     @staticmethod
+    def apply_commission(merchant: MerchantProfile, cashback, company_fee) -> None:
+        """Save customer and merchant commission. A zero on either side clears both."""
+        if cashback is None and company_fee is None:
+            return
+        current_cash = 3 if merchant.cashback_percent is None else merchant.cashback_percent
+        current_fee = 2 if merchant.company_fee_percent is None else merchant.company_fee_percent
+        next_cash = current_cash if cashback is None else cashback
+        next_fee = current_fee if company_fee is None else company_fee
+        if float(next_cash or 0) == 0 or float(next_fee or 0) == 0:
+            merchant.cashback_percent = 0
+            merchant.company_fee_percent = 0
+            return
+        if cashback is not None:
+            merchant.cashback_percent = cashback
+        if company_fee is not None:
+            merchant.company_fee_percent = company_fee
+
+    @staticmethod
     def _set_merchant_password(merchant: MerchantProfile, plain_password: str) -> None:
         hashed = hash_password(plain_password)
         merchant.password_hash = hashed
@@ -351,6 +369,7 @@ class MerchantService:
             approval_status="PENDING",
             is_active=True,
         )
+        MerchantService.apply_commission(merchant, data.cashback_percent, data.company_fee_percent)
         db.add(merchant)
         db.commit()
         db.refresh(merchant)
@@ -516,6 +535,11 @@ class MerchantService:
             is_verified=False,
             is_active=True,
             approval_status="PENDING",
+        )
+        MerchantService.apply_commission(
+            merchant,
+            getattr(data, "cashback_percent", None),
+            getattr(data, "company_fee_percent", None),
         )
         db.add(merchant)
         db.commit()
@@ -1074,10 +1098,7 @@ class MerchantService:
             if user:
                 user.password_hash = merchant.password_hash
 
-        if data.cashback_percent is not None:
-            merchant.cashback_percent = data.cashback_percent
-        if data.company_fee_percent is not None:
-            merchant.company_fee_percent = data.company_fee_percent
+        MerchantService.apply_commission(merchant, data.cashback_percent, data.company_fee_percent)
 
         db.commit()
         db.refresh(merchant)
