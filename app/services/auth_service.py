@@ -326,8 +326,7 @@ class AuthService:
         )
         db.add(new_user)
         db.flush()
-        if assigned_role in (UserRole.MERCHANT, UserRole.FIELD_STAFF):
-            AuthService.assign_login_id(db, new_user)
+        AuthService.assign_login_id(db, new_user)
         WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
@@ -432,7 +431,7 @@ class AuthService:
                 detail="User account is inactive. Please contact support.",
             )
 
-        if UserRole.coerce(user.role) in (UserRole.MERCHANT, UserRole.FIELD_STAFF) and not user.login_id:
+        if not user.login_id:
             AuthService.assign_login_id(db, user)
         user.last_active = datetime.now(timezone.utc)
         db.commit()
