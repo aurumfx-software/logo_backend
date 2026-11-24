@@ -581,13 +581,20 @@ class WalletService:
         )
 
     @staticmethod
+    def _added_fund_filter():
+        return or_(
+            and_(
+                WalletTransaction.source_pool == "ADDED_FUND",
+                WalletTransaction.reference_id == "ADDED_FUND",
+            ),
+            WalletTransaction.description.ilike("Added Fund:%"),
+        )
+
+    @staticmethod
     def _added_fund_inflow_sum(db: Session) -> Decimal:
         return WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
-            .filter(
-                WalletTransaction.source_pool == "ADDED_FUND",
-                WalletTransaction.reference_id == "ADDED_FUND",
-            )
+            .filter(WalletService._added_fund_filter())
             .scalar()
         )
 
@@ -660,6 +667,50 @@ class WalletService:
         return items
 
     @staticmethod
+    def _withdrawal_request_items(db: Session):
+        WalletService.ensure_withdrawal_schema(db)
+        rows = (
+            db.query(WalletWithdrawal)
+            .options(selectinload(WalletWithdrawal.user))
+            .order_by(WalletWithdrawal.created_at.desc(), WalletWithdrawal.id.desc())
+            .all()
+        )
+        user_ids = [row.user_id for row in rows]
+        profiles = WalletService._profiles_by_user_ids(db, user_ids) if user_ids else {}
+        items = []
+        pending_total = Decimal("0.00")
+        for withdrawal in rows:
+            owner = withdrawal.user
+            status_value = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
+            profile = profiles.get(withdrawal.user_id)
+            role = "merchant" if profile or (owner and UserRole.coerce(owner.role) == UserRole.MERCHANT) else "customer"
+            party_name = profile.business_name if profile else (owner.name if owner else withdrawal.account_holder_name)
+            if status_value == WithdrawalStatus.PENDING.value:
+                pending_total += WalletService._money(withdrawal.amount)
+            items.append(
+                AdminPlatformCashItem(
+                    id=withdrawal.id,
+                    transaction_group_id=withdrawal.transaction_group_id,
+                    movement="RECEIVED",
+                    transaction_type="WITHDRAWAL_REQUEST",
+                    amount=WalletService._money(withdrawal.amount),
+                    party_name=party_name,
+                    party_email=owner.email if owner else None,
+                    party_phone=owner.phone if owner else None,
+                    party_role=role,
+                    party_user_id=withdrawal.user_id,
+                    description=f"{status_value} withdrawal to {withdrawal.account_holder_name}",
+                    status=status_value,
+                    can_approve=status_value == WithdrawalStatus.PENDING.value,
+                    account_holder_name=withdrawal.account_holder_name,
+                    account_number_masked=WalletService._mask_account(withdrawal.account_number),
+                    ifsc=withdrawal.ifsc,
+                    created_at=withdrawal.created_at,
+                )
+            )
+        return items, WalletService._money(pending_total)
+
+    @staticmethod
     def admin_platform_cards(
         db: Session,
         fund_page: int = 1,
@@ -675,10 +726,7 @@ class WalletService:
         injections = (
             db.query(WalletTransaction)
             .options(selectinload(WalletTransaction.initiated_by))
-            .filter(
-                WalletTransaction.source_pool == "ADDED_FUND",
-                WalletTransaction.reference_id == "ADDED_FUND",
-            )
+            .filter(WalletService._added_fund_filter())
             .all()
         )
         added_items = []
@@ -699,7 +747,7 @@ class WalletService:
                     created_at=txn.created_at,
                 )
             )
-        added_items.extend(WalletService._send_items(db, "ADDED_FUND"))
+        added_total = WalletService._money(sum((item.amount for item in added_items), Decimal("0.00")))
 
         company = WalletService.get_company_wallet(db)
         commission_rows = (
@@ -731,21 +779,14 @@ class WalletService:
             )
         commission_items.extend(WalletService._send_items(db, "COMMISSION"))
 
-        topups = (
-            db.query(WalletTransaction)
-            .options(selectinload(WalletTransaction.initiated_by))
-            .filter(WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP)
-            .all()
-        )
-        received_items = WalletService._platform_party_items(db, topups, "RECEIVED")
-        received_items.extend(WalletService._send_items(db, "RECEIVED_FUND"))
+        received_items, received_balance = WalletService._withdrawal_request_items(db)
         sent_items = WalletService._send_items(db)
 
         return AdminPlatformCardsResponse(
             added_fund=WalletService._card(
                 "added_fund",
                 "Added fund",
-                WalletService.pool_balance(db, "ADDED_FUND"),
+                added_total,
                 added_items,
                 fund_page,
                 fund_page_size,
@@ -760,8 +801,8 @@ class WalletService:
             ),
             cash_received=WalletService._card(
                 "cash_received",
-                "Cash received",
-                WalletService.pool_balance(db, "RECEIVED_FUND"),
+                "Withdrawal requests",
+                received_balance,
                 received_items,
                 cash_page,
                 cash_page_size,
@@ -808,13 +849,25 @@ class WalletService:
         )
 
     @staticmethod
-    def get_admin_transaction(db: Session, transaction_id: int) -> AdminWalletTransactionResponse:
-        txn = (
-            db.query(WalletTransaction)
-            .options(*_TXN_EAGER)
-            .filter(WalletTransaction.id == transaction_id)
-            .first()
-        )
+    def get_admin_transaction(db: Session, transaction_id: str) -> AdminWalletTransactionResponse:
+        WalletService.ensure_source_pool_column(db)
+        raw = str(transaction_id).strip()
+        group_key = raw[4:] if raw.upper().startswith("ADD-") else raw
+        txn = None
+        if raw.isdigit() and int(raw) <= 2147483647:
+            txn = (
+                db.query(WalletTransaction)
+                .options(*_TXN_EAGER)
+                .filter(WalletTransaction.id == int(raw))
+                .first()
+            )
+        if txn is None:
+            txn = (
+                db.query(WalletTransaction)
+                .options(*_TXN_EAGER)
+                .filter(WalletTransaction.group_id.in_([raw, group_key]))
+                .first()
+            )
         if not txn:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2463,6 +2516,8 @@ class WalletService:
             .limit(page_size)
             .all()
         )
+        owner_ids = [owner.id for _, owner in rows if owner]
+        profiles = WalletService._profiles_by_user_ids(db, owner_ids) if owner_ids else {}
         items = []
         for withdrawal, owner in rows:
             status_value = withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
@@ -2477,6 +2532,11 @@ class WalletService:
                     user_phone=owner.phone if owner else None,
                     phone=owner.phone if owner else None,
                     user_email=owner.email if owner else None,
+                    user_role=(
+                        "merchant"
+                        if owner and (profiles.get(owner.id) or UserRole.coerce(owner.role) == UserRole.MERCHANT)
+                        else "customer"
+                    ),
                     amount=WalletService._money(withdrawal.amount),
                     account_holder_name=withdrawal.account_holder_name,
                     account_number=clean_acc,

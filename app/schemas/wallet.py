@@ -449,6 +449,7 @@ class AdminWithdrawalItemResponse(BaseModel):
     user_phone: Optional[str] = None
     phone: Optional[str] = None
     user_email: Optional[str] = None
+    user_role: Optional[str] = None
     amount: Decimal
     account_holder_name: str
     account_number: Optional[str] = None
@@ -547,7 +548,13 @@ class AdminPlatformCashItem(BaseModel):
     party_email: Optional[str] = None
     party_phone: Optional[str] = None
     party_role: str
+    party_user_id: Optional[int] = None
     description: Optional[str] = None
+    status: Optional[str] = None
+    can_approve: bool = False
+    account_holder_name: Optional[str] = None
+    account_number_masked: Optional[str] = None
+    ifsc: Optional[str] = None
     created_at: datetime
 
 

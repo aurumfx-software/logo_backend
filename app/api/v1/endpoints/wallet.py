@@ -94,10 +94,10 @@ def admin_wallet_transactions(
     response_model=AdminPlatformCardsResponse,
     summary="Admin: added fund, commission, and cash received cards",
     description=(
-        "Three cards for the platform wallet. added_fund is money an admin added. "
-        "commission is the company fee taken from a user or merchant sale. "
-        "cash_received is cash paid to a merchant or user on withdrawal. "
-        "Each card has its own balance and its own transaction table."
+        "added_fund is capital an admin added. commission is the company fee from merchant sales. "
+        "cash_received lists withdrawal requests from customers and merchants. "
+        "Its balance is the sum still waiting for approval. "
+        "Approve a pending row with POST /wallet/admin/withdrawals/{transaction_group_id}/send."
     ),
 )
 def admin_platform_cards(
@@ -166,7 +166,7 @@ def list_admin_platform_wallet_transactions(
     summary="Admin: wallet transaction details by id",
 )
 def admin_wallet_transaction_detail(
-    transaction_id: int,
+    transaction_id: str,
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):

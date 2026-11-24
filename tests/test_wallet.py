@@ -553,14 +553,42 @@ def test_admin_platform_cards_use_real_pool_totals(client: TestClient, db_sessio
     cards = client.get("/api/v1/wallet/admin/platform-cards", headers=headers)
     assert cards.status_code == 200
     body = cards.json()
-    assert Decimal(body["added_fund"]["balance"]) == Decimal("70.00")
+    assert Decimal(body["added_fund"]["balance"]) == Decimal("100.00")
     assert Decimal(body["commission"]["balance"]) == Decimal("0.00")
-    assert Decimal(body["cash_received"]["balance"]) == Decimal("0.00")
+    withdrawn = client.post(
+        "/api/v1/wallet/withdrawals",
+        headers=_auth_headers(client, member.email, "Password123!"),
+        json={
+            "amount": "20.00",
+            "account_holder_name": "Cards Member",
+            "account_number": "9988776655",
+            "ifsc": "SBIN0001234",
+        },
+    )
+    assert withdrawn.status_code == 201
+
+    cards = client.get("/api/v1/wallet/admin/platform-cards", headers=headers)
+    assert cards.status_code == 200
+    body = cards.json()
+    assert Decimal(body["added_fund"]["balance"]) == Decimal("100.00")
+    assert Decimal(body["commission"]["balance"]) == Decimal("0.00")
+    assert Decimal(body["cash_received"]["balance"]) == Decimal("20.00")
+    request_row = body["cash_received"]["transactions"][0]
+    assert request_row["movement"] == "RECEIVED"
+    assert request_row["can_approve"] is True
+    assert request_row["status"] == "PENDING"
+    assert request_row["party_role"] == "customer"
+    assert request_row["transaction_group_id"]
     assert Decimal(body["cash_sent"]["balance"]) == Decimal("30.00")
     movements = {row["movement"] for row in body["added_fund"]["transactions"]}
-    assert movements == {"ADDED_FUND", "SENT"}
+    assert movements == {"ADDED_FUND"}
     assert body["added_fund"]["transactions"][0]["transaction_type"] in ("ADMIN_CAPITAL", "ADMIN_SEND_FUNDS")
     assert body["cash_sent"]["transactions"][0]["movement"] == "SENT"
+    capital_rows = [row for row in body["added_fund"]["transactions"] if row["movement"] == "ADDED_FUND"]
+    assert sum(Decimal(row["amount"]) for row in capital_rows) == Decimal("100.00")
+
+    missing = client.get("/api/v1/wallet/admin/transactions/1795512686370", headers=headers)
+    assert missing.status_code == 404
 
 
 def test_wallet_list_adds_missing_source_pool_column(client: TestClient, db_session: Session):
