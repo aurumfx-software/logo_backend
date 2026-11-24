@@ -156,6 +156,8 @@ class MerchantService:
         """Batch-load owner users with only stable columns (avoids schema drift on users table)."""
         if not user_ids:
             return {}
+        from app.services.auth_service import AuthService
+        AuthService.ensure_login_id_column(db)
         rows = (
             db.query(
                 User.id,
@@ -166,6 +168,7 @@ class MerchantService:
                 User.profile_picture,
                 User.district,
                 User.city,
+                User.login_id,
             )
             .filter(User.id.in_(user_ids))
             .all()
@@ -182,6 +185,7 @@ class MerchantService:
         linked = MerchantLinkedUser(
             id=user_row.id,
             user_code=user_row.user_code,
+            login_id=getattr(user_row, "login_id", None),
             name=user_row.name or "Unknown",
             email=user_row.email,
             phone=user_row.phone,
@@ -206,6 +210,8 @@ class MerchantService:
             resp.city = linked.city
         if not resp.user_code and linked.user_code:
             resp.user_code = linked.user_code
+        if linked.login_id:
+            resp.login_id = linked.login_id
         return resp
 
     @staticmethod
@@ -301,6 +307,17 @@ class MerchantService:
         resp.creator = creator_summary
         resp.created_by = creator_summary
         resp.has_password = bool(merchant.password_hash)
+        videos = [str(url) for url in (merchant.merchant_videos or []) if url and not str(url).startswith("data:")]
+        if not videos and merchant.video_url and not str(merchant.video_url).startswith("data:"):
+            videos = [str(merchant.video_url)]
+        resp.merchant_videos = videos
+        resp.video_url = videos[0] if videos else None
+        try:
+            owner_user = merchant.user
+            if owner_user and getattr(owner_user, "login_id", None):
+                resp.login_id = owner_user.login_id
+        except Exception:
+            pass
         if linked_user is not None:
             resp = MerchantService.merge_linked_user(resp, linked_user)
         return resp
@@ -343,7 +360,7 @@ class MerchantService:
         db.add(user)
         db.flush()
         from app.services.auth_service import AuthService
-        AuthService.assign_login_id(db, user)
+        AuthService.assign_login_id(db, user, source_name=data.business_name, digits=4)
         db.commit()
         db.refresh(user)
 
@@ -464,7 +481,7 @@ class MerchantService:
             db.add(user)
             db.flush()
             from app.services.auth_service import AuthService
-            AuthService.assign_login_id(db, user)
+            AuthService.assign_login_id(db, user, source_name=data.business_name, digits=4)
             db.commit()
             db.refresh(user)
         elif user.role not in (UserRole.MERCHANT, UserRole.SUPER_ADMIN, UserRole.ADMIN):
@@ -474,7 +491,7 @@ class MerchantService:
 
         if user and not user.login_id and user.role == UserRole.MERCHANT:
             from app.services.auth_service import AuthService
-            AuthService.assign_login_id(db, user)
+            AuthService.assign_login_id(db, user, source_name=data.business_name, digits=4)
             db.commit()
             db.refresh(user)
 

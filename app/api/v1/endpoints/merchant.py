@@ -179,7 +179,11 @@ def upload_merchant_media(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Video {v.filename} has unsupported format. Allowed: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}",
                 )
-            saved_videos.append(_save_file(v, videos_dir, "/static/merchants/videos"))
+            from app.services.storage_service import storage_service
+            saved_url = storage_service.upload_file(v, folder="merchants/videos")
+            if saved_url.startswith("http://") and "/static/" in saved_url:
+                saved_url = saved_url[saved_url.index("/static/"):]
+            saved_videos.append(saved_url)
 
     if documents:
         for d in documents:
@@ -201,7 +205,11 @@ def upload_merchant_media(
             if ext in ALLOWED_IMAGE_EXTENSIONS:
                 saved_photos.append(_save_file(f, photos_dir, "/static/merchants/photos"))
             elif ext in ALLOWED_VIDEO_EXTENSIONS:
-                saved_videos.append(_save_file(f, videos_dir, "/static/merchants/videos"))
+                from app.services.storage_service import storage_service
+                saved_url = storage_service.upload_file(f, folder="merchants/videos")
+                if saved_url.startswith("http://") and "/static/" in saved_url:
+                    saved_url = saved_url[saved_url.index("/static/"):]
+                saved_videos.append(saved_url)
             elif ext in ALLOWED_DOCUMENT_EXTENSIONS:
                 saved_docs.append(_save_file(f, documents_dir, "/static/merchants/documents"))
             else:

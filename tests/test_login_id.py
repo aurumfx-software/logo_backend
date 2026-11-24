@@ -47,7 +47,9 @@ def test_customer_and_merchant_login_with_name_id(client: TestClient):
     )
     assert merchant.status_code == 201
     merchant_id = merchant.json()["user"]["login_id"]
-    assert merchant_id.startswith("RAJ")
+    assert merchant_id.startswith("ROY")
+    assert re.fullmatch(r"[A-Z]{3}\d{4}", merchant_id)
+    assert merchant.json()["merchant"]["login_id"] == merchant_id
     assert merchant_id != customer_id
 
     merchant_login = client.post(

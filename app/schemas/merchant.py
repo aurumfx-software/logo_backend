@@ -72,6 +72,7 @@ class MerchantLinkedUser(BaseModel):
 
     id: int
     user_code: Optional[str] = None
+    login_id: Optional[str] = None
     name: str
     email: Optional[str] = None
     phone: Optional[str] = None
@@ -86,6 +87,7 @@ class MerchantProfileResponse(BaseModel):
     id: int
     user_id: int
     user_code: Optional[str] = None
+    login_id: Optional[str] = None
     business_name: str
     owner: Optional[str] = None
     owner_name: Optional[str] = None

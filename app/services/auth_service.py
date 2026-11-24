@@ -59,19 +59,27 @@ class AuthService:
         return (letters + fallback)[:3]
 
     @staticmethod
-    def assign_login_id(db: Session, user: User) -> str:
+    def assign_login_id(
+        db: Session,
+        user: User,
+        source_name: Optional[str] = None,
+        digits: int = 5,
+    ) -> str:
         AuthService.ensure_login_id_column(db)
         if user.login_id:
             return user.login_id
         fallback = "MER" if UserRole.coerce(user.role) == UserRole.MERCHANT else "USR"
-        prefix = AuthService.login_prefix(user.name, fallback)
+        prefix = AuthService.login_prefix(source_name or user.name, fallback)
+        width = 4 if digits == 4 else 5
+        floor = 10 ** (width - 1)
+        span = (10 ** width) - floor
         for _ in range(30):
-            candidate = f"{prefix}{secrets.randbelow(90000) + 10000}"
+            candidate = f"{prefix}{secrets.randbelow(span) + floor}"
             taken = db.query(User.id).filter(User.login_id == candidate).first()
             if not taken:
                 user.login_id = candidate
                 return candidate
-        user.login_id = f"{prefix}{secrets.randbelow(900000) + 100000}"
+        user.login_id = f"{prefix}{secrets.randbelow(span) + floor}"
         return user.login_id
 
     @staticmethod
