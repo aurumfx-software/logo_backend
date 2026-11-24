@@ -1071,10 +1071,16 @@ class MerchantService:
         if data.photo_6 is not None:
             merchant.photo_6 = data.photo_6
 
-        if data.video_url is not None:
-            merchant.video_url = data.video_url
-        if data.merchant_videos is not None:
-            merchant.merchant_videos = data.merchant_videos
+        if data.video_url is not None or data.merchant_videos is not None:
+            videos = [
+                url
+                for url in (data.merchant_videos or [])
+                if url and not str(url).startswith("data:")
+            ]
+            if not videos and data.video_url and not str(data.video_url).startswith("data:"):
+                videos = [data.video_url]
+            merchant.merchant_videos = videos
+            merchant.video_url = videos[0] if videos else None
         if data.verification_documents is not None:
             merchant.verification_documents = data.verification_documents
 
@@ -1317,6 +1323,7 @@ class MerchantService:
             cur_videos = list(merchant.merchant_videos or [])
             cur_videos.extend(videos)
             merchant.merchant_videos = cur_videos
+            merchant.video_url = cur_videos[0]
 
         if documents:
             cur_docs = list(merchant.verification_documents or [])
