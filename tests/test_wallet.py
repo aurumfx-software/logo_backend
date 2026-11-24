@@ -561,3 +561,23 @@ def test_admin_platform_cards_use_real_pool_totals(client: TestClient, db_sessio
     assert movements == {"ADDED_FUND", "SENT"}
     assert body["added_fund"]["transactions"][0]["transaction_type"] in ("ADMIN_CAPITAL", "ADMIN_SEND_FUNDS")
     assert body["cash_sent"]["transactions"][0]["movement"] == "SENT"
+
+
+def test_wallet_list_adds_missing_source_pool_column(client: TestClient, db_session: Session):
+    import app.db.database as database
+
+    admin = _create_user(db_session, "pool.admin@example.com", "Pool Admin", UserRole.ADMIN)
+    headers = _auth_headers(client, admin.email, "Password123!")
+    db_session.execute(text("DROP INDEX IF EXISTS ix_wallet_transactions_source_pool"))
+    db_session.execute(text("ALTER TABLE wallet_transactions DROP COLUMN source_pool"))
+    db_session.commit()
+    database._source_pool_ready = False
+    db_session.info.pop("source_pool_ready", None)
+
+    listed = client.get("/api/v1/wallet/admin/transactions", headers=headers)
+    assert listed.status_code == 200
+    columns = {
+        row[1]
+        for row in db_session.execute(text("PRAGMA table_info(wallet_transactions)")).fetchall()
+    }
+    assert "source_pool" in columns

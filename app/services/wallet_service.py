@@ -428,6 +428,7 @@ class WalletService:
         page_size: int,
         transaction_type: Optional[str] = None,
     ):
+        WalletService.ensure_source_pool_column(db)
         query = db.query(WalletTransaction)
         if transaction_type and transaction_type.strip().lower() not in ("all", ""):
             type_norm = transaction_type.strip().upper().replace("-", "_").replace(" ", "_")
@@ -476,6 +477,7 @@ class WalletService:
     @staticmethod
     def list_admin_platform_cash(db: Session, page: int, page_size: int):
         """Merchant wallet top-ups (money in) and user withdrawals (money out)."""
+        WalletService.ensure_source_pool_column(db)
         received_filter, deducted_filter, total_received, total_deducted, real_balance = (
             WalletService.platform_cash_totals(db)
         )
@@ -540,18 +542,9 @@ class WalletService:
 
     @staticmethod
     def ensure_source_pool_column(db: Session) -> None:
-        if db.info.get("source_pool_ready"):
-            return
-        conn = db.connection()
-        inspector = inspect(conn)
-        if "wallet_transactions" not in inspector.get_table_names():
-            db.info["source_pool_ready"] = True
-            return
-        existing = {column["name"] for column in inspector.get_columns("wallet_transactions")}
-        if "source_pool" not in existing:
-            conn.execute(text("ALTER TABLE wallet_transactions ADD COLUMN source_pool VARCHAR(32)"))
-            db.commit()
-        db.info["source_pool_ready"] = True
+        from app.db.database import ensure_wallet_source_pool
+
+        ensure_wallet_source_pool(db)
 
     @staticmethod
     def _normalize_source_wallet(value: Optional[str]) -> Optional[str]:
