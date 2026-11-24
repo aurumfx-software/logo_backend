@@ -5,9 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, optional_security_scheme, security_scheme, resolve_access_token
-from app.core.security import decode_token
-import jwt
+from app.api.deps import get_current_user, optional_security_scheme, resolve_access_token
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
@@ -72,6 +70,27 @@ def login(
 ) -> TokenResponse:
     user = AuthService.authenticate_user(db=db, login_data=login_data)
     return AuthService.generate_token_pair(user)
+
+
+@router.post(
+    "/switch-back",
+    response_model=TokenResponse,
+    summary="Return from an impersonated merchant or customer session",
+    description="Send the impersonation access token. The response is a normal admin login token.",
+)
+def switch_back_to_admin(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    token = resolve_access_token(request, credentials)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return AuthService.switch_back_to_admin(db, token)
 
 
 @router.post(
@@ -402,49 +421,3 @@ def reset_password(
 ) -> GenericMessageResponse:
     AuthService.reset_password(db=db, reset_data=reset_req)
     return GenericMessageResponse(message="Password has been reset successfully. You can now log in.")
-
-
-@router.post(
-    "/switch-back",
-    response_model=TokenResponse,
-    summary="Switch back from impersonated account to admin",
-)
-def switch_back_to_admin(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
-    request: Request = None,
-    db: Session = Depends(get_db),
-) -> TokenResponse:
-    token = resolve_access_token(request, credentials) if request else (credentials.credentials if credentials else None)
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authentication token.",
-        )
-    try:
-        payload = decode_token(token)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
-        )
-
-    impersonated_by = payload.get("impersonated_by")
-    if not impersonated_by:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not an impersonated session.",
-        )
-
-    admin_user = db.query(User).filter(User.id == int(impersonated_by)).first()
-    if not admin_user or not admin_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Original admin user not found or inactive.",
-        )
-
-    return AuthService.generate_token_pair(admin_user, impersonated_by=None)

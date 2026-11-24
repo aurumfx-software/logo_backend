@@ -48,13 +48,16 @@ def create_token(
     return encoded_jwt
 
 
-def create_access_token(user_id: int, role: str, impersonated_by: Optional[int] = None) -> str:
+def create_access_token(
+    user_id: int,
+    role: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
     """Generate an access token valid for ACCESS_TOKEN_EXPIRE_MINUTES."""
     expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    data = {"sub": str(user_id), "role": role}
-    if impersonated_by is not None:
-        data["impersonated_by"] = int(impersonated_by)
-        data["is_impersonation"] = True
+    data: Dict[str, Any] = {"sub": str(user_id), "role": role}
+    if extra:
+        data.update(extra)
     return create_token(
         data=data,
         expires_delta=expires_delta,
@@ -62,13 +65,16 @@ def create_access_token(user_id: int, role: str, impersonated_by: Optional[int] 
     )
 
 
-def create_refresh_token(user_id: int, role: str, impersonated_by: Optional[int] = None) -> str:
+def create_refresh_token(
+    user_id: int,
+    role: str,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
     """Generate a refresh token valid for REFRESH_TOKEN_EXPIRE_DAYS."""
     expires_delta = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    data = {"sub": str(user_id), "role": role}
-    if impersonated_by is not None:
-        data["impersonated_by"] = int(impersonated_by)
-        data["is_impersonation"] = True
+    data: Dict[str, Any] = {"sub": str(user_id), "role": role}
+    if extra:
+        data.update(extra)
     return create_token(
         data=data,
         expires_delta=expires_delta,

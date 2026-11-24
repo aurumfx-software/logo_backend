@@ -33,6 +33,7 @@ from app.schemas.response import (
 from app.schemas.wallet import AdminWalletTransactionResponse
 from app.services.activity_log_service import ActivityLogService
 from app.services.admin_service import AdminService
+from app.services.auth_service import AuthService
 from app.services.merchant_service import MerchantService
 from app.services.wallet_service import WalletService
 
@@ -72,6 +73,38 @@ def list_all_wallet_transactions(
         page_size=page_size,
         message="Wallet transactions retrieved successfully",
     )
+
+
+@router.post(
+    "/members/{user_id}/impersonate",
+    response_model=TokenResponse,
+    summary="Open a merchant or customer session",
+    description=(
+        "Admin only. Returns a login token for an active merchant or customer. "
+        "The id can be the user id, user code, or login id. "
+        "Call POST /api/v1/auth/switch-back with that token to return to the admin account."
+    ),
+)
+def impersonate_member(
+    user_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    return AuthService.impersonate_user(db, current_admin, user_id)
+
+
+@router.post(
+    "/merchants/{merchant_id}/impersonate",
+    response_model=TokenResponse,
+    summary="Open a merchant session",
+    description="Admin only. The id is the merchant profile id, or the merchant user id, user code, or login id.",
+)
+def impersonate_merchant(
+    merchant_id: str,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    return AuthService.impersonate_user(db, current_admin, merchant_id, merchant_only=True)
 
 
 # --- Admin Dashboard ---
