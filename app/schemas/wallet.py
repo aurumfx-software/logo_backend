@@ -325,15 +325,28 @@ class AdminWalletTransactionItem(BaseModel):
     customer_phone: Optional[str] = None
     customer_email: Optional[str] = None
     customer_details: Optional[str] = None
+    customer_user_code: Optional[str] = None
     merchant_name: Optional[str] = None
     merchant_city: Optional[str] = None
     merchant_details: Optional[str] = None
+    merchant_login_id: Optional[str] = None
+    merchant_owner_name: Optional[str] = None
+    merchant_category: Optional[str] = None
     transaction_type: str
     direction: str
     amount: Decimal
     balance_after: Decimal
     note: Optional[str] = None
     date: datetime
+    transaction_group_id: Optional[str] = None
+    reference_id: Optional[str] = None
+    sale_amount: Optional[Decimal] = None
+    merchant_debit: Optional[Decimal] = None
+    merchant_deduction_percent: Optional[float] = None
+    customer_cashback: Optional[Decimal] = None
+    customer_cashback_percent: Optional[float] = None
+    company_fee: Optional[Decimal] = None
+    company_fee_percent: Optional[float] = None
 
 
 class AdminWalletTransactionsResponse(BaseModel):

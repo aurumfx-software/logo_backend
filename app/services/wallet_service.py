@@ -1715,17 +1715,31 @@ class WalletService:
 
         company = WalletService.get_company_wallet(db)
 
-        # Admin only needs company wallet commission credits & transactions
+        # Admin only needs company wallet commission credits & transactions from merchant sales (CASHBACK_REDEMPTION)
         query = (
             db.query(WalletLedgerEntry, WalletTransaction)
             .join(WalletTransaction, WalletLedgerEntry.transaction_id == WalletTransaction.id)
-            .filter(WalletLedgerEntry.wallet_id == company.id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
             .order_by(WalletLedgerEntry.id.desc())
         )
 
         total = query.count()
         total_pages = max(1, (total + page_size - 1) // page_size)
         rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+        txn_ids = [txn.id for _, txn in rows if txn]
+        related_entries = {}
+        if txn_ids:
+            for r_entry in (
+                db.query(WalletLedgerEntry)
+                .filter(WalletLedgerEntry.transaction_id.in_(txn_ids))
+                .all()
+            ):
+                related_entries.setdefault(r_entry.transaction_id, []).append(r_entry)
 
         group_ids = {txn.group_id for _, txn in rows if txn and txn.group_id}
         qr_by_group = {}
@@ -1829,6 +1843,34 @@ class WalletService:
             recipient_label = merchant_name or customer_name or "Platform Company"
             recipient_type = "merchant" if merchant_name else ("user" if customer_name else "company")
 
+            # Percentage cashback & fee breakdown
+            r_list = related_entries.get(txn.id, []) if txn else []
+            m_entry = next((e for e in r_list if e.direction == WalletLedgerDirection.DEBIT), None)
+            c_entry = next((e for e in r_list if e.direction == WalletLedgerDirection.CREDIT and e.wallet_id != company.id), None)
+            merchant_debit = WalletService._money(m_entry.amount) if m_entry else None
+            customer_cashback = WalletService._money(c_entry.amount) if c_entry else None
+            company_fee = WalletService._money(entry.amount)
+            sale_amount = WalletService._money(qr.sale_amount) if qr else (merchant_debit if merchant_debit else None)
+
+            merchant_row = (merchants_by_id.get(qr.merchant_profile_id) if qr else None) or (ref_merchants.get(ref_id) if ref_id else None)
+            merchant_deduction_percent = None
+            customer_cashback_percent = None
+            company_fee_percent = None
+            merchant_login_id = None
+            merchant_owner_name = None
+            merchant_category = None
+            if merchant_row:
+                user_pct, comp_pct = WalletService._cashback_rates(merchant_row)
+                merchant_deduction_percent = float(user_pct + comp_pct)
+                customer_cashback_percent = float(user_pct)
+                company_fee_percent = float(comp_pct)
+                merchant_login_id = getattr(merchant_row, 'login_id', None) or getattr(merchant_row, 'user_code', None) or (merchant_row.user.login_id if getattr(merchant_row, 'user', None) else None)
+                merchant_owner_name = getattr(merchant_row, 'owner_name', None) or (merchant_row.user.name if getattr(merchant_row, 'user', None) else None)
+                merchant_category = merchant_row.category.name if getattr(merchant_row, 'category', None) else None
+
+            customer_row = (users_by_id.get(qr.redeemed_by_user_id) if qr else None) or (users_by_id.get(ref_id) if ref_id else None)
+            customer_user_code = getattr(customer_row, 'login_id', None) or getattr(customer_row, 'user_code', None) or (f"USR_{customer_row.id}" if customer_row else None)
+
             items.append(
                 AdminWalletTransactionItem(
                     id=entry.id,
@@ -1838,15 +1880,28 @@ class WalletService:
                     customer_phone=customer_phone,
                     customer_email=customer_email,
                     customer_details=customer_details,
+                    customer_user_code=customer_user_code,
                     merchant_name=merchant_name,
                     merchant_city=merchant_city,
                     merchant_details=merchant_details,
+                    merchant_login_id=merchant_login_id,
+                    merchant_owner_name=merchant_owner_name,
+                    merchant_category=merchant_category,
                     transaction_type=txn_type_str,
                     direction=dir_str,
                     amount=WalletService._money(entry.amount),
                     balance_after=WalletService._money(entry.balance_after),
                     note=entry.note or (txn.description if txn else ""),
                     date=entry.created_at,
+                    transaction_group_id=txn.group_id if txn else None,
+                    reference_id=txn.reference_id if txn else None,
+                    sale_amount=sale_amount,
+                    merchant_debit=merchant_debit,
+                    merchant_deduction_percent=merchant_deduction_percent,
+                    customer_cashback=customer_cashback,
+                    customer_cashback_percent=customer_cashback_percent,
+                    company_fee=company_fee,
+                    company_fee_percent=company_fee_percent,
                 )
             )
 
