@@ -352,6 +352,8 @@ class TokenResponse(BaseModel):
     login_id: Optional[str] = Field(None, description="Login ID from the name, e.g. RAJ48291")
     role: Optional[str] = Field(None, description="User role: SUPER_ADMIN, ADMIN, FIELD_STAFF", json_schema_extra={"example": "FIELD_STAFF"})
     user: Optional[SafeUserResponse] = None
+    is_impersonation: Optional[bool] = False
+    impersonated_by: Optional[int] = None
 
 
 class RefreshTokenRequest(BaseModel):

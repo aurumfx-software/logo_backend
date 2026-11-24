@@ -448,11 +448,11 @@ class AuthService:
         return user
 
     @staticmethod
-    def generate_token_pair(user: User) -> TokenResponse:
+    def generate_token_pair(user: User, impersonated_by: Optional[int] = None) -> TokenResponse:
         role = UserRole.coerce(user.role)
         role_val = role.value
-        access_token = create_access_token(user_id=user.id, role=role_val)
-        refresh_token = create_refresh_token(user_id=user.id, role=role_val)
+        access_token = create_access_token(user_id=user.id, role=role_val, impersonated_by=impersonated_by)
+        refresh_token = create_refresh_token(user_id=user.id, role=role_val, impersonated_by=impersonated_by)
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -461,6 +461,8 @@ class AuthService:
             login_id=user.login_id,
             role=role_val,
             user=SafeUserResponse.model_validate(user),
+            is_impersonation=bool(impersonated_by),
+            impersonated_by=impersonated_by,
         )
 
     @staticmethod
@@ -506,8 +508,9 @@ class AuthService:
                 detail="Refresh token has been revoked. Please login again.",
             )
 
-        # Generate new token pair
-        return AuthService.generate_token_pair(user)
+        impersonated_by = payload.get("impersonated_by")
+        # Generate new token pair preserving impersonation
+        return AuthService.generate_token_pair(user, impersonated_by=impersonated_by)
 
     @staticmethod
     def _token_jti(payload: Dict, raw_token: str) -> str:

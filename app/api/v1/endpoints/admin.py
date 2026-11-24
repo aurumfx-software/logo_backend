@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin, require_any_authenticated
 from app.db.database import get_db
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
+from app.db.models.merchant import MerchantProfile
+from app.services.auth_service import AuthService
 from app.schemas.admin import (
     AdminDashboardStats,
     AdminUserCreateRequest,
@@ -15,7 +17,7 @@ from app.schemas.admin import (
     AdminUserUpdateRequest,
 )
 from app.schemas.activity_log import ActivityLogListResponse, ActivityLogResponse
-from app.schemas.auth import GenericMessageResponse
+from app.schemas.auth import GenericMessageResponse, TokenResponse
 from app.schemas.merchant import (
     MerchantProfileResponse,
     MerchantRejectRequest,
@@ -504,3 +506,96 @@ def get_activity_log_actions(
         data=actions,
         message="Action types retrieved successfully",
     )
+
+
+# ── Impersonation Endpoints ──
+
+@router.post(
+    "/members/{user_id}/impersonate",
+    response_model=TokenResponse,
+    summary="Impersonate customer or merchant by user id, user_code, or login_id",
+)
+def impersonate_member(
+    user_id: str,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    target_user = None
+    if user_id.isdigit():
+        target_user = db.query(User).filter(User.id == int(user_id)).first()
+    if not target_user:
+        target_user = db.query(User).filter(
+            (User.user_code == user_id) | (User.login_id == user_id)
+        ).first()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Member '{user_id}' not found.",
+        )
+
+    if not target_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account is inactive.",
+        )
+
+    role_val = UserRole.coerce(target_user.role).value
+    if role_val in ("SUPER_ADMIN", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot impersonate an admin account.",
+        )
+
+    return AuthService.generate_token_pair(target_user, impersonated_by=admin_user.id)
+
+
+@router.post(
+    "/merchants/{merchant_id}/impersonate",
+    response_model=TokenResponse,
+    summary="Impersonate merchant from merchant table ID or user ID/code",
+)
+def impersonate_merchant(
+    merchant_id: str,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    profile = None
+    if merchant_id.isdigit():
+        profile = db.query(MerchantProfile).filter(MerchantProfile.id == int(merchant_id)).first()
+        if not profile:
+            profile = db.query(MerchantProfile).filter(MerchantProfile.user_id == int(merchant_id)).first()
+    if not profile:
+        profile = db.query(MerchantProfile).filter(MerchantProfile.user_code == merchant_id).first()
+
+    target_user = None
+    if profile and profile.user_id:
+        target_user = db.query(User).filter(User.id == profile.user_id).first()
+
+    if not target_user and merchant_id.isdigit():
+        target_user = db.query(User).filter(User.id == int(merchant_id)).first()
+    if not target_user:
+        target_user = db.query(User).filter(
+            (User.user_code == merchant_id) | (User.login_id == merchant_id)
+        ).first()
+
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Merchant '{merchant_id}' not found.",
+        )
+
+    if not target_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Merchant account is inactive.",
+        )
+
+    role_val = UserRole.coerce(target_user.role).value
+    if role_val in ("SUPER_ADMIN", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot impersonate an admin account.",
+        )
+
+    return AuthService.generate_token_pair(target_user, impersonated_by=admin_user.id)
