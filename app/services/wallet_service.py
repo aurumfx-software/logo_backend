@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, inspect, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.services.razorpayx_service import RazorpayXService
@@ -52,15 +52,14 @@ from app.schemas.wallet import (
     WalletTopUpResponse,
     WalletTransferRequest,
     WalletTransferResponse,
-    WalletWithdrawalRequest,
-    WalletWithdrawalResponse,
-    WalletWithdrawalStatusResponse,
-    AdminPlatformCashItem,
     AdminWalletLedgerLineResponse,
     AdminWalletTransactionResponse,
     AdminWithdrawalItemResponse,
     AdminWithdrawalListResponse,
     AdminWithdrawalSendResponse,
+    WalletWithdrawalRequest,
+    WalletWithdrawalResponse,
+    WalletWithdrawalStatusResponse,
 )
 
 
@@ -77,6 +76,32 @@ def _percent_label(percent: float) -> str:
     return f"{percent:.2f}".rstrip("0").rstrip(".") or "0"
 
 
+def _enum_value(value, default=None):
+    if value is None:
+        return default
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def _ref_int(value) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+_TXN_EAGER = (
+    selectinload(WalletTransaction.initiated_by),
+    selectinload(WalletTransaction.ledger_entries)
+    .selectinload(WalletLedgerEntry.wallet)
+    .selectinload(Wallet.user),
+    selectinload(WalletTransaction.ledger_entries)
+    .selectinload(WalletLedgerEntry.counterparty_wallet)
+    .selectinload(Wallet.user),
+)
+
+
 class WalletService:
     @staticmethod
     def _money(value: Decimal) -> Decimal:
@@ -91,7 +116,7 @@ class WalletService:
         return WalletResponse(
             id=wallet.id,
             user_id=wallet.user_id,
-            wallet_type=wallet.wallet_type.value if hasattr(wallet.wallet_type, "value") else str(wallet.wallet_type),
+            wallet_type=_enum_value(wallet.wallet_type),
             currency=wallet.currency,
             balance=WalletService._money(wallet.balance),
             is_active=wallet.is_active,
@@ -186,31 +211,138 @@ class WalletService:
         return entry
 
     @staticmethod
-    def _serialize_admin_transaction(db: Session, txn: WalletTransaction) -> AdminWalletTransactionResponse:
-        initiator = txn.initiated_by
-        initiator_profile = (
-            db.query(MerchantProfile).filter_by(user_id=initiator.id).first() if initiator else None
+    def _profiles_by_user_ids(db: Session, user_ids) -> dict:
+        ids = {uid for uid in user_ids if uid}
+        if not ids:
+            return {}
+        rows = (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.user_id.in_(ids))
+            .order_by(MerchantProfile.id.asc())
+            .all()
         )
+        profiles = {}
+        for row in rows:
+            profiles.setdefault(row.user_id, row)
+        return profiles
+
+    @staticmethod
+    def _admin_txn_lookups(db: Session, txns):
+        user_ids = set()
+        topup_groups = set()
+        withdrawal_groups = set()
+        for txn in txns:
+            if txn.initiated_by_user_id:
+                user_ids.add(txn.initiated_by_user_id)
+            if txn.transaction_type == WalletTransactionType.WALLET_TOPUP and txn.group_id:
+                topup_groups.add(txn.group_id)
+            elif (
+                txn.transaction_type
+                in (WalletTransactionType.WALLET_WITHDRAWAL, WalletTransactionType.WITHDRAWAL)
+                and txn.group_id
+            ):
+                withdrawal_groups.add(txn.group_id)
+            for row in txn.ledger_entries or []:
+                if row.wallet and row.wallet.user_id:
+                    user_ids.add(row.wallet.user_id)
+                cp = row.counterparty_wallet
+                if cp and cp.user_id:
+                    user_ids.add(cp.user_id)
+
+        profiles = WalletService._profiles_by_user_ids(db, user_ids)
+        topups = {}
+        if topup_groups:
+            orders = (
+                db.query(WalletTopupOrder)
+                .filter(WalletTopupOrder.wallet_transaction_group_id.in_(topup_groups))
+                .order_by(WalletTopupOrder.id.asc())
+                .all()
+            )
+            for order in orders:
+                topups.setdefault(order.wallet_transaction_group_id, order)
+        withdrawals = {}
+        if withdrawal_groups:
+            WalletService.ensure_withdrawal_schema(db)
+            rows = (
+                db.query(WalletWithdrawal)
+                .filter(WalletWithdrawal.transaction_group_id.in_(withdrawal_groups))
+                .order_by(WalletWithdrawal.id.asc())
+                .all()
+            )
+            for withdrawal in rows:
+                withdrawals.setdefault(withdrawal.transaction_group_id, withdrawal)
+        return profiles, topups, withdrawals
+
+    @staticmethod
+    def _cash_item(txn: WalletTransaction, movement: str, user: Optional[User], profile: Optional[MerchantProfile]):
+        return AdminPlatformCashItem(
+            id=txn.id,
+            transaction_group_id=txn.group_id,
+            movement=movement,
+            transaction_type=_enum_value(txn.transaction_type),
+            amount=WalletService._money(txn.amount),
+            party_name=(profile.business_name if profile else user.name) if user else None,
+            party_email=user.email if user else None,
+            party_phone=user.phone if user else None,
+            party_role="merchant" if profile else "user",
+            description=txn.description,
+            created_at=txn.created_at,
+        )
+
+    @staticmethod
+    def _user_by_email_or_id(db: Session, email: Optional[str], user_id) -> Optional[User]:
+        if email:
+            return db.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
+        raw = str(user_id).strip() if user_id is not None else ""
+        if not raw:
+            return None
+        parsed = _ref_int(raw)
+        if parsed is None:
+            return None
+        return db.query(User).filter(User.id == parsed).first()
+
+    @staticmethod
+    def _customer_fields(user: Optional[User], *, with_id_fallback: bool = True):
+        if not user:
+            return None, None, None, None
+        name = user.name or user.email or (f"User #{user.id}" if with_id_fallback else None)
+        contact = user.phone or user.email
+        details = f"{name} ({contact})" if contact else name
+        return name, user.phone, user.email, details
+
+    @staticmethod
+    def _merchant_fields(merchant: Optional[MerchantProfile], *, with_id_fallback: bool = True):
+        if not merchant:
+            return None, None, None
+        name = merchant.business_name or (f"Merchant #{merchant.id}" if with_id_fallback else None)
+        details = f"{name} ({merchant.city})" if merchant.city else name
+        return name, merchant.city, details
+
+    @staticmethod
+    def _serialize_admin_transaction(
+        db: Session,
+        txn: WalletTransaction,
+        profiles_by_user: Optional[dict] = None,
+        topups_by_group: Optional[dict] = None,
+        withdrawals_by_group: Optional[dict] = None,
+    ) -> AdminWalletTransactionResponse:
+        if profiles_by_user is None or topups_by_group is None or withdrawals_by_group is None:
+            profiles_by_user, topups_by_group, withdrawals_by_group = WalletService._admin_txn_lookups(db, [txn])
+        initiator = txn.initiated_by
+        initiator_profile = profiles_by_user.get(initiator.id) if initiator else None
         provider_status = provider_id = failure_reason = bank_name = bank_last4 = bank_ifsc = None
         if txn.transaction_type == WalletTransactionType.WALLET_TOPUP:
-            topup = db.query(WalletTopupOrder).filter_by(wallet_transaction_group_id=txn.group_id).first()
+            topup = topups_by_group.get(txn.group_id)
             if topup:
-                provider_status = topup.status.value
+                provider_status = _enum_value(topup.status)
                 provider_id = topup.razorpay_payment_id or topup.razorpay_order_id
         elif txn.transaction_type in (
             WalletTransactionType.WALLET_WITHDRAWAL,
             WalletTransactionType.WITHDRAWAL,
         ):
-            WalletService.ensure_withdrawal_schema(db)
-            withdrawal = (
-                db.query(WalletWithdrawal)
-                .filter(WalletWithdrawal.transaction_group_id == txn.group_id)
-                .first()
-            )
+            withdrawal = withdrawals_by_group.get(txn.group_id)
             if withdrawal:
-                provider_status = (
-                    withdrawal.status.value if hasattr(withdrawal.status, "value") else str(withdrawal.status)
-                )
+                provider_status = _enum_value(withdrawal.status)
                 provider_id = withdrawal.payout_id or withdrawal.payout_mode
                 failure_reason = withdrawal.failure_reason or withdrawal.admin_note
                 bank_name = withdrawal.account_holder_name
@@ -222,8 +354,8 @@ class WalletService:
             user = wallet.user if wallet else None
             cp_wallet = row.counterparty_wallet
             cp_user = cp_wallet.user if cp_wallet else None
-            profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
-            cp_profile = db.query(MerchantProfile).filter_by(user_id=cp_user.id).first() if cp_user else None
+            profile = profiles_by_user.get(user.id) if user else None
+            cp_profile = profiles_by_user.get(cp_user.id) if cp_user else None
 
             # Identify display type and name clearly for Admin Ledgers
             if wallet and wallet.wallet_type == WalletType.COMPANY:
@@ -306,12 +438,17 @@ class WalletService:
                 query = query.filter(false())
         total = query.count()
         txns = (
-            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            query.options(*_TXN_EAGER)
+            .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
         )
-        data = [WalletService._serialize_admin_transaction(db, txn) for txn in txns]
+        profiles, topups, withdrawals = WalletService._admin_txn_lookups(db, txns)
+        data = [
+            WalletService._serialize_admin_transaction(db, txn, profiles, topups, withdrawals)
+            for txn in txns
+        ]
         return data, total
 
     @staticmethod
@@ -343,54 +480,47 @@ class WalletService:
         query = db.query(WalletTransaction).filter(or_(received_filter, deducted_filter))
         total = query.count()
         rows = (
-            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            query.options(selectinload(WalletTransaction.initiated_by))
+            .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
         )
+        profiles = WalletService._profiles_by_user_ids(
+            db, [txn.initiated_by_user_id for txn in rows if txn.initiated_by_user_id]
+        )
         items = []
         for txn in rows:
             user = txn.initiated_by
-            profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
-            is_topup = txn.transaction_type == WalletTransactionType.WALLET_TOPUP
-            items.append(
-                AdminPlatformCashItem(
-                    id=txn.id,
-                    transaction_group_id=txn.group_id,
-                    movement="RECEIVED" if is_topup else "DEDUCTED",
-                    transaction_type=txn.transaction_type.value,
-                    amount=WalletService._money(txn.amount),
-                    party_name=(profile.business_name if profile else user.name) if user else None,
-                    party_email=user.email if user else None,
-                    party_phone=user.phone if user else None,
-                    party_role="merchant" if profile else "user",
-                    description=txn.description,
-                    created_at=txn.created_at,
-                )
-            )
+            profile = profiles.get(user.id) if user else None
+            movement = "RECEIVED" if txn.transaction_type == WalletTransactionType.WALLET_TOPUP else "DEDUCTED"
+            items.append(WalletService._cash_item(txn, movement, user, profile))
         return items, total, total_received, total_deducted, real_balance
 
     @staticmethod
-    def _platform_party_item(db: Session, txn: WalletTransaction, movement: str, party_user: Optional[User] = None):
-        user = party_user
-        if user is None and txn.reference_id and str(txn.reference_id).isdigit():
-            user = db.query(User).filter(User.id == int(txn.reference_id)).first()
-        if user is None:
-            user = txn.initiated_by
-        profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
-        return AdminPlatformCashItem(
-            id=txn.id,
-            transaction_group_id=txn.group_id,
-            movement=movement,
-            transaction_type=txn.transaction_type.value,
-            amount=WalletService._money(txn.amount),
-            party_name=(profile.business_name if profile else user.name) if user else None,
-            party_email=user.email if user else None,
-            party_phone=user.phone if user else None,
-            party_role="merchant" if profile else "user",
-            description=txn.description,
-            created_at=txn.created_at,
-        )
+    def _platform_party_items(db: Session, txns, movement: str):
+        ref_ids = set()
+        raw_refs = []
+        for txn in txns:
+            raw = "" if txn.reference_id is None else str(txn.reference_id)
+            raw_refs.append(raw)
+            if raw.isdigit():
+                ref_ids.add(int(raw))
+        users_by_id = {}
+        if ref_ids:
+            for user in db.query(User).filter(User.id.in_(ref_ids)).all():
+                users_by_id[user.id] = user
+        resolved = []
+        for txn, raw in zip(txns, raw_refs):
+            user = users_by_id.get(int(raw)) if raw.isdigit() else None
+            if user is None:
+                user = txn.initiated_by
+            resolved.append(user)
+        profiles = WalletService._profiles_by_user_ids(db, [user.id for user in resolved if user])
+        return [
+            WalletService._cash_item(txn, movement, user, profiles.get(user.id) if user else None)
+            for txn, user in zip(txns, resolved)
+        ]
 
     @staticmethod
     def _page_transactions(query, page: int, page_size: int):
@@ -398,7 +528,8 @@ class WalletService:
         page_size = max(1, min(page_size, 100))
         total = query.count()
         rows = (
-            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            query.options(selectinload(WalletTransaction.initiated_by))
+            .order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
@@ -430,30 +561,28 @@ class WalletService:
         )
 
         company = WalletService.get_company_wallet(db)
+        commission_filter = and_(
+            WalletLedgerEntry.wallet_id == company.id,
+            WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+            WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+        )
         commission_query = (
             db.query(WalletLedgerEntry)
             .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
-            .filter(
-                WalletLedgerEntry.wallet_id == company.id,
-                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
-                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
-            )
+            .filter(commission_filter)
         )
         commission_balance = WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
             .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
-            .filter(
-                WalletLedgerEntry.wallet_id == company.id,
-                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
-                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
-            )
+            .filter(commission_filter)
             .scalar()
         )
         commission_page = max(1, commission_page)
         commission_page_size = max(1, min(commission_page_size, 100))
         commission_total = commission_query.count()
         commission_rows = (
-            commission_query.order_by(WalletLedgerEntry.created_at.desc(), WalletLedgerEntry.id.desc())
+            commission_query.options(selectinload(WalletLedgerEntry.transaction))
+            .order_by(WalletLedgerEntry.created_at.desc(), WalletLedgerEntry.id.desc())
             .offset((commission_page - 1) * commission_page_size)
             .limit(commission_page_size)
             .all()
@@ -491,7 +620,7 @@ class WalletService:
                 key="added_fund",
                 title="Added fund",
                 balance=fund_balance,
-                transactions=[WalletService._platform_party_item(db, txn, "ADDED") for txn in fund_rows],
+                transactions=WalletService._platform_party_items(db, fund_rows, "ADDED"),
                 total=fund_total,
                 page=fund_page,
                 page_size=fund_page_size,
@@ -509,7 +638,7 @@ class WalletService:
                 key="cash_received",
                 title="Cash received",
                 balance=cash_balance,
-                transactions=[WalletService._platform_party_item(db, txn, "RECEIVED") for txn in cash_rows],
+                transactions=WalletService._platform_party_items(db, cash_rows, "RECEIVED"),
                 total=cash_total,
                 page=cash_page,
                 page_size=cash_page_size,
@@ -518,13 +647,19 @@ class WalletService:
 
     @staticmethod
     def get_admin_transaction(db: Session, transaction_id: int) -> AdminWalletTransactionResponse:
-        txn = db.query(WalletTransaction).filter(WalletTransaction.id == transaction_id).first()
+        txn = (
+            db.query(WalletTransaction)
+            .options(*_TXN_EAGER)
+            .filter(WalletTransaction.id == transaction_id)
+            .first()
+        )
         if not txn:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Transaction not found.",
             )
-        return WalletService._serialize_admin_transaction(db, txn)
+        profiles, topups, withdrawals = WalletService._admin_txn_lookups(db, [txn])
+        return WalletService._serialize_admin_transaction(db, txn, profiles, topups, withdrawals)
 
     @staticmethod
     def _sum_money(value) -> Decimal:
@@ -571,41 +706,46 @@ class WalletService:
 
         ledger = (
             db.query(WalletLedgerEntry)
+            .options(selectinload(WalletLedgerEntry.transaction))
             .filter(WalletLedgerEntry.wallet_id == company.id)
             .order_by(WalletLedgerEntry.created_at.desc())
         )
         total = ledger.count()
         rows = ledger.offset((page - 1) * page_size).limit(page_size).all()
+        group_ids = {row.transaction.group_id for row in rows if row.transaction and row.transaction.group_id}
+        qr_by_group = {}
+        if group_ids:
+            for sale_qr in (
+                db.query(MerchantSaleQR)
+                .filter(MerchantSaleQR.wallet_transaction_group_id.in_(group_ids))
+                .order_by(MerchantSaleQR.id.asc())
+                .all()
+            ):
+                qr_by_group.setdefault(sale_qr.wallet_transaction_group_id, sale_qr)
+        merchant_ids = {qr.merchant_profile_id for qr in qr_by_group.values() if qr.merchant_profile_id}
+        merchants_by_id = {}
+        if merchant_ids:
+            for merchant in db.query(MerchantProfile).filter(MerchantProfile.id.in_(merchant_ids)).all():
+                merchants_by_id[merchant.id] = merchant
         transactions = []
         for row in rows:
             txn = row.transaction
-            # Try to find merchant name from the transaction group's sale QR
             merchant_name = None
             merchant_city = None
-            if txn and txn.group_id:
-                sale_qr = db.query(MerchantSaleQR).filter(
-                    MerchantSaleQR.wallet_transaction_group_id == txn.group_id
-                ).first()
-                if sale_qr and sale_qr.merchant_profile_id:
-                    mp = db.query(MerchantProfile).filter(
-                        MerchantProfile.id == sale_qr.merchant_profile_id
-                    ).first()
-                    if mp:
-                        merchant_name = mp.business_name
-                        merchant_city = mp.city
+            sale_qr = qr_by_group.get(txn.group_id) if txn and txn.group_id else None
+            merchant = merchants_by_id.get(sale_qr.merchant_profile_id) if sale_qr and sale_qr.merchant_profile_id else None
+            if merchant:
+                merchant_name = merchant.business_name
+                merchant_city = merchant.city
             transactions.append(
                 PlatformWalletTransaction(
                     id=row.id,
-                    direction=row.direction.value if hasattr(row.direction, "value") else str(row.direction),
+                    direction=_enum_value(row.direction),
                     amount=WalletService._money(row.amount),
                     balance_after=WalletService._money(row.balance_after),
                     note=row.note,
                     created_at=row.created_at,
-                    transaction_type=(
-                        txn.transaction_type.value
-                        if txn and hasattr(txn.transaction_type, "value")
-                        else (str(txn.transaction_type) if txn else None)
-                    ),
+                    transaction_type=_enum_value(txn.transaction_type) if txn else None,
                     transaction_group_id=txn.group_id if txn else None,
                     merchant_name=merchant_name,
                     merchant_city=merchant_city,
@@ -653,6 +793,7 @@ class WalletService:
 
         q = (
             db.query(WalletLedgerEntry)
+            .options(selectinload(WalletLedgerEntry.transaction))
             .filter(WalletLedgerEntry.wallet_id == wallet.id)
             .order_by(WalletLedgerEntry.created_at.desc())
         )
@@ -666,17 +807,13 @@ class WalletService:
             items.append(
                 WalletLedgerEntryResponse(
                     id=row.id,
-                    direction=row.direction.value if hasattr(row.direction, "value") else str(row.direction),
+                    direction=_enum_value(row.direction),
                     amount=WalletService._money(row.amount),
                     balance_after=WalletService._money(row.balance_after),
                     note=row.note,
                     counterparty_wallet_id=row.counterparty_wallet_id,
                     created_at=row.created_at,
-                    transaction_type=(
-                        txn.transaction_type.value
-                        if txn and hasattr(txn.transaction_type, "value")
-                        else (str(txn.transaction_type) if txn else None)
-                    ),
+                    transaction_type=_enum_value(txn.transaction_type) if txn else None,
                     transaction_group_id=txn.group_id if txn else None,
                 )
             )
@@ -1590,96 +1727,103 @@ class WalletService:
         total_pages = max(1, (total + page_size - 1) // page_size)
         rows = query.offset((page - 1) * page_size).limit(page_size).all()
 
+        group_ids = {txn.group_id for _, txn in rows if txn and txn.group_id}
+        qr_by_group = {}
+        if group_ids:
+            for qr in (
+                db.query(MerchantSaleQR)
+                .filter(MerchantSaleQR.wallet_transaction_group_id.in_(group_ids))
+                .order_by(MerchantSaleQR.id.asc())
+                .all()
+            ):
+                qr_by_group.setdefault(qr.wallet_transaction_group_id, qr)
+
+        wallet_ids = {entry.counterparty_wallet_id for entry, _ in rows if entry.counterparty_wallet_id}
+        wallets_by_id = {}
+        if wallet_ids:
+            for wallet in db.query(Wallet).filter(Wallet.id.in_(wallet_ids)).all():
+                wallets_by_id[wallet.id] = wallet
+
+        user_ids = set()
+        merchant_ids = set()
+        for qr in qr_by_group.values():
+            if qr.redeemed_by_user_id:
+                user_ids.add(qr.redeemed_by_user_id)
+            if qr.merchant_profile_id:
+                merchant_ids.add(qr.merchant_profile_id)
+        for wallet in wallets_by_id.values():
+            if wallet.user_id:
+                user_ids.add(wallet.user_id)
+
+        ref_ids = set()
+        for _, txn in rows:
+            parsed = _ref_int(txn.reference_id) if txn else None
+            if parsed is not None:
+                ref_ids.add(parsed)
+        user_ids.update(ref_ids)
+
+        users_by_id = {}
+        if user_ids:
+            for user in db.query(User).filter(User.id.in_(user_ids)).all():
+                users_by_id[user.id] = user
+        merchants_by_id = {}
+        if merchant_ids:
+            for merchant in db.query(MerchantProfile).filter(MerchantProfile.id.in_(merchant_ids)).all():
+                merchants_by_id[merchant.id] = merchant
+        profiles_by_user = WalletService._profiles_by_user_ids(db, [w.user_id for w in wallets_by_id.values()])
+        ref_merchants = {}
+        if ref_ids:
+            matches = (
+                db.query(MerchantProfile)
+                .filter(or_(MerchantProfile.id.in_(ref_ids), MerchantProfile.user_id.in_(ref_ids)))
+                .order_by(MerchantProfile.id.asc())
+                .all()
+            )
+            for merchant in matches:
+                if merchant.id in ref_ids:
+                    ref_merchants.setdefault(merchant.id, merchant)
+                if merchant.user_id in ref_ids:
+                    ref_merchants.setdefault(merchant.user_id, merchant)
+
         items = []
         for entry, txn in rows:
-            customer_name = None
-            customer_phone = None
-            customer_email = None
-            customer_details = None
+            customer_name = customer_phone = customer_email = customer_details = None
+            merchant_name = merchant_city = merchant_details = None
 
-            merchant_name = None
-            merchant_city = None
-            merchant_details = None
-
-            # 1. Resolve customer & merchant from Sale QR transaction group
-            qr = None
-            if txn and txn.group_id:
-                qr = db.query(MerchantSaleQR).filter(
-                    MerchantSaleQR.wallet_transaction_group_id == txn.group_id
-                ).first()
-
+            qr = qr_by_group.get(txn.group_id) if txn and txn.group_id else None
             if qr:
-                if qr.redeemed_by_user_id:
-                    cust = db.query(User).filter(User.id == qr.redeemed_by_user_id).first()
-                    if cust:
-                        customer_name = cust.name or cust.email or f"User #{cust.id}"
-                        customer_phone = cust.phone
-                        customer_email = cust.email
-                        contact = customer_phone or customer_email
-                        customer_details = f"{customer_name} ({contact})" if contact else customer_name
+                customer_name, customer_phone, customer_email, customer_details = WalletService._customer_fields(
+                    users_by_id.get(qr.redeemed_by_user_id)
+                )
+                merchant_name, merchant_city, merchant_details = WalletService._merchant_fields(
+                    merchants_by_id.get(qr.merchant_profile_id)
+                )
 
-                if qr.merchant_profile_id:
-                    merch = db.query(MerchantProfile).filter(
-                        MerchantProfile.id == qr.merchant_profile_id
-                    ).first()
-                    if merch:
-                        merchant_name = merch.business_name or f"Merchant #{merch.id}"
-                        merchant_city = merch.city
-                        merchant_details = f"{merchant_name} ({merch.city})" if merch.city else merchant_name
-
-            # 2. If not found via QR, resolve from counterparty wallet or reference
-            if not customer_name and not merchant_name:
-                cp_id = entry.counterparty_wallet_id
-                if cp_id:
-                    cp_wallet = db.query(Wallet).filter(Wallet.id == cp_id).first()
-                    if cp_wallet and cp_wallet.user_id:
-                        m = db.query(MerchantProfile).filter(
-                            MerchantProfile.user_id == cp_wallet.user_id
-                        ).first()
-                        if m:
-                            merchant_name = m.business_name or f"Merchant #{m.id}"
-                            merchant_city = m.city
-                            merchant_details = f"{merchant_name} ({m.city})" if m.city else merchant_name
-                        else:
-                            u = db.query(User).filter(User.id == cp_wallet.user_id).first()
-                            if u:
-                                customer_name = u.name or u.email or f"User #{u.id}"
-                                customer_phone = u.phone
-                                customer_email = u.email
-                                contact = customer_phone or customer_email
-                                customer_details = f"{customer_name} ({contact})" if contact else customer_name
-
-            if not customer_name and not merchant_name and txn and txn.reference_id:
-                try:
-                    ref_id = int(str(txn.reference_id).strip())
-                    m = db.query(MerchantProfile).filter(
-                        or_(MerchantProfile.id == ref_id, MerchantProfile.user_id == ref_id)
-                    ).first()
-                    if m:
-                        merchant_name = m.business_name
-                        merchant_city = m.city
-                        merchant_details = f"{m.business_name} ({m.city})" if m.city else m.business_name
+            if not customer_name and not merchant_name and entry.counterparty_wallet_id:
+                cp_wallet = wallets_by_id.get(entry.counterparty_wallet_id)
+                if cp_wallet and cp_wallet.user_id:
+                    profile = profiles_by_user.get(cp_wallet.user_id)
+                    if profile:
+                        merchant_name, merchant_city, merchant_details = WalletService._merchant_fields(profile)
                     else:
-                        u = db.query(User).filter(User.id == ref_id).first()
-                        if u:
-                            customer_name = u.name or u.email
-                            customer_phone = u.phone
-                            customer_email = u.email
-                            contact = customer_phone or customer_email
-                            customer_details = f"{customer_name} ({contact})" if contact else customer_name
-                except ValueError:
-                    pass
+                        customer_name, customer_phone, customer_email, customer_details = WalletService._customer_fields(
+                            users_by_id.get(cp_wallet.user_id)
+                        )
 
-            txn_type_str = (
-                txn.transaction_type.value
-                if txn and hasattr(txn.transaction_type, "value")
-                else (str(txn.transaction_type) if txn else "PLATFORM_FEE")
-            )
-            dir_str = (
-                entry.direction.value
-                if hasattr(entry.direction, "value")
-                else str(entry.direction)
-            )
+            ref_id = _ref_int(txn.reference_id) if txn else None
+            if not customer_name and not merchant_name and ref_id is not None:
+                ref_merchant = ref_merchants.get(ref_id)
+                if ref_merchant:
+                    merchant_name, merchant_city, merchant_details = WalletService._merchant_fields(
+                        ref_merchant, with_id_fallback=False
+                    )
+                else:
+                    customer_name, customer_phone, customer_email, customer_details = WalletService._customer_fields(
+                        users_by_id.get(ref_id), with_id_fallback=False
+                    )
+
+            txn_type_str = _enum_value(txn.transaction_type, "PLATFORM_FEE") if txn else "PLATFORM_FEE"
+            dir_str = _enum_value(entry.direction)
 
             # Determine primary recipient label for backwards compatibility
             recipient_label = merchant_name or customer_name or "Platform Company"
@@ -1735,65 +1879,44 @@ class WalletService:
 
         target_user = None
         merchant_name = None
+        merchant = None
 
         if recip_type == "merchant":
-            m = None
-            if payload.user_id is not None and str(payload.user_id).strip():
-                raw_id_str = str(payload.user_id).strip()
-                try:
-                    num_id = int(raw_id_str)
-                    m = db.query(MerchantProfile).filter(MerchantProfile.id == num_id).first()
-                    if not m:
-                        m = db.query(MerchantProfile).filter(MerchantProfile.user_id == num_id).first()
-                except ValueError:
-                    pass
-
-            if not m and payload.email:
-                clean_email = payload.email.strip().lower()
-                m = db.query(MerchantProfile).filter(func.lower(MerchantProfile.email) == clean_email).first()
-
-            if m:
-                merchant_name = m.business_name
-                if m.user_id:
-                    target_user = db.query(User).filter(User.id == m.user_id).first()
+            parsed_id = _ref_int(payload.user_id) if payload.user_id is not None and str(payload.user_id).strip() else None
+            if parsed_id is not None:
+                merchant = db.query(MerchantProfile).filter(MerchantProfile.id == parsed_id).first()
+                if not merchant:
+                    merchant = db.query(MerchantProfile).filter(MerchantProfile.user_id == parsed_id).first()
+            if not merchant and payload.email:
+                merchant = (
+                    db.query(MerchantProfile)
+                    .filter(func.lower(MerchantProfile.email) == payload.email.strip().lower())
+                    .first()
+                )
+            if merchant:
+                merchant_name = merchant.business_name
+                if merchant.user_id:
+                    target_user = db.query(User).filter(User.id == merchant.user_id).first()
                 if not target_user:
-                    m_phone = m.phone or m.contact_number
-                    if m_phone:
-                        clean_p = m_phone.strip()[-10:]
-                        target_user = db.query(User).filter(User.phone.like(f"%{clean_p}%")).first()
+                    phone = (merchant.phone or merchant.contact_number or "").strip()
+                    if phone:
+                        target_user = db.query(User).filter(User.phone.like(f"%{phone[-10:]}%")).first()
                         if target_user:
-                            m.user_id = target_user.id
+                            merchant.user_id = target_user.id
                             db.flush()
-
             if not target_user:
-                if payload.email:
-                    target_user = db.query(User).filter(func.lower(User.email) == payload.email.strip().lower()).first()
-                elif payload.user_id is not None:
-                    try:
-                        target_user = db.query(User).filter(User.id == int(str(payload.user_id).strip())).first()
-                    except ValueError:
-                        pass
-
-            if not target_user and not m:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Merchant '{payload.email or payload.user_id}' not found.",
-                )
+                target_user = WalletService._user_by_email_or_id(db, payload.email, payload.user_id)
         else:
-            if payload.email:
-                clean_email = payload.email.strip().lower()
-                target_user = db.query(User).filter(func.lower(User.email) == clean_email).first()
-            elif payload.user_id is not None:
-                try:
-                    target_user = db.query(User).filter(User.id == int(str(payload.user_id).strip())).first()
-                except ValueError:
-                    pass
+            target_user = WalletService._user_by_email_or_id(db, payload.email, payload.user_id)
 
-            if not target_user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"User '{payload.email or payload.user_id}' not found.",
-                )
+        if not target_user:
+            label = payload.email or payload.user_id
+            if recip_type == "merchant" and merchant:
+                detail = f"Merchant '{label}' has no linked user account."
+            else:
+                kind = "Merchant" if recip_type == "merchant" else "User"
+                detail = f"{kind} '{label}' not found."
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
 
         target_wallet = WalletService.ensure_wallet_for_user(db, target_user.id)
         db.flush()
