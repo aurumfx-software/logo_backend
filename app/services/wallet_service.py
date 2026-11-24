@@ -27,6 +27,9 @@ from app.db.models.wallet import (
     WithdrawalStatus,
 )
 from app.schemas.wallet import (
+    AdminPlatformCard,
+    AdminPlatformCardsResponse,
+    AdminPlatformCashItem,
     AdminSendFundsRequest,
     AdminSendFundsResponse,
     AdminWalletSummaryResponse,
@@ -366,6 +369,152 @@ class WalletService:
                 )
             )
         return items, total, total_received, total_deducted, real_balance
+
+    @staticmethod
+    def _platform_party_item(db: Session, txn: WalletTransaction, movement: str, party_user: Optional[User] = None):
+        user = party_user
+        if user is None and txn.reference_id and str(txn.reference_id).isdigit():
+            user = db.query(User).filter(User.id == int(txn.reference_id)).first()
+        if user is None:
+            user = txn.initiated_by
+        profile = db.query(MerchantProfile).filter_by(user_id=user.id).first() if user else None
+        return AdminPlatformCashItem(
+            id=txn.id,
+            transaction_group_id=txn.group_id,
+            movement=movement,
+            transaction_type=txn.transaction_type.value,
+            amount=WalletService._money(txn.amount),
+            party_name=(profile.business_name if profile else user.name) if user else None,
+            party_email=user.email if user else None,
+            party_phone=user.phone if user else None,
+            party_role="merchant" if profile else "user",
+            description=txn.description,
+            created_at=txn.created_at,
+        )
+
+    @staticmethod
+    def _page_transactions(query, page: int, page_size: int):
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        total = query.count()
+        rows = (
+            query.order_by(WalletTransaction.created_at.desc(), WalletTransaction.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+        return rows, total, page, page_size
+
+    @staticmethod
+    def admin_platform_cards(
+        db: Session,
+        fund_page: int = 1,
+        fund_page_size: int = 20,
+        commission_page: int = 1,
+        commission_page_size: int = 20,
+        cash_page: int = 1,
+        cash_page_size: int = 20,
+    ) -> AdminPlatformCardsResponse:
+        admin_ids = db.query(User.id).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPER_ADMIN]))
+        fund_filter = and_(
+            WalletTransaction.transaction_type == WalletTransactionType.ADMIN_CREDIT,
+            WalletTransaction.initiated_by_user_id.in_(admin_ids),
+            ~WalletTransaction.description.ilike("%Subscription%"),
+        )
+        fund_query = db.query(WalletTransaction).filter(fund_filter)
+        fund_balance = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0)).filter(fund_filter).scalar()
+        )
+        fund_rows, fund_total, fund_page, fund_page_size = WalletService._page_transactions(
+            fund_query, fund_page, fund_page_size
+        )
+
+        company = WalletService.get_company_wallet(db)
+        commission_query = (
+            db.query(WalletLedgerEntry)
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
+        )
+        commission_balance = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
+            .scalar()
+        )
+        commission_page = max(1, commission_page)
+        commission_page_size = max(1, min(commission_page_size, 100))
+        commission_total = commission_query.count()
+        commission_rows = (
+            commission_query.order_by(WalletLedgerEntry.created_at.desc(), WalletLedgerEntry.id.desc())
+            .offset((commission_page - 1) * commission_page_size)
+            .limit(commission_page_size)
+            .all()
+        )
+        commission_items = []
+        for entry in commission_rows:
+            txn = entry.transaction
+            commission_items.append(
+                AdminPlatformCashItem(
+                    id=entry.id,
+                    transaction_group_id=txn.group_id if txn else "",
+                    movement="COMMISSION",
+                    transaction_type=txn.transaction_type.value if txn else "CASHBACK_REDEMPTION",
+                    amount=WalletService._money(entry.amount),
+                    party_name=None,
+                    description=entry.note or (txn.description if txn else None),
+                    created_at=entry.created_at,
+                    party_role="merchant",
+                )
+            )
+
+        cash_filter = WalletTransaction.transaction_type.in_(
+            [WalletTransactionType.WITHDRAWAL, WalletTransactionType.WALLET_WITHDRAWAL]
+        )
+        cash_query = db.query(WalletTransaction).filter(cash_filter)
+        cash_balance = WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0)).filter(cash_filter).scalar()
+        )
+        cash_rows, cash_total, cash_page, cash_page_size = WalletService._page_transactions(
+            cash_query, cash_page, cash_page_size
+        )
+
+        return AdminPlatformCardsResponse(
+            added_fund=AdminPlatformCard(
+                key="added_fund",
+                title="Added fund",
+                balance=fund_balance,
+                transactions=[WalletService._platform_party_item(db, txn, "ADDED") for txn in fund_rows],
+                total=fund_total,
+                page=fund_page,
+                page_size=fund_page_size,
+            ),
+            commission=AdminPlatformCard(
+                key="commission",
+                title="Commission",
+                balance=commission_balance,
+                transactions=commission_items,
+                total=commission_total,
+                page=commission_page,
+                page_size=commission_page_size,
+            ),
+            cash_received=AdminPlatformCard(
+                key="cash_received",
+                title="Cash received",
+                balance=cash_balance,
+                transactions=[WalletService._platform_party_item(db, txn, "RECEIVED") for txn in cash_rows],
+                total=cash_total,
+                page=cash_page,
+                page_size=cash_page_size,
+            ),
+        )
 
     @staticmethod
     def get_admin_transaction(db: Session, transaction_id: int) -> AdminWalletTransactionResponse:

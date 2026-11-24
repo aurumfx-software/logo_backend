@@ -472,6 +472,8 @@ class MerchantUpdateRequest(BaseModel):
         max_length=100,
         description="Set or update merchant login password",
     )
+    customer_cashback_percent: Optional[float] = Field(None, ge=0, le=100, exclude=True)
+    platform_fee_percent: Optional[float] = Field(None, ge=0, le=100, exclude=True)
     cashback_percent: Optional[float] = Field(
         None,
         ge=0,
@@ -492,6 +494,24 @@ class MerchantUpdateRequest(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def commission_aliases(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if data.get("password") == "":
+            data["password"] = None
+        for key in ("cashback_percent", "company_fee_percent", "total_deduction_percent", "customer_cashback_percent", "platform_fee_percent"):
+            value = data.get(key)
+            if isinstance(value, str):
+                cleaned = value.strip().rstrip("%")
+                data[key] = None if cleaned == "" else cleaned
+        if data.get("cashback_percent") is None and data.get("customer_cashback_percent") is not None:
+            data["cashback_percent"] = data["customer_cashback_percent"]
+        if data.get("company_fee_percent") is None and data.get("platform_fee_percent") is not None:
+            data["company_fee_percent"] = data["platform_fee_percent"]
+        return data
 
 
 class MerchantLoginRequest(BaseModel):

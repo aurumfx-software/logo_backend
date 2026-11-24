@@ -772,7 +772,7 @@ def get_merchant_by_id(
     response_model=MerchantProfileResponse,
     status_code=status.HTTP_200_OK,
     summary="Update merchant profile by ID",
-    description="Updates business details, location, contact, social, media, or services for a specific merchant.",
+    description="Updates business details, customer cashback, company fee, location, contact, social, media, or services.",
 )
 @router.patch(
     "/{merchant_id}",

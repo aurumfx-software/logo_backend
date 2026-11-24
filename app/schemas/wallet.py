@@ -532,6 +532,24 @@ class AdminPlatformCashItem(BaseModel):
     created_at: datetime
 
 
+class AdminPlatformCard(BaseModel):
+    key: str
+    title: str
+    balance: Decimal = Decimal("0.00")
+    currency: str = "INR"
+    transactions: List[AdminPlatformCashItem] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
+class AdminPlatformCardsResponse(BaseModel):
+    success: bool = True
+    added_fund: AdminPlatformCard
+    commission: AdminPlatformCard
+    cash_received: AdminPlatformCard
+
+
 class AdminWalletTransactionListResponse(BaseModel):
     success: bool = True
     data: List[AdminWalletTransactionResponse] = []

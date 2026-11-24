@@ -34,6 +34,7 @@ from app.schemas.wallet import (
     WalletTransferResponse,
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
+    AdminPlatformCardsResponse,
     AdminWalletTransactionListResponse,
     AdminWalletTransactionResponse,
     AdminWithdrawalListResponse,
@@ -83,6 +84,38 @@ def admin_wallet_transactions(
         total_received=total_received,
         total_deducted=total_deducted,
         real_balance=real_balance,
+    )
+
+
+@router.get(
+    "/admin/platform-cards",
+    response_model=AdminPlatformCardsResponse,
+    summary="Admin: added fund, commission, and cash received cards",
+    description=(
+        "Three cards for the platform wallet. added_fund is money an admin added. "
+        "commission is the company fee taken from a user or merchant sale. "
+        "cash_received is cash paid to a merchant or user on withdrawal. "
+        "Each card has its own balance and its own transaction table."
+    ),
+)
+def admin_platform_cards(
+    fund_page: int = Query(1, ge=1),
+    fund_page_size: int = Query(20, ge=1, le=100),
+    commission_page: int = Query(1, ge=1),
+    commission_page_size: int = Query(20, ge=1, le=100),
+    cash_page: int = Query(1, ge=1),
+    cash_page_size: int = Query(20, ge=1, le=100),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminPlatformCardsResponse:
+    return WalletService.admin_platform_cards(
+        db,
+        fund_page=fund_page,
+        fund_page_size=fund_page_size,
+        commission_page=commission_page,
+        commission_page_size=commission_page_size,
+        cash_page=cash_page,
+        cash_page_size=cash_page_size,
     )
 
 
