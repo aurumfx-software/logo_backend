@@ -120,6 +120,28 @@ def admin_platform_cards(
 
 
 @router.get(
+    "/admin/transactions/platform-ledger",
+    response_model=AdminWalletTransactionsResponse,
+    summary="Admin: company wallet commission ledger (simplified rows)",
+)
+@router.get(
+    "/admin/platform-ledger",
+    response_model=AdminWalletTransactionsResponse,
+    summary="Admin: company wallet commission ledger alias",
+    include_in_schema=False,
+)
+def list_admin_platform_wallet_transactions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminWalletTransactionsResponse:
+    return WalletService.list_admin_wallet_transactions(
+        db=db, page=page, page_size=page_size
+    )
+
+
+@router.get(
     "/admin/transactions/{transaction_id}",
     response_model=AdminWalletTransactionResponse,
     summary="Admin: wallet transaction details by id",
@@ -396,22 +418,6 @@ def get_admin_wallet_summary(
     db: Session = Depends(get_db),
 ) -> AdminWalletSummaryResponse:
     return WalletService.get_admin_wallet_summary(db=db)
-
-
-@router.get(
-    "/admin/transactions/platform-ledger",
-    response_model=AdminWalletTransactionsResponse,
-    summary="Admin: company wallet commission ledger (simplified rows)",
-)
-def list_admin_platform_wallet_transactions(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    current_admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-) -> AdminWalletTransactionsResponse:
-    return WalletService.list_admin_wallet_transactions(
-        db=db, page=page, page_size=page_size
-    )
 
 
 @router.post(
