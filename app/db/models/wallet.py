@@ -107,6 +107,7 @@ class WalletTransaction(Base):
     description = Column(Text, nullable=True)
     initiated_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     reference_id = Column(String(64), nullable=True, index=True)
+    source_pool = Column(String(32), nullable=True, index=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

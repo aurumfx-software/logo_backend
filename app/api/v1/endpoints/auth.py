@@ -5,7 +5,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, optional_security_scheme
+from app.api.deps import get_current_user, optional_security_scheme, resolve_access_token
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.otp import OTPPurpose
@@ -70,6 +70,27 @@ def login(
 ) -> TokenResponse:
     user = AuthService.authenticate_user(db=db, login_data=login_data)
     return AuthService.generate_token_pair(user)
+
+
+@router.post(
+    "/switch-back",
+    response_model=TokenResponse,
+    summary="Return from an impersonated merchant or customer session",
+    description="Send the impersonation access token. The response is a normal admin login token.",
+)
+def switch_back_to_admin(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security_scheme),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    token = resolve_access_token(request, credentials)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return AuthService.switch_back_to_admin(db, token)
 
 
 @router.post(

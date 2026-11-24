@@ -511,40 +511,53 @@ def test_withdrawal_status_repairs_missing_payout_columns(client: TestClient, db
     assert listed.json()["total"] == 1
 
 
-def test_admin_platform_cards_keep_three_tables(client: TestClient, db_session: Session):
+def test_admin_platform_cards_use_real_pool_totals(client: TestClient, db_session: Session):
     admin = _create_user(db_session, "cards.admin@example.com", "Cards Admin", UserRole.ADMIN)
     member = _create_user(db_session, "cards.member@example.com", "Cards Member")
     headers = _auth_headers(client, admin.email, "Password123!")
-    member_headers = _auth_headers(client, member.email, "Password123!")
 
     added = client.post(
-        "/api/v1/wallet/admin/adjust",
+        "/api/v1/wallet/admin/added-fund",
         headers=headers,
-        json={"user_id": member.id, "amount": "80.00", "operation": "credit", "note": "admin added fund"},
+        json={"amount": "100.00", "source": "Bank Deposit", "note": "Capital injection"},
     )
     assert added.status_code == 200
+    assert Decimal(added.json()["balance"]) == Decimal("100.00")
 
-    withdrawn = client.post(
-        "/api/v1/wallet/withdrawals",
-        headers=member_headers,
+    sent = client.post(
+        "/api/v1/wallet/admin/send",
+        headers=headers,
         json={
-            "amount": "20.00",
-            "account_holder_name": "Cards Member",
-            "account_number": "9988776655",
-            "ifsc": "SBIN0001234",
+            "recipient_type": "user",
+            "user_id": member.id,
+            "amount": "30.00",
+            "source_wallet": "added_fund",
+            "note": "Send from added fund",
         },
     )
-    assert withdrawn.status_code == 201
+    assert sent.status_code == 200
+    assert Decimal(sent.json()["source_balance"]) == Decimal("70.00")
+
+    too_much = client.post(
+        "/api/v1/wallet/admin/send",
+        headers=headers,
+        json={
+            "recipient_type": "user",
+            "user_id": member.id,
+            "amount": "5.00",
+            "source_wallet": "commission",
+        },
+    )
+    assert too_much.status_code == 400
 
     cards = client.get("/api/v1/wallet/admin/platform-cards", headers=headers)
     assert cards.status_code == 200
     body = cards.json()
-    assert Decimal(body["added_fund"]["balance"]) >= Decimal("80.00")
-    assert body["added_fund"]["transactions"][0]["movement"] == "ADDED"
-    assert Decimal(body["cash_received"]["balance"]) >= Decimal("20.00")
-    assert body["cash_received"]["transactions"][0]["transaction_type"] in ("WITHDRAWAL", "WALLET_WITHDRAWAL")
-    assert body["commission"]["transactions"] == [] or body["commission"]["balance"] is not None
-    fund_types = {row["transaction_type"] for row in body["added_fund"]["transactions"]}
-    assert fund_types == {"ADMIN_CREDIT"}
-    cash_types = {row["transaction_type"] for row in body["cash_received"]["transactions"]}
-    assert "ADMIN_CREDIT" not in cash_types
+    assert Decimal(body["added_fund"]["balance"]) == Decimal("70.00")
+    assert Decimal(body["commission"]["balance"]) == Decimal("0.00")
+    assert Decimal(body["cash_received"]["balance"]) == Decimal("0.00")
+    assert Decimal(body["cash_sent"]["balance"]) == Decimal("30.00")
+    movements = {row["movement"] for row in body["added_fund"]["transactions"]}
+    assert movements == {"ADDED_FUND", "SENT"}
+    assert body["added_fund"]["transactions"][0]["transaction_type"] in ("ADMIN_CAPITAL", "ADMIN_SEND_FUNDS")
+    assert body["cash_sent"]["transactions"][0]["movement"] == "SENT"

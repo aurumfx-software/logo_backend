@@ -34,6 +34,8 @@ from app.schemas.wallet import (
     WalletTransferResponse,
     WalletWithdrawalRequest,
     WalletWithdrawalResponse,
+    AdminAddFundRequest,
+    AdminAddFundResponse,
     AdminPlatformCardsResponse,
     AdminWalletTransactionListResponse,
     AdminWalletTransactionResponse,
@@ -105,6 +107,8 @@ def admin_platform_cards(
     commission_page_size: int = Query(20, ge=1, le=100),
     cash_page: int = Query(1, ge=1),
     cash_page_size: int = Query(20, ge=1, le=100),
+    sent_page: int = Query(1, ge=1),
+    sent_page_size: int = Query(20, ge=1, le=100),
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> AdminPlatformCardsResponse:
@@ -116,7 +120,22 @@ def admin_platform_cards(
         commission_page_size=commission_page_size,
         cash_page=cash_page,
         cash_page_size=cash_page_size,
+        sent_page=sent_page,
+        sent_page_size=sent_page_size,
     )
+
+
+@router.post(
+    "/admin/added-fund",
+    response_model=AdminAddFundResponse,
+    summary="Admin: add capital to the Added Fund card",
+)
+def admin_add_platform_fund(
+    payload: AdminAddFundRequest,
+    current_admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AdminAddFundResponse:
+    return WalletService.add_platform_fund(db, current_admin, payload)
 
 
 @router.get(

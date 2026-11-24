@@ -448,11 +448,11 @@ class AuthService:
         return user
 
     @staticmethod
-    def generate_token_pair(user: User) -> TokenResponse:
+    def generate_token_pair(user: User, extra: Optional[Dict] = None) -> TokenResponse:
         role = UserRole.coerce(user.role)
         role_val = role.value
-        access_token = create_access_token(user_id=user.id, role=role_val)
-        refresh_token = create_refresh_token(user_id=user.id, role=role_val)
+        access_token = create_access_token(user_id=user.id, role=role_val, extra=extra)
+        refresh_token = create_refresh_token(user_id=user.id, role=role_val, extra=extra)
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -461,7 +461,129 @@ class AuthService:
             login_id=user.login_id,
             role=role_val,
             user=SafeUserResponse.model_validate(user),
+            is_impersonation=bool(extra and extra.get("is_impersonation")),
+            impersonated_by=extra.get("impersonated_by") if extra else None,
         )
+
+    @staticmethod
+    def _impersonation_claims(payload: Dict) -> Optional[Dict]:
+        if payload.get("is_impersonation") is not True:
+            return None
+        admin_id = payload.get("impersonated_by")
+        if not admin_id:
+            return None
+        return {
+            "is_impersonation": True,
+            "impersonated_by": int(admin_id),
+            "original_role": payload.get("original_role") or "ADMIN",
+        }
+
+    @staticmethod
+    def find_impersonation_target(db: Session, identifier: str, merchant_only: bool = False) -> User:
+        raw = str(identifier).strip()
+        if not raw:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        user = None
+        if raw.isdigit():
+            number = int(raw)
+            from app.db.models.merchant import MerchantProfile
+
+            profile = (
+                db.query(MerchantProfile).filter(MerchantProfile.id == number).first()
+                if merchant_only
+                else None
+            )
+            if profile is not None:
+                user = db.query(User).filter(User.id == profile.user_id).first()
+            if user is None:
+                user = db.query(User).filter(User.id == number).first()
+            if user is None or (
+                merchant_only and UserRole.coerce(user.role) != UserRole.MERCHANT
+            ):
+                if profile is None:
+                    profile = db.query(MerchantProfile).filter(MerchantProfile.id == number).first()
+                if profile is not None:
+                    user = db.query(User).filter(User.id == profile.user_id).first()
+        if user is None:
+            user = db.query(User).filter(User.user_code == raw).first()
+        if user is None:
+            user = db.query(User).filter(User.login_id == raw.upper()).first()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        role = UserRole.coerce(user.role)
+        allowed = {UserRole.MERCHANT} if merchant_only else {UserRole.MERCHANT, UserRole.FIELD_STAFF}
+        if role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a merchant or a customer can be impersonated.",
+            )
+
+        account_status = (user.status or "ACTIVE").strip().upper()
+        if not user.is_active or account_status != "ACTIVE":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot impersonate a blocked or inactive user.",
+            )
+        return user
+
+    @staticmethod
+    def impersonate_user(db: Session, admin: User, identifier: str, merchant_only: bool = False) -> TokenResponse:
+        admin_role = UserRole.coerce(admin.role)
+        if admin_role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator authentication required.")
+        if not admin.is_active or (admin.status or "ACTIVE").strip().upper() != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
+
+        target = AuthService.find_impersonation_target(db, identifier, merchant_only=merchant_only)
+        extra = {
+            "is_impersonation": True,
+            "impersonated_by": admin.id,
+            "original_role": admin_role.value,
+        }
+        from app.services.activity_log_service import ActivityLogService
+
+        ActivityLogService.log_activity(
+            db,
+            action="IMPERSONATE",
+            entity_type="USER",
+            entity_id=target.id,
+            user_id=admin.id,
+            details={"target_role": UserRole.coerce(target.role).value, "target_email": target.email},
+        )
+        return AuthService.generate_token_pair(target, extra=extra)
+
+    @staticmethod
+    def switch_back_to_admin(db: Session, token: str) -> TokenResponse:
+        try:
+            payload = decode_token(token)
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        if AuthService.is_token_revoked(db, payload, token):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        if payload.get("is_impersonation") is not True:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This is not an impersonation session.")
+
+        admin_user_id = payload.get("impersonated_by")
+        if not admin_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Original admin information not found.")
+        try:
+            admin_id = int(admin_user_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Original admin information not found.")
+
+        admin = db.query(User).filter(User.id == admin_id).first()
+        if not admin or UserRole.coerce(admin.role) not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Original admin account not found.")
+        if not admin.is_active or (admin.status or "ACTIVE").strip().upper() != "ACTIVE":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
+        return AuthService.generate_token_pair(admin)
 
     @staticmethod
     def refresh_access_token(db: Session, token_request: RefreshTokenRequest) -> TokenResponse:
@@ -506,8 +628,7 @@ class AuthService:
                 detail="Refresh token has been revoked. Please login again.",
             )
 
-        # Generate new token pair
-        return AuthService.generate_token_pair(user)
+        return AuthService.generate_token_pair(user, extra=AuthService._impersonation_claims(payload))
 
     @staticmethod
     def _token_jti(payload: Dict, raw_token: str) -> str:

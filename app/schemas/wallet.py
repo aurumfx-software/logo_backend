@@ -364,6 +364,10 @@ class AdminSendFundsRequest(BaseModel):
     email: Optional[str] = None
     amount: Decimal = Field(..., gt=0, description="Amount to send in INR")
     note: Optional[str] = Field(None, max_length=500)
+    source_wallet: Optional[str] = Field(
+        None,
+        description="Pool to deduct: added_fund, commission, or received_fund",
+    )
 
     @field_validator("amount")
     @classmethod
@@ -379,6 +383,8 @@ class AdminSendFundsResponse(BaseModel):
     amount: Decimal
     wallet_balance: Decimal
     transaction_group_id: Optional[str] = None
+    source_wallet: Optional[str] = None
+    source_balance: Optional[Decimal] = None
 
 
 class MerchantTopupOrderRequest(BaseModel):
@@ -556,11 +562,32 @@ class AdminPlatformCard(BaseModel):
     page_size: int = 20
 
 
+class AdminAddFundRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    source: Optional[str] = Field("Bank Deposit", max_length=80)
+    note: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("amount")
+    @classmethod
+    def round_add_amount(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+
+class AdminAddFundResponse(BaseModel):
+    success: bool = True
+    message: str
+    amount: Decimal
+    balance: Decimal
+    transaction_group_id: str
+    transaction_type: str = "ADMIN_CAPITAL"
+
+
 class AdminPlatformCardsResponse(BaseModel):
     success: bool = True
     added_fund: AdminPlatformCard
     commission: AdminPlatformCard
     cash_received: AdminPlatformCard
+    cash_sent: AdminPlatformCard
 
 
 class AdminWalletTransactionListResponse(BaseModel):

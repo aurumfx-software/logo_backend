@@ -27,6 +27,8 @@ from app.db.models.wallet import (
     WithdrawalStatus,
 )
 from app.schemas.wallet import (
+    AdminAddFundRequest,
+    AdminAddFundResponse,
     AdminPlatformCard,
     AdminPlatformCardsResponse,
     AdminPlatformCashItem,
@@ -537,6 +539,134 @@ class WalletService:
         return rows, total, page, page_size
 
     @staticmethod
+    def ensure_source_pool_column(db: Session) -> None:
+        if db.info.get("source_pool_ready"):
+            return
+        conn = db.connection()
+        inspector = inspect(conn)
+        if "wallet_transactions" not in inspector.get_table_names():
+            db.info["source_pool_ready"] = True
+            return
+        existing = {column["name"] for column in inspector.get_columns("wallet_transactions")}
+        if "source_pool" not in existing:
+            conn.execute(text("ALTER TABLE wallet_transactions ADD COLUMN source_pool VARCHAR(32)"))
+            db.commit()
+        db.info["source_pool_ready"] = True
+
+    @staticmethod
+    def _normalize_source_wallet(value: Optional[str]) -> Optional[str]:
+        raw = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "added_fund": "ADDED_FUND",
+            "added": "ADDED_FUND",
+            "capital": "ADDED_FUND",
+            "commission": "COMMISSION",
+            "commission_fund": "COMMISSION",
+            "received_fund": "RECEIVED_FUND",
+            "received": "RECEIVED_FUND",
+            "cash_received": "RECEIVED_FUND",
+        }
+        if not raw:
+            return None
+        pool = aliases.get(raw)
+        if pool is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source_wallet must be added_fund, commission, or received_fund.",
+            )
+        return pool
+
+    @staticmethod
+    def _pool_outflow_sum(db: Session, pool: str) -> Decimal:
+        return WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(
+                WalletTransaction.source_pool == pool,
+                WalletTransaction.reference_id != "ADDED_FUND",
+            )
+            .scalar()
+        )
+
+    @staticmethod
+    def _added_fund_inflow_sum(db: Session) -> Decimal:
+        return WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(
+                WalletTransaction.source_pool == "ADDED_FUND",
+                WalletTransaction.reference_id == "ADDED_FUND",
+            )
+            .scalar()
+        )
+
+    @staticmethod
+    def _commission_inflow_sum(db: Session) -> Decimal:
+        company = WalletService.get_company_wallet(db)
+        return WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
+            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
+            .scalar()
+        )
+
+    @staticmethod
+    def _received_inflow_sum(db: Session) -> Decimal:
+        return WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP)
+            .scalar()
+        )
+
+    @staticmethod
+    def pool_balance(db: Session, pool: str) -> Decimal:
+        WalletService.ensure_source_pool_column(db)
+        if pool == "ADDED_FUND":
+            inflow = WalletService._added_fund_inflow_sum(db)
+        elif pool == "COMMISSION":
+            inflow = WalletService._commission_inflow_sum(db)
+        else:
+            inflow = WalletService._received_inflow_sum(db)
+        return WalletService._money(inflow - WalletService._pool_outflow_sum(db, pool))
+
+    @staticmethod
+    def _slice_items(items: List[AdminPlatformCashItem], page: int, page_size: int):
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        items = sorted(items, key=lambda item: (item.created_at, item.id), reverse=True)
+        total = len(items)
+        start = (page - 1) * page_size
+        return items[start : start + page_size], total, page, page_size
+
+    @staticmethod
+    def _card(key: str, title: str, balance: Decimal, items: List[AdminPlatformCashItem], page: int, page_size: int) -> AdminPlatformCard:
+        rows, total, page, page_size = WalletService._slice_items(items, page, page_size)
+        return AdminPlatformCard(
+            key=key,
+            title=title,
+            balance=balance,
+            transactions=rows,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    @staticmethod
+    def _send_items(db: Session, pool: Optional[str] = None) -> List[AdminPlatformCashItem]:
+        query = db.query(WalletTransaction).filter(WalletTransaction.reference_id != "ADDED_FUND")
+        if pool is None:
+            query = query.filter(WalletTransaction.source_pool.isnot(None))
+        else:
+            query = query.filter(WalletTransaction.source_pool == pool)
+        rows = query.options(selectinload(WalletTransaction.initiated_by)).all()
+        items = WalletService._platform_party_items(db, rows, "SENT")
+        for item in items:
+            item.transaction_type = "ADMIN_SEND_FUNDS"
+        return items
+
+    @staticmethod
     def admin_platform_cards(
         db: Session,
         fund_page: int = 1,
@@ -545,46 +675,49 @@ class WalletService:
         commission_page_size: int = 20,
         cash_page: int = 1,
         cash_page_size: int = 20,
+        sent_page: int = 1,
+        sent_page_size: int = 20,
     ) -> AdminPlatformCardsResponse:
-        admin_ids = db.query(User.id).filter(User.role.in_([UserRole.ADMIN, UserRole.SUPER_ADMIN]))
-        fund_filter = and_(
-            WalletTransaction.transaction_type == WalletTransactionType.ADMIN_CREDIT,
-            WalletTransaction.initiated_by_user_id.in_(admin_ids),
-            ~WalletTransaction.description.ilike("%Subscription%"),
+        WalletService.ensure_source_pool_column(db)
+        injections = (
+            db.query(WalletTransaction)
+            .options(selectinload(WalletTransaction.initiated_by))
+            .filter(
+                WalletTransaction.source_pool == "ADDED_FUND",
+                WalletTransaction.reference_id == "ADDED_FUND",
+            )
+            .all()
         )
-        fund_query = db.query(WalletTransaction).filter(fund_filter)
-        fund_balance = WalletService._sum_money(
-            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0)).filter(fund_filter).scalar()
-        )
-        fund_rows, fund_total, fund_page, fund_page_size = WalletService._page_transactions(
-            fund_query, fund_page, fund_page_size
-        )
+        added_items = []
+        for txn in injections:
+            admin = txn.initiated_by
+            added_items.append(
+                AdminPlatformCashItem(
+                    id=txn.id,
+                    transaction_group_id=txn.group_id,
+                    movement="ADDED_FUND",
+                    transaction_type="ADMIN_CAPITAL",
+                    amount=WalletService._money(txn.amount),
+                    party_name=admin.name if admin else "Platform Admin",
+                    party_email=admin.email if admin else None,
+                    party_phone=admin.phone if admin else None,
+                    party_role="admin",
+                    description=txn.description,
+                    created_at=txn.created_at,
+                )
+            )
+        added_items.extend(WalletService._send_items(db, "ADDED_FUND"))
 
         company = WalletService.get_company_wallet(db)
-        commission_filter = and_(
-            WalletLedgerEntry.wallet_id == company.id,
-            WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
-            WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
-        )
-        commission_query = (
+        commission_rows = (
             db.query(WalletLedgerEntry)
             .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
-            .filter(commission_filter)
-        )
-        commission_balance = WalletService._sum_money(
-            db.query(func.coalesce(func.sum(WalletLedgerEntry.amount), 0))
-            .join(WalletTransaction, WalletTransaction.id == WalletLedgerEntry.transaction_id)
-            .filter(commission_filter)
-            .scalar()
-        )
-        commission_page = max(1, commission_page)
-        commission_page_size = max(1, min(commission_page_size, 100))
-        commission_total = commission_query.count()
-        commission_rows = (
-            commission_query.options(selectinload(WalletLedgerEntry.transaction))
-            .order_by(WalletLedgerEntry.created_at.desc(), WalletLedgerEntry.id.desc())
-            .offset((commission_page - 1) * commission_page_size)
-            .limit(commission_page_size)
+            .options(selectinload(WalletLedgerEntry.transaction))
+            .filter(
+                WalletLedgerEntry.wallet_id == company.id,
+                WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                WalletTransaction.transaction_type == WalletTransactionType.CASHBACK_REDEMPTION,
+            )
             .all()
         )
         commission_items = []
@@ -595,54 +728,90 @@ class WalletService:
                     id=entry.id,
                     transaction_group_id=txn.group_id if txn else "",
                     movement="COMMISSION",
-                    transaction_type=txn.transaction_type.value if txn else "CASHBACK_REDEMPTION",
+                    transaction_type="CASHBACK_REDEMPTION",
                     amount=WalletService._money(entry.amount),
                     party_name=None,
+                    party_role="merchant",
                     description=entry.note or (txn.description if txn else None),
                     created_at=entry.created_at,
-                    party_role="merchant",
                 )
             )
+        commission_items.extend(WalletService._send_items(db, "COMMISSION"))
 
-        cash_filter = WalletTransaction.transaction_type.in_(
-            [WalletTransactionType.WITHDRAWAL, WalletTransactionType.WALLET_WITHDRAWAL]
+        topups = (
+            db.query(WalletTransaction)
+            .options(selectinload(WalletTransaction.initiated_by))
+            .filter(WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP)
+            .all()
         )
-        cash_query = db.query(WalletTransaction).filter(cash_filter)
-        cash_balance = WalletService._sum_money(
-            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0)).filter(cash_filter).scalar()
-        )
-        cash_rows, cash_total, cash_page, cash_page_size = WalletService._page_transactions(
-            cash_query, cash_page, cash_page_size
-        )
+        received_items = WalletService._platform_party_items(db, topups, "RECEIVED")
+        received_items.extend(WalletService._send_items(db, "RECEIVED_FUND"))
+        sent_items = WalletService._send_items(db)
 
         return AdminPlatformCardsResponse(
-            added_fund=AdminPlatformCard(
-                key="added_fund",
-                title="Added fund",
-                balance=fund_balance,
-                transactions=WalletService._platform_party_items(db, fund_rows, "ADDED"),
-                total=fund_total,
-                page=fund_page,
-                page_size=fund_page_size,
+            added_fund=WalletService._card(
+                "added_fund",
+                "Added fund",
+                WalletService.pool_balance(db, "ADDED_FUND"),
+                added_items,
+                fund_page,
+                fund_page_size,
             ),
-            commission=AdminPlatformCard(
-                key="commission",
-                title="Commission",
-                balance=commission_balance,
-                transactions=commission_items,
-                total=commission_total,
-                page=commission_page,
-                page_size=commission_page_size,
+            commission=WalletService._card(
+                "commission",
+                "Commission",
+                WalletService.pool_balance(db, "COMMISSION"),
+                commission_items,
+                commission_page,
+                commission_page_size,
             ),
-            cash_received=AdminPlatformCard(
-                key="cash_received",
-                title="Cash received",
-                balance=cash_balance,
-                transactions=WalletService._platform_party_items(db, cash_rows, "RECEIVED"),
-                total=cash_total,
-                page=cash_page,
-                page_size=cash_page_size,
+            cash_received=WalletService._card(
+                "cash_received",
+                "Cash received",
+                WalletService.pool_balance(db, "RECEIVED_FUND"),
+                received_items,
+                cash_page,
+                cash_page_size,
             ),
+            cash_sent=WalletService._card(
+                "cash_sent",
+                "Cash sent",
+                WalletService._pool_outflow_sum(db, "ADDED_FUND")
+                + WalletService._pool_outflow_sum(db, "COMMISSION")
+                + WalletService._pool_outflow_sum(db, "RECEIVED_FUND"),
+                sent_items,
+                sent_page,
+                sent_page_size,
+            ),
+        )
+
+    @staticmethod
+    def add_platform_fund(db: Session, admin_user: User, payload: AdminAddFundRequest) -> AdminAddFundResponse:
+        WalletService.ensure_source_pool_column(db)
+        amount = WalletService._money(payload.amount)
+        source = (payload.source or "Bank Deposit").strip() or "Bank Deposit"
+        note = (payload.note or "").strip()
+        description = (
+            f"Added Fund: {note} ({source})" if note else f"Added Fund: Capital injection via {source}"
+        )
+        txn = WalletTransaction(
+            group_id=str(uuid.uuid4()),
+            transaction_type=WalletTransactionType.ADMIN_CREDIT,
+            amount=amount,
+            currency=settings.WALLET_CURRENCY,
+            description=description,
+            initiated_by_user_id=admin_user.id,
+            reference_id="ADDED_FUND",
+            source_pool="ADDED_FUND",
+        )
+        db.add(txn)
+        db.commit()
+        balance = WalletService.pool_balance(db, "ADDED_FUND")
+        return AdminAddFundResponse(
+            message=f"Added ₹{amount} to Admin Added Fund.",
+            amount=amount,
+            balance=balance,
+            transaction_group_id=txn.group_id,
         )
 
     @staticmethod
@@ -1976,6 +2145,16 @@ class WalletService:
         target_wallet = WalletService.ensure_wallet_for_user(db, target_user.id)
         db.flush()
 
+        source_pool = WalletService._normalize_source_wallet(payload.source_wallet)
+        source_balance = None
+        if source_pool:
+            source_balance = WalletService.pool_balance(db, source_pool)
+            if amount > source_balance:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient {source_pool.replace('_', ' ').title()} balance. Available: ₹{source_balance}",
+                )
+
         group_id = str(uuid.uuid4())
         txn = WalletTransaction(
             group_id=group_id,
@@ -1985,6 +2164,7 @@ class WalletService:
             description=payload.note or f"Admin funds transfer to {merchant_name or target_user.name or target_user.email}",
             initiated_by_user_id=admin_user.id,
             reference_id=str(target_user.id),
+            source_pool=source_pool,
         )
         db.add(txn)
         db.flush()
@@ -2003,6 +2183,7 @@ class WalletService:
         db.refresh(locked)
 
         recipient_display = merchant_name or target_user.name or target_user.email or f"ID #{target_user.id}"
+        remaining = WalletService.pool_balance(db, source_pool) if source_pool else None
         return AdminSendFundsResponse(
             success=True,
             message=f"Successfully sent ₹{amount} to {recipient_display}.",
@@ -2011,6 +2192,8 @@ class WalletService:
             amount=amount,
             wallet_balance=WalletService._money(locked.balance),
             transaction_group_id=group_id,
+            source_wallet=payload.source_wallet if source_pool else None,
+            source_balance=remaining,
         )
 
     @staticmethod
