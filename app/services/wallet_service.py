@@ -29,6 +29,7 @@ from app.db.models.wallet import (
 from app.schemas.wallet import (
     AdminAddFundRequest,
     AdminAddFundResponse,
+    AdminDeductFundRequest,
     AdminPlatformCard,
     AdminPlatformCardsResponse,
     AdminPlatformCashItem,
@@ -591,6 +592,17 @@ class WalletService:
         )
 
     @staticmethod
+    def _added_fund_deduction_sum(db: Session) -> Decimal:
+        return WalletService._sum_money(
+            db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
+            .filter(
+                WalletTransaction.source_pool == "ADDED_FUND",
+                WalletTransaction.reference_id == "DEDUCTION",
+            )
+            .scalar()
+        )
+
+    @staticmethod
     def _added_fund_inflow_sum(db: Session) -> Decimal:
         return WalletService._sum_money(
             db.query(func.coalesce(func.sum(WalletTransaction.amount), 0))
@@ -624,7 +636,7 @@ class WalletService:
     def pool_balance(db: Session, pool: str) -> Decimal:
         WalletService.ensure_source_pool_column(db)
         if pool == "ADDED_FUND":
-            inflow = WalletService._added_fund_inflow_sum(db)
+            inflow = WalletService._added_fund_inflow_sum(db) - WalletService._added_fund_deduction_sum(db)
         elif pool == "COMMISSION":
             inflow = WalletService._commission_inflow_sum(db)
         else:
@@ -747,7 +759,40 @@ class WalletService:
                     created_at=txn.created_at,
                 )
             )
-        added_total = WalletService._money(sum((item.amount for item in added_items), Decimal("0.00")))
+        deductions = (
+            db.query(WalletTransaction)
+            .options(selectinload(WalletTransaction.initiated_by))
+            .filter(
+                WalletTransaction.source_pool == "ADDED_FUND",
+                WalletTransaction.reference_id == "DEDUCTION",
+            )
+            .all()
+        )
+        for txn in deductions:
+            admin = txn.initiated_by
+            added_items.append(
+                AdminPlatformCashItem(
+                    id=txn.id,
+                    transaction_group_id=txn.group_id,
+                    movement="DEDUCTED",
+                    transaction_type="ADMIN_DEBIT",
+                    amount=WalletService._money(txn.amount),
+                    party_name=admin.name if admin else "Platform Admin",
+                    party_email=admin.email if admin else None,
+                    party_role="admin",
+                    description=txn.description,
+                    created_at=txn.created_at,
+                )
+            )
+        added_credits = sum(
+            (item.amount for item in added_items if item.movement == "ADDED_FUND"),
+            Decimal("0.00"),
+        )
+        added_debits = sum(
+            (item.amount for item in added_items if item.movement == "DEDUCTED"),
+            Decimal("0.00"),
+        )
+        added_total = WalletService._money(added_credits - added_debits)
 
         company = WalletService.get_company_wallet(db)
         commission_rows = (
@@ -846,6 +891,43 @@ class WalletService:
             amount=amount,
             balance=balance,
             transaction_group_id=txn.group_id,
+        )
+
+    @staticmethod
+    def deduct_platform_fund(db: Session, admin_user: User, payload: AdminDeductFundRequest) -> AdminAddFundResponse:
+        WalletService.ensure_source_pool_column(db)
+        if UserRole.coerce(admin_user.role) != UserRole.SUPER_ADMIN:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only a super admin can deduct from the admin wallet.")
+        amount = WalletService._money(payload.amount)
+        available = WalletService.pool_balance(db, "ADDED_FUND")
+        if amount > available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Insufficient Added Fund balance. Available: ₹{available}",
+            )
+        note = (payload.note or "").strip()
+        description = f"Deducted Fund: {note}" if note else "Deducted Fund: removed from the common admin wallet"
+        txn = WalletTransaction(
+            group_id=str(uuid.uuid4()),
+            transaction_type=WalletTransactionType.ADMIN_DEBIT,
+            amount=amount,
+            currency=settings.WALLET_CURRENCY,
+            description=description,
+            initiated_by_user_id=admin_user.id,
+            reference_id="DEDUCTION",
+            source_pool="ADDED_FUND",
+        )
+        db.add(txn)
+        db.commit()
+        balance = WalletService._money(
+            WalletService._added_fund_inflow_sum(db) - WalletService._added_fund_deduction_sum(db)
+        )
+        return AdminAddFundResponse(
+            message=f"Deducted ₹{amount} from the admin wallet.",
+            amount=amount,
+            balance=balance,
+            transaction_group_id=txn.group_id,
+            transaction_type="ADMIN_DEBIT",
         )
 
     @staticmethod

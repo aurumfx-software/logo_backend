@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, status
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 import jwt
 
@@ -389,9 +389,9 @@ class AuthService:
         AuthService.ensure_login_id_column(db)
         identifier = login_data.email.strip()
         if "@" in identifier:
-            user = db.query(User).filter(User.email == identifier.lower()).first()
+            user = db.query(User).filter(func.lower(User.email) == identifier.lower()).first()
         else:
-            user = db.query(User).filter(User.login_id == identifier.upper()).first()
+            user = db.query(User).filter(func.upper(User.login_id) == identifier.upper()).first()
 
         if not user:
             raise HTTPException(
@@ -406,13 +406,18 @@ class AuthService:
         merchant = (
             db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
         )
-        # Merchant portal login uses merchant credentials; customers/field staff with a
-        # linked profile (e.g. favorites) keep using their user password.
-        uses_merchant_credentials = merchant is not None and user.role == UserRole.MERCHANT
-        if uses_merchant_credentials:
-            if not merchant.password_hash:
+        is_merchant = user.role == UserRole.MERCHANT or merchant is not None
+        if is_merchant:
+            password_hashes = []
+            if merchant and merchant.password_hash:
+                password_hashes.append(merchant.password_hash)
+            if user.password_hash:
+                password_hashes.append(user.password_hash)
+            if user.password:
+                password_hashes.append(user.password)
+            if not password_hashes:
                 raise MerchantService._password_setup_required_exception()
-            if not verify_password(login_data.password, merchant.password_hash):
+            if not any(verify_password(login_data.password, hashed) for hashed in password_hashes):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid email, login ID, or password.",

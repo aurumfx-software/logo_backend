@@ -512,9 +512,17 @@ def test_withdrawal_status_repairs_missing_payout_columns(client: TestClient, db
 
 
 def test_admin_platform_cards_use_real_pool_totals(client: TestClient, db_session: Session):
-    admin = _create_user(db_session, "cards.admin@example.com", "Cards Admin", UserRole.ADMIN)
+    admin = _create_user(db_session, "cards.admin@example.com", "Cards Admin", UserRole.SUPER_ADMIN)
+    plain_admin = _create_user(db_session, "cards.plain@example.com", "Plain Admin", UserRole.ADMIN)
     member = _create_user(db_session, "cards.member@example.com", "Cards Member")
     headers = _auth_headers(client, admin.email, "Password123!")
+
+    denied = client.post(
+        "/api/v1/wallet/admin/added-fund",
+        headers=_auth_headers(client, plain_admin.email, "Password123!"),
+        json={"amount": "10.00"},
+    )
+    assert denied.status_code == 403
 
     added = client.post(
         "/api/v1/wallet/admin/added-fund",
@@ -586,6 +594,14 @@ def test_admin_platform_cards_use_real_pool_totals(client: TestClient, db_sessio
     assert body["cash_sent"]["transactions"][0]["movement"] == "SENT"
     capital_rows = [row for row in body["added_fund"]["transactions"] if row["movement"] == "ADDED_FUND"]
     assert sum(Decimal(row["amount"]) for row in capital_rows) == Decimal("100.00")
+
+    deducted = client.post(
+        "/api/v1/wallet/admin/deduct",
+        headers=headers,
+        json={"amount": "40.00", "note": "Remove extra capital"},
+    )
+    assert deducted.status_code == 200
+    assert Decimal(deducted.json()["balance"]) == Decimal("60.00")
 
     missing = client.get("/api/v1/wallet/admin/transactions/1795512686370", headers=headers)
     assert missing.status_code == 404

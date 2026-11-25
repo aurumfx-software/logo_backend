@@ -820,9 +820,9 @@ def delete_merchant_by_id(
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Merchant login with email and password",
+    summary="Merchant login with email or login ID and password",
     description=(
-        "Authenticates a merchant using the password stored on the merchant profile. "
+        "Authenticates a merchant with the shop email or the login ID, plus the merchant password. "
         "If no password is set, returns 403 with password_setup_required so the client "
         "can guide the user through forgot-password / reset-password to create one."
     ),

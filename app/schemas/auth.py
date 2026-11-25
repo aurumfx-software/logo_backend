@@ -122,10 +122,19 @@ class UserRegisterRequest(UserBase):
 
 
 class UserLoginRequest(BaseModel):
-    """Sign in with an email address or a login ID such as RAH48291."""
+    """Sign in with an email address or a login ID such as ASH4906."""
 
-    email: str = Field(..., json_schema_extra={"example": "test@example.com"})
+    email: str = Field(..., json_schema_extra={"example": "ASH4906"})
     password: str = Field(..., json_schema_extra={"example": "TestPassword123"})
+
+    @model_validator(mode="before")
+    @classmethod
+    def login_id_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not str(data.get("email") or "").strip():
+            alias = data.get("login_id") or data.get("user_id") or data.get("username")
+            if alias:
+                data["email"] = alias
+        return data
 
     @field_validator("email")
     @classmethod

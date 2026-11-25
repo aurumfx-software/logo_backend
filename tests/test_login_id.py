@@ -54,8 +54,15 @@ def test_customer_and_merchant_login_with_name_id(client: TestClient):
 
     merchant_login = client.post(
         "/api/v1/auth/login",
-        json={"email": merchant_id, "password": "MerchantPassword123"},
+        json={"login_id": merchant_id, "password": "MerchantPassword123"},
     )
     assert merchant_login.status_code == 200
     assert merchant_login.json()["user"]["role"] == "MERCHANT"
     assert merchant_login.json()["login_id"] == merchant_id
+
+    by_email_field = client.post(
+        "/api/v1/auth/login",
+        json={"email": merchant_id.lower(), "password": "MerchantPassword123"},
+    )
+    assert by_email_field.status_code == 200
+    assert by_email_field.json()["login_id"] == merchant_id

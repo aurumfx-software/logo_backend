@@ -61,8 +61,8 @@ def register(
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Login user",
-    description="Authenticates credentials and returns JWT access and refresh token pair.",
+    summary="Login with email or login ID",
+    description="Customers and merchants sign in with an email or a login ID such as ASH4906, plus their password.",
 )
 def login(
     login_data: UserLoginRequest,

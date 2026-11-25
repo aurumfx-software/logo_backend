@@ -580,6 +580,17 @@ class AdminAddFundRequest(BaseModel):
         return v.quantize(Decimal("0.01"))
 
 
+class AdminDeductFundRequest(BaseModel):
+    amount: Decimal = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=500)
+    source_wallet: Optional[str] = Field("added_fund", description="Common admin wallet: added_fund")
+
+    @field_validator("amount")
+    @classmethod
+    def round_deduct_amount(cls, v: Decimal) -> Decimal:
+        return v.quantize(Decimal("0.01"))
+
+
 class AdminAddFundResponse(BaseModel):
     success: bool = True
     message: str
