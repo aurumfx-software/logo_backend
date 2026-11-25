@@ -170,6 +170,11 @@ class ProductService:
             if table.name not in inspector.get_table_names():
                 table.create(bind=conn, checkfirst=True)
                 missing.append((table.name, "TABLE"))
+        if conn.dialect.name != "sqlite":
+            try:
+                conn.execute(text("ALTER TABLE product_reviews ALTER COLUMN order_id DROP NOT NULL"))
+            except Exception:
+                pass
         if missing:
             db.commit()
         db.info["product_order_schema_ready"] = True

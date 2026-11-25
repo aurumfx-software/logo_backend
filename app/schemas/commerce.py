@@ -102,7 +102,7 @@ class ReviewCreateRequest(BaseModel):
 class ReviewResponse(BaseModel):
     id: int
     product_id: int
-    order_id: int
+    order_id: Optional[int] = None
     buyer_user_id: int
     buyer_name: Optional[str] = None
     rating: int

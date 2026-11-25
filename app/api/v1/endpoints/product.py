@@ -553,6 +553,24 @@ def list_product_reviews(id: int, db: Session = Depends(get_db)) -> ReviewListRe
 
 
 @router.post(
+    "/products/{id}/reviews",
+    response_model=ReviewResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Submit or update a rating and review for a product",
+)
+def create_product_review(
+    id: int,
+    data: ReviewCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ReviewResponse:
+    row = BuyerCommerceService.create_product_review(db, current_user, id, data)
+    item = ReviewResponse.model_validate(row)
+    item.buyer_name = current_user.name
+    return item
+
+
+@router.post(
     "/products/order",
     response_model=OrderResponse,
     status_code=status.HTTP_201_CREATED,

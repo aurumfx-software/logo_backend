@@ -401,6 +401,51 @@ class BuyerCommerceService:
         return review
 
     @staticmethod
+    def create_product_review(db: Session, user: User, product_id: int, data: ReviewCreateRequest) -> ProductReview:
+        ProductService.ensure_order_schema(db)
+        product = db.query(CustomerProduct).filter(CustomerProduct.id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found.")
+        existing = (
+            db.query(ProductReview)
+            .filter(ProductReview.product_id == product_id, ProductReview.buyer_user_id == user.id)
+            .first()
+        )
+        if existing:
+            old_rating = int(existing.rating or 0)
+            existing.rating = data.rating
+            existing.title = data.title.strip() if data.title else existing.title
+            existing.comment = data.comment.strip() if data.comment else existing.comment
+            product.rating_sum = max(0, int(product.rating_sum or 0) - old_rating + data.rating)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
+        matched_order = (
+            db.query(ProductOrder)
+            .filter(
+                ProductOrder.product_id == product_id,
+                ProductOrder.buyer_user_id == user.id,
+            )
+            .order_by(ProductOrder.id.desc())
+            .first()
+        )
+        review = ProductReview(
+            product_id=product.id,
+            order_id=matched_order.id if matched_order else None,
+            buyer_user_id=user.id,
+            rating=data.rating,
+            title=data.title.strip() if data.title else None,
+            comment=data.comment.strip() if data.comment else None,
+        )
+        product.rating_sum = int(product.rating_sum or 0) + data.rating
+        product.rating_count = int(product.rating_count or 0) + 1
+        db.add(review)
+        db.commit()
+        db.refresh(review)
+        return review
+
+    @staticmethod
     def list_product_reviews(db: Session, product_id: int) -> ReviewListResponse:
         ProductService.ensure_order_schema(db)
         product = db.query(CustomerProduct).filter(CustomerProduct.id == product_id).first()

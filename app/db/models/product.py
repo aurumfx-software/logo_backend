@@ -191,7 +191,7 @@ class ProductReview(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     product_id = Column(Integer, ForeignKey("customer_products.id", ondelete="CASCADE"), nullable=False, index=True)
-    order_id = Column(Integer, ForeignKey("product_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("product_orders.id", ondelete="CASCADE"), nullable=True, index=True)
     buyer_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     rating = Column(Integer, nullable=False)
     title = Column(String(120), nullable=True)
