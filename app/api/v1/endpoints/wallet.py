@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, require_super_admin
 from app.db.database import get_db
 from app.db.models.user import User
 from app.schemas.response import StandardListResponse, list_response
@@ -36,6 +36,7 @@ from app.schemas.wallet import (
     WalletWithdrawalResponse,
     AdminAddFundRequest,
     AdminAddFundResponse,
+    AdminDeductFundRequest,
     AdminPlatformCardsResponse,
     AdminWalletTransactionListResponse,
     AdminWalletTransactionResponse,
@@ -128,14 +129,27 @@ def admin_platform_cards(
 @router.post(
     "/admin/added-fund",
     response_model=AdminAddFundResponse,
-    summary="Admin: add capital to the Added Fund card",
+    summary="Super admin: add capital to the common admin wallet",
 )
 def admin_add_platform_fund(
     payload: AdminAddFundRequest,
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ) -> AdminAddFundResponse:
     return WalletService.add_platform_fund(db, current_admin, payload)
+
+
+@router.post(
+    "/admin/deduct",
+    response_model=AdminAddFundResponse,
+    summary="Super admin: deduct from the common admin wallet",
+)
+def admin_deduct_platform_fund(
+    payload: AdminDeductFundRequest,
+    current_admin: User = Depends(require_super_admin),
+    db: Session = Depends(get_db),
+) -> AdminAddFundResponse:
+    return WalletService.deduct_platform_fund(db, current_admin, payload)
 
 
 @router.get(

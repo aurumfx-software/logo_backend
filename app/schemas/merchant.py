@@ -517,16 +517,21 @@ class MerchantUpdateRequest(BaseModel):
 
 
 class MerchantLoginRequest(BaseModel):
-    email: str = Field(..., json_schema_extra={"example": "rajesh.salon@example.com"})
+    email: str = Field(..., description="Merchant email or login ID", json_schema_extra={"example": "rajesh.salon@example.com"})
     password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "MerchantPass123"})
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, v: str) -> str:
-        clean_email = v.strip().lower()
-        if not re.match(EMAIL_REGEX, clean_email):
-            raise ValueError("Invalid email format")
-        return clean_email
+    def email_or_login_id(cls, v: str) -> str:
+        clean = str(v or "").strip()
+        if not clean:
+            raise ValueError("Email or login ID is required")
+        if "@" in clean:
+            lowered = clean.lower()
+            if not re.match(EMAIL_REGEX, lowered):
+                raise ValueError("Invalid email format")
+            return lowered
+        return clean.upper()
 
 
 class MerchantPhotosUploadResponse(BaseModel):

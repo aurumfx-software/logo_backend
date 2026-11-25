@@ -1194,11 +1194,21 @@ class MerchantService:
     ) -> TokenResponse:
         from app.services.auth_service import AuthService
 
-        merchant, user = MerchantService.resolve_merchant_by_email(db, login_data.email)
+        identifier = login_data.email.strip()
+        if "@" in identifier:
+            merchant, user = MerchantService.resolve_merchant_by_email(db, identifier)
+        else:
+            AuthService.ensure_login_id_column(db)
+            user = db.query(User).filter(User.login_id == identifier.upper()).first()
+            merchant = (
+                db.query(MerchantProfile).filter(MerchantProfile.user_id == user.id).first()
+                if user
+                else None
+            )
         if not merchant:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No merchant account found with this email address.",
+                detail="No merchant account found with this email or login ID.",
             )
 
         if not merchant.is_active:
@@ -1213,7 +1223,7 @@ class MerchantService:
         if not verify_password(login_data.password, merchant.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password.",
+                detail="Invalid email, login ID, or password.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
@@ -1225,6 +1235,10 @@ class MerchantService:
                 detail="Merchant account is inactive. Please contact support.",
             )
 
+        if not user.login_id:
+            AuthService.assign_login_id(db, user, source_name=merchant.business_name, digits=4)
+            db.commit()
+            db.refresh(user)
         return AuthService.generate_token_pair(user)
 
     # ── OTP Login ───────────────────────────────────────────────────────────

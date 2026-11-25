@@ -53,7 +53,7 @@ def test_customer_and_merchant_login_with_name_id(client: TestClient):
     assert merchant_id != customer_id
 
     merchant_login = client.post(
-        "/api/v1/auth/login",
+        "/api/v1/merchants/login",
         json={"email": merchant_id, "password": "MerchantPassword123"},
     )
     assert merchant_login.status_code == 200
