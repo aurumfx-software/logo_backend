@@ -1,9 +1,11 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, object_session
 
 from app.api.deps import get_current_user, get_admin_user_flexible, get_current_user_optional
 from app.db.database import get_db
+from app.db.models.product import CustomerProduct
 from app.db.models.user import User, UserRole
 from app.schemas.commerce import (
     AddressRequest,
@@ -69,6 +71,45 @@ def _product_response(product) -> ProductResponse:
     count = int(getattr(product, "rating_count", 0) or 0)
     item.rating_count = count
     item.rating_average = round((getattr(product, "rating_sum", 0) or 0) / count, 2) if count else 0
+
+    sess = object_session(product)
+    sub_list = []
+    if sess is not None and getattr(product, "id", None):
+        root_id = getattr(product, "parent_product_id", None) or product.id
+        siblings = (
+            sess.query(CustomerProduct)
+            .filter(
+                CustomerProduct.is_active.is_(True),
+                CustomerProduct.approval_status == "APPROVED",
+                or_(CustomerProduct.id == root_id, CustomerProduct.parent_product_id == root_id),
+            )
+            .order_by(CustomerProduct.id.asc())
+            .all()
+        )
+        if len(siblings) > 1:
+            for sib in siblings:
+                imgs = sib.images if isinstance(sib.images, list) else []
+                sqty = sib.stock_quantity
+                sib_in_stock = bool(
+                    sib.is_active
+                    and (sib.approval_status or "").upper() == "APPROVED"
+                    and (sib.stock_status or "").upper() != "OUT_OF_STOCK"
+                    and (sqty is None or sqty > 0)
+                )
+                sub_list.append({
+                    "id": sib.id,
+                    "parent_product_id": sib.parent_product_id,
+                    "name": sib.name,
+                    "category": sib.category,
+                    "price": float(sib.price or 0),
+                    "original_price": float(sib.original_price) if sib.original_price is not None else None,
+                    "images": imgs,
+                    "image": imgs[0] if imgs else None,
+                    "sizes": sib.sizes if isinstance(sib.sizes, list) else [],
+                    "stock_quantity": sqty,
+                    "in_stock": sib_in_stock,
+                })
+    item.sub_products = sub_list
     return item
 
 

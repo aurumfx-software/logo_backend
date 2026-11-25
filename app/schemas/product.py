@@ -21,6 +21,7 @@ class ProductCreateRequest(BaseModel):
     seller_name: Optional[str] = Field(None, max_length=255)
     seller_phone: Optional[str] = Field(None, max_length=50)
     seller_whatsapp: Optional[str] = Field(None, max_length=50)
+    parent_product_id: Optional[int] = Field(None, description="Optional parent product ID for sub-product variants")
 
 
 class ProductUpdateRequest(BaseModel):
@@ -41,6 +42,7 @@ class ProductUpdateRequest(BaseModel):
     seller_name: Optional[str] = None
     seller_phone: Optional[str] = None
     seller_whatsapp: Optional[str] = None
+    parent_product_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -57,6 +59,7 @@ class ProductAdminStatusUpdate(BaseModel):
 class ProductResponse(BaseModel):
     id: int
     seller_id: int
+    parent_product_id: Optional[int] = None
     seller_name: Optional[str] = None
     seller_phone: Optional[str] = None
     seller_whatsapp: Optional[str] = None
@@ -69,9 +72,10 @@ class ProductResponse(BaseModel):
     sizes: List[str] = []
     highlights: List[dict] = []
     additional_details: List[dict] = []
+    sub_products: List[dict] = []
     stock_status: str
 
-    @field_validator("highlights", "additional_details", mode="before")
+    @field_validator("highlights", "additional_details", "sub_products", mode="before")
     @classmethod
     def missing_list_is_empty(cls, value):
         return [] if value is None else value

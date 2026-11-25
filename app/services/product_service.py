@@ -152,10 +152,12 @@ class ProductService:
                 missing.append(("highlights", json_type))
             if "additional_details" not in product_columns:
                 missing.append(("additional_details", json_type))
+            if "parent_product_id" not in product_columns:
+                missing.append(("parent_product_id", "INTEGER"))
         for name, ddl in missing:
             table = (
                 "customer_products"
-                if name in {"stock_quantity", "rating_sum", "rating_count", "highlights", "additional_details"}
+                if name in {"stock_quantity", "rating_sum", "rating_count", "highlights", "additional_details", "parent_product_id"}
                 else "product_orders"
             )
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
@@ -404,6 +406,7 @@ class ProductService:
         ]
         new_product = CustomerProduct(
             seller_id=seller.id,
+            parent_product_id=data.parent_product_id,
             seller_name=data.seller_name or seller.name,
             seller_phone=data.seller_phone or seller.phone,
             seller_whatsapp=data.seller_whatsapp or data.seller_phone or seller.phone,
@@ -514,6 +517,8 @@ class ProductService:
             product.seller_phone = data.seller_phone
         if data.seller_whatsapp is not None:
             product.seller_whatsapp = data.seller_whatsapp
+        if data.parent_product_id is not None:
+            product.parent_product_id = data.parent_product_id
         if data.is_active is not None:
             product.is_active = data.is_active
 

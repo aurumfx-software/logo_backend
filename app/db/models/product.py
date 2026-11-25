@@ -21,6 +21,7 @@ class CustomerProduct(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     seller_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_product_id = Column(Integer, nullable=True, index=True)
     
     seller_name = Column(String(255), nullable=True)
     seller_phone = Column(String(50), nullable=True)
