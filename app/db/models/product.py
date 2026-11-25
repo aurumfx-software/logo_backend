@@ -34,6 +34,8 @@ class CustomerProduct(Base):
     
     images = Column(JSON, default=list, nullable=True)  # List of image URLs
     sizes = Column(JSON, default=list, nullable=True)   # Available sizes e.g. ["S", "M", "L", "XL"]
+    highlights = Column(JSON, default=list, nullable=True)  # [{"label": "Color", "value": "Maroon"}]
+    additional_details = Column(JSON, default=list, nullable=True)  # [{"label": "Fabric", "value": "Cotton"}]
     stock_status = Column(String(50), default="IN_STOCK", nullable=False)
     stock_quantity = Column(Integer, nullable=True)
 

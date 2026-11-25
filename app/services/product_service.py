@@ -148,8 +148,16 @@ class ProductService:
                 missing.append(("rating_sum", "INTEGER"))
             if "rating_count" not in product_columns:
                 missing.append(("rating_count", "INTEGER"))
+            if "highlights" not in product_columns:
+                missing.append(("highlights", json_type))
+            if "additional_details" not in product_columns:
+                missing.append(("additional_details", json_type))
         for name, ddl in missing:
-            table = "customer_products" if name in {"stock_quantity", "rating_sum", "rating_count"} else "product_orders"
+            table = (
+                "customer_products"
+                if name in {"stock_quantity", "rating_sum", "rating_count", "highlights", "additional_details"}
+                else "product_orders"
+            )
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
         for table in (
             DeliveryAddress.__table__,
@@ -322,6 +330,7 @@ class ProductService:
         offset: int = 0,
     ) -> List[CustomerProduct]:
         """Fetch approved, active products for the shop page."""
+        ProductService.ensure_order_schema(db)
         q = ProductService._public_query(
             db, category, district, search, min_price, max_price
         )
@@ -367,6 +376,7 @@ class ProductService:
 
     @staticmethod
     def get_product_by_id(db: Session, product_id: int) -> CustomerProduct:
+        ProductService.ensure_order_schema(db)
         product = db.query(CustomerProduct).filter(CustomerProduct.id == product_id).first()
         if not product or not product.is_active or product.approval_status != "APPROVED":
             raise HTTPException(
@@ -380,7 +390,18 @@ class ProductService:
 
     @staticmethod
     def create_product(db: Session, seller: User, data: ProductCreateRequest) -> CustomerProduct:
+        ProductService.ensure_order_schema(db)
         category = (data.category or "General").strip() or "General"
+        clean_highlights = [
+            {"label": str(item.get("label") or "").strip(), "value": str(item.get("value") or "").strip()}
+            for item in (data.highlights or [])
+            if isinstance(item, dict) and (str(item.get("label") or "").strip() or str(item.get("value") or "").strip())
+        ]
+        clean_details = [
+            {"label": str(item.get("label") or "").strip(), "value": str(item.get("value") or "").strip()}
+            for item in (data.additional_details or [])
+            if isinstance(item, dict) and (str(item.get("label") or "").strip() or str(item.get("value") or "").strip())
+        ]
         new_product = CustomerProduct(
             seller_id=seller.id,
             seller_name=data.seller_name or seller.name,
@@ -393,6 +414,8 @@ class ProductService:
             original_price=data.original_price,
             images=data.images or [],
             sizes=data.sizes or [],
+            highlights=clean_highlights,
+            additional_details=clean_details,
             stock_status="OUT_OF_STOCK" if (data.stock_quantity is not None and data.stock_quantity == 0) else (data.stock_status or "IN_STOCK"),
             stock_quantity=data.stock_quantity if data.stock_quantity is not None else 10,
             district=data.district or seller.district,
@@ -459,6 +482,10 @@ class ProductService:
             product.images = data.images
         if data.sizes is not None:
             product.sizes = data.sizes
+        if data.highlights is not None:
+            product.highlights = data.highlights
+        if data.additional_details is not None:
+            product.additional_details = data.additional_details
         if data.stock_status is not None:
             product.stock_status = data.stock_status.strip().upper()
         if data.stock_quantity is not None:

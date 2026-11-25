@@ -97,6 +97,7 @@ class WalletTopupService:
             receipt=receipt,
             razorpay_order_id=str(rp_order["id"]),
             status=WalletTopupStatus.CREATED,
+            failure_reason="SUBSCRIPTION_CHECKOUT" if str(getattr(payload, "purpose", "") or "").upper() == "SUBSCRIPTION" else None,
         )
         db.add(topup)
         db.commit()
@@ -123,6 +124,15 @@ class WalletTopupService:
     ) -> Tuple[WalletTopupOrder, str]:
         if topup.status == WalletTopupStatus.PAID:
             return topup, topup.wallet_transaction_group_id or ""
+
+        if topup.failure_reason == "SUBSCRIPTION_CHECKOUT":
+            now = datetime.now(timezone.utc)
+            topup.status = WalletTopupStatus.PAID
+            topup.razorpay_payment_id = razorpay_payment_id
+            topup.paid_at = now
+            db.commit()
+            db.refresh(topup)
+            return topup, ""
 
         existing = (
             db.query(WalletTopupOrder)

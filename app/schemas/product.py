@@ -11,6 +11,8 @@ class ProductCreateRequest(BaseModel):
     original_price: Optional[float] = Field(None, description="Strike-through / MRP Price (₹)")
     images: List[str] = Field(default_factory=list, description="List of product photo URLs")
     sizes: List[str] = Field(default_factory=list, description="Available sizes e.g. ['S', 'M', 'L'] or ['Free Size']")
+    highlights: List[dict] = Field(default_factory=list, description="Product Highlights key-value pairs")
+    additional_details: List[dict] = Field(default_factory=list, description="Additional product detail key-value pairs")
     stock_status: str = Field("IN_STOCK", description="IN_STOCK or OUT_OF_STOCK")
     stock_quantity: int = Field(10, ge=0, description="Units available when the product is listed.")
     district: Optional[str] = Field(None, max_length=100)
@@ -29,6 +31,8 @@ class ProductUpdateRequest(BaseModel):
     original_price: Optional[float] = None
     images: Optional[List[str]] = None
     sizes: Optional[List[str]] = None
+    highlights: Optional[List[dict]] = None
+    additional_details: Optional[List[dict]] = None
     stock_status: Optional[str] = None
     stock_quantity: Optional[int] = Field(None, ge=0)
     district: Optional[str] = None
@@ -63,7 +67,14 @@ class ProductResponse(BaseModel):
     original_price: Optional[float] = None
     images: List[str] = []
     sizes: List[str] = []
+    highlights: List[dict] = []
+    additional_details: List[dict] = []
     stock_status: str
+
+    @field_validator("highlights", "additional_details", mode="before")
+    @classmethod
+    def missing_list_is_empty(cls, value):
+        return [] if value is None else value
     stock_quantity: Optional[int] = None
     in_stock: bool = True
     can_add_stock: bool = False

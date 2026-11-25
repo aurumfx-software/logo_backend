@@ -990,10 +990,53 @@ class WalletService:
         )
 
     @staticmethod
+    def _clean_subscription_wallet_credits(db: Session, user: User, wallet: Wallet) -> None:
+        """Remove accidental personal-wallet credits/entries caused by subscription Razorpay payments."""
+        try:
+            from app.db.models.subscription import UserSubscription
+            sub_refs = {
+                str(r[0]).strip()
+                for r in db.query(UserSubscription.payment_reference)
+                .filter(UserSubscription.user_id == user.id, UserSubscription.payment_reference.isnot(None))
+                .all()
+                if r[0] and str(r[0]).strip()
+            }
+            if not sub_refs:
+                return
+
+            entries = (
+                db.query(WalletLedgerEntry)
+                .join(WalletTransaction, WalletLedgerEntry.transaction_id == WalletTransaction.id)
+                .filter(
+                    WalletLedgerEntry.wallet_id == wallet.id,
+                    WalletLedgerEntry.direction == WalletLedgerDirection.CREDIT,
+                    WalletTransaction.transaction_type == WalletTransactionType.WALLET_TOPUP,
+                )
+                .all()
+            )
+            changed = False
+            for entry in entries:
+                txn = entry.transaction
+                ref = str(getattr(txn, "reference_id", "") or "").strip()
+                note_str = str(entry.note or "")
+                matches_sub = (ref and ref in sub_refs) or any(sr in note_str for sr in sub_refs)
+                if matches_sub and not note_str.startswith("[SUBSCRIPTION]"):
+                    amt = WalletService._money(entry.amount)
+                    wallet.balance = max(Decimal("0.00"), WalletService._money(wallet.balance) - amt)
+                    entry.note = f"[SUBSCRIPTION] {note_str}".strip()[:500]
+                    changed = True
+            if changed:
+                db.commit()
+                db.refresh(wallet)
+        except Exception:
+            pass
+
+    @staticmethod
     def get_my_wallet(db: Session, user: User) -> WalletResponse:
         wallet = WalletService.ensure_wallet_for_user(db, user.id)
         db.commit()
         db.refresh(wallet)
+        WalletService._clean_subscription_wallet_credits(db, user, wallet)
         return WalletService.wallet_to_response(wallet)
 
     @staticmethod
@@ -1005,11 +1048,15 @@ class WalletService:
     ) -> Tuple[List[WalletLedgerEntryResponse], int]:
         wallet = WalletService.ensure_wallet_for_user(db, user.id)
         db.flush()
+        WalletService._clean_subscription_wallet_credits(db, user, wallet)
 
         q = (
             db.query(WalletLedgerEntry)
             .options(selectinload(WalletLedgerEntry.transaction))
-            .filter(WalletLedgerEntry.wallet_id == wallet.id)
+            .filter(
+                WalletLedgerEntry.wallet_id == wallet.id,
+                ~WalletLedgerEntry.note.like("[SUBSCRIPTION]%"),
+            )
             .order_by(WalletLedgerEntry.created_at.desc())
         )
         total = q.count()

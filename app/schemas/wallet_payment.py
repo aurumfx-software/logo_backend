@@ -23,6 +23,10 @@ class WalletTopupCreateRequest(BaseModel):
         None,
         description="Merchant shop; defaults to your primary merchant profile",
     )
+    purpose: Optional[str] = Field(
+        None,
+        description="Optional payment purpose e.g. 'WALLET_TOPUP' or 'SUBSCRIPTION'",
+    )
 
     @field_validator("amount")
     @classmethod
