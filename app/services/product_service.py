@@ -296,6 +296,7 @@ class ProductService:
         q = db.query(CustomerProduct).filter(
             CustomerProduct.is_active == True,
             CustomerProduct.approval_status == "APPROVED",
+            CustomerProduct.parent_product_id.is_(None),
         )
 
         if category and category.lower() != "all":
@@ -703,7 +704,10 @@ class ProductService:
         ProductService.ensure_order_schema(db)
         return (
             db.query(CustomerProduct)
-            .filter(CustomerProduct.seller_id == seller_id)
+            .filter(
+                CustomerProduct.seller_id == seller_id,
+                CustomerProduct.parent_product_id.is_(None),
+            )
             .order_by(desc(CustomerProduct.created_at))
             .all()
         )
