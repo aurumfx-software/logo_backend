@@ -83,6 +83,8 @@ class SellerAnalyticsData(BaseModel):
     online_paid: float = 0
     cod_to_collect: float = 0
     total_orders: int = 0
+    online_orders_count: int = 0
+    cod_orders_count: int = 0
     pipeline: SellerOrderPipeline
 
 

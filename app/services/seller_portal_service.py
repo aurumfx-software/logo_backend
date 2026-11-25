@@ -3,11 +3,11 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import inspect
+from sqlalchemy import inspect, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models.product import ProductOrder, SellerBankDetail
+from app.db.models.product import CustomerProduct, ProductOrder, SellerBankDetail
 from app.db.models.user import User
 from app.schemas.seller_portal import (
     CheckoutRulesData,
@@ -77,7 +77,12 @@ class SellerPortalService:
                 detail="period must be all, this_month, or this_year",
             )
         ProductService.ensure_order_schema(db)
-        query = db.query(ProductOrder).filter(ProductOrder.seller_id == seller.id)
+        query = db.query(ProductOrder).filter(
+            or_(
+                ProductOrder.seller_id == seller.id,
+                ProductOrder.product.has(CustomerProduct.seller_id == seller.id),
+            )
+        )
         now = datetime.now(timezone.utc)
         if chosen == "this_month":
             start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -91,12 +96,15 @@ class SellerPortalService:
         online_paid = Decimal("0")
         cod_to_collect = Decimal("0")
         total_orders = 0
+        online_orders_count = 0
+        cod_orders_count = 0
         for order in query.all():
             total_orders += 1
             current = normalize_order_status(order.status or "PLACED")
             amount = Decimal(str(order.total_price or 0))
             method = (order.payment_method or "").strip().upper()
-            paid = (order.payment_status or "").strip().upper() == "PAID"
+            p_status = (order.payment_status or "").strip().upper()
+            paid = p_status == "PAID"
             if current == "CANCELLED":
                 pipeline.cancelled_orders += 1
             elif current == "DELIVERED":
@@ -112,8 +120,11 @@ class SellerPortalService:
             total_sales += amount
             if method in ONLINE_METHODS or paid:
                 online_paid += amount
-            if method == "COD" and current != "DELIVERED":
-                cod_to_collect += amount
+                online_orders_count += 1
+            else:
+                cod_orders_count += 1
+                if current != "DELIVERED":
+                    cod_to_collect += amount
 
         def money(value: Decimal) -> float:
             return float(value.quantize(Decimal("0.01")))
@@ -124,6 +135,8 @@ class SellerPortalService:
             online_paid=money(online_paid),
             cod_to_collect=money(cod_to_collect),
             total_orders=total_orders,
+            online_orders_count=online_orders_count,
+            cod_orders_count=cod_orders_count,
             pipeline=pipeline,
         )
 

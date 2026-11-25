@@ -248,12 +248,14 @@ class BuyerCommerceService:
         unavailable: List[str] = []
         accepted: dict = {}
         db.query(CartItem).filter(CartItem.user_id == user.id).delete()
+        buyer_tail = "".join(ch for ch in (getattr(user, "phone", None) or "") if ch.isdigit())[-10:]
         for item in items:
             product = db.query(CustomerProduct).filter(CustomerProduct.id == item.product_id).first()
             if not product or not BuyerCommerceService._product_in_stock(product):
                 unavailable.append(str(item.product_id))
                 continue
-            if product.seller_id == user.id:
+            seller_tail = "".join(ch for ch in (product.seller_phone or product.seller_whatsapp or "") if ch.isdigit())[-10:]
+            if product.seller_id == user.id or (len(buyer_tail) == 10 and buyer_tail == seller_tail):
                 unavailable.append(product.name)
                 continue
             try:
@@ -284,7 +286,9 @@ class BuyerCommerceService:
         product = db.query(CustomerProduct).filter(CustomerProduct.id == item.product_id).first()
         if not product or not BuyerCommerceService._product_in_stock(product):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This item is not available.")
-        if product.seller_id == user.id:
+        buyer_tail = "".join(ch for ch in (getattr(user, "phone", None) or "") if ch.isdigit())[-10:]
+        seller_tail = "".join(ch for ch in (product.seller_phone or product.seller_whatsapp or "") if ch.isdigit())[-10:]
+        if product.seller_id == user.id or (len(buyer_tail) == 10 and buyer_tail == seller_tail):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot buy your own listing.")
         size = BuyerCommerceService._validated_size(product, item.selected_size)
         existing = (

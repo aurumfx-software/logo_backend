@@ -130,6 +130,7 @@ class OrderCreateRequest(BaseModel):
     buyer_pincode: str = Field(..., min_length=5, max_length=10)
     selected_size: Optional[str] = Field(None, max_length=50)
     quantity: int = Field(1, ge=1, le=100)
+    payment_method: Optional[str] = Field(None, max_length=40)
     notes: Optional[str] = None
 
 

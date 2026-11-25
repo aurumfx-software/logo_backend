@@ -483,9 +483,17 @@ class ProductService:
         if data.sizes is not None:
             product.sizes = data.sizes
         if data.highlights is not None:
-            product.highlights = data.highlights
+            product.highlights = [
+                {"label": str(item.get("label") or "").strip(), "value": str(item.get("value") or "").strip()}
+                for item in (data.highlights or [])
+                if isinstance(item, dict) and (str(item.get("label") or "").strip() or str(item.get("value") or "").strip())
+            ]
         if data.additional_details is not None:
-            product.additional_details = data.additional_details
+            product.additional_details = [
+                {"label": str(item.get("label") or "").strip(), "value": str(item.get("value") or "").strip()}
+                for item in (data.additional_details or [])
+                if isinstance(item, dict) and (str(item.get("label") or "").strip() or str(item.get("value") or "").strip())
+            ]
         if data.stock_status is not None:
             product.stock_status = data.stock_status.strip().upper()
         if data.stock_quantity is not None:
@@ -589,7 +597,9 @@ class ProductService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This item is out of stock.",
             )
-        if buyer and product.seller_id == buyer.id:
+        buyer_tail = "".join(ch for ch in (getattr(buyer, "phone", None) or "") if ch.isdigit())[-10:] if buyer else ""
+        seller_tail = "".join(ch for ch in (product.seller_phone or product.seller_whatsapp or "") if ch.isdigit())[-10:]
+        if buyer and (product.seller_id == buyer.id or (len(buyer_tail) == 10 and buyer_tail == seller_tail)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="You cannot buy your own listing.",
@@ -625,6 +635,17 @@ class ProductService:
         while db.query(ProductOrder).filter(ProductOrder.order_code == code).first():
             code = generate_order_code()
 
+        raw_method = (getattr(data, "payment_method", None) or "").strip().upper()
+        if raw_method in {"COD", "CASH_ON_DELIVERY"}:
+            init_payment_method = "COD"
+            init_payment_status = "COD"
+        elif raw_method in {"RAZORPAY", "ONLINE", "UPI"}:
+            init_payment_method = raw_method
+            init_payment_status = "PENDING"
+        else:
+            init_payment_method = None
+            init_payment_status = "UNPAID"
+
         order = ProductOrder(
             order_code=code,
             product_id=product.id,
@@ -644,7 +665,8 @@ class ProductService:
             status="PLACED",
             notes=data.notes.strip() if data.notes else None,
             status_history=[],
-            payment_status="UNPAID",
+            payment_method=init_payment_method,
+            payment_status=init_payment_status,
             courier_events=[],
         )
         ProductService._record_status(order, "PLACED", data.notes)
@@ -668,6 +690,7 @@ class ProductService:
 
     @staticmethod
     def get_seller_products(db: Session, seller_id: int) -> List[CustomerProduct]:
+        ProductService.ensure_order_schema(db)
         return (
             db.query(CustomerProduct)
             .filter(CustomerProduct.seller_id == seller_id)
@@ -757,7 +780,12 @@ class ProductService:
         ProductService.ensure_order_schema(db)
         return (
             db.query(ProductOrder)
-            .filter(ProductOrder.seller_id == seller_id)
+            .filter(
+                or_(
+                    ProductOrder.seller_id == seller_id,
+                    ProductOrder.product.has(CustomerProduct.seller_id == seller_id),
+                )
+            )
             .order_by(desc(ProductOrder.created_at))
             .all()
         )
@@ -766,7 +794,13 @@ class ProductService:
     def get_seller_order_by_id(db: Session, seller_id: int, order_id: int) -> Optional[ProductOrder]:
         return (
             db.query(ProductOrder)
-            .filter(ProductOrder.id == order_id, ProductOrder.seller_id == seller_id)
+            .filter(
+                ProductOrder.id == order_id,
+                or_(
+                    ProductOrder.seller_id == seller_id,
+                    ProductOrder.product.has(CustomerProduct.seller_id == seller_id),
+                ),
+            )
             .first()
         )
 
@@ -777,7 +811,13 @@ class ProductService:
         ProductService.ensure_order_schema(db)
         order = (
             db.query(ProductOrder)
-            .filter(ProductOrder.id == order_id, ProductOrder.seller_id == seller_id)
+            .filter(
+                ProductOrder.id == order_id,
+                or_(
+                    ProductOrder.seller_id == seller_id,
+                    ProductOrder.product.has(CustomerProduct.seller_id == seller_id),
+                ),
+            )
             .first()
         )
         if not order:
