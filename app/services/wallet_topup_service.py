@@ -174,7 +174,7 @@ class WalletTopupService:
             WalletLedgerDirection.CREDIT,
             WalletService._money(topup.amount),
             counterparty_wallet_id=locked_company.id,
-            note=f"Razorpay merchant wallet funding {razorpay_payment_id}",
+            note=f"Wallet Add Money via Razorpay ({razorpay_payment_id})",
         )
         WalletService._apply_ledger_line(
             db,
@@ -183,7 +183,7 @@ class WalletTopupService:
             WalletLedgerDirection.CREDIT,
             WalletService._money(topup.amount),
             counterparty_wallet_id=locked.id,
-            note=f"Razorpay merchant payment received {razorpay_payment_id}",
+            note=f"Customer Wallet Add Money received ({razorpay_payment_id})",
         )
 
         now = datetime.now(timezone.utc)

@@ -1076,10 +1076,22 @@ class WalletService:
         """Remove accidental personal-wallet credits/entries caused by subscription Razorpay payments."""
         try:
             from app.db.models.subscription import UserSubscription
+            from app.db.models.wallet import WalletTopupOrder
             sub_refs = {
                 str(r[0]).strip()
                 for r in db.query(UserSubscription.payment_reference)
                 .filter(UserSubscription.user_id == user.id, UserSubscription.payment_reference.isnot(None))
+                .all()
+                if r[0] and str(r[0]).strip()
+            }
+            sub_refs |= {
+                str(r[0]).strip()
+                for r in db.query(WalletTopupOrder.razorpay_payment_id)
+                .filter(
+                    WalletTopupOrder.user_id == user.id,
+                    WalletTopupOrder.failure_reason == "SUBSCRIPTION_CHECKOUT",
+                    WalletTopupOrder.razorpay_payment_id.isnot(None),
+                )
                 .all()
                 if r[0] and str(r[0]).strip()
             }
