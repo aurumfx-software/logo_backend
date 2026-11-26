@@ -145,3 +145,75 @@ def test_merchant_business_tab_finds_shop_by_phone(client: TestClient, db_sessio
     )
     assert sub_res.status_code == 201
     assert sub_res.json()["data"]["merchant_profile_id"] == shop.id
+
+
+def test_merchant_seller_500_plan_unlocks_products(client: TestClient, db_session: Session):
+    """Merchant ₹999 promo plan must NOT unlock product selling; USER_SELLER_500 unlocks it."""
+    from app.db.models.merchant import MerchantProfile
+
+    merch_user = _create_user(db_session, "merch.seller500@example.com", UserRole.MERCHANT)
+    shop = MerchantProfile(
+        user_id=merch_user.id,
+        business_name="Merchant Seller Shop",
+        contact_number="9876511122",
+        district="Ernakulam",
+        city="Kochi",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+    db_session.refresh(shop)
+
+    headers = _auth_headers(client, merch_user.email)
+
+    # 1. Subscribe ONLY to ₹999 Merchant Promo plan -> can_sell_products remains False
+    m_pkgs = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    promo_pkg = next(p for p in m_pkgs if p["code"] == "MERCHANT_PROMO_BASIC")
+    promo_res = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": promo_pkg["id"], "merchant_profile_id": shop.id, "payment_reference": "PROMO-999"},
+    )
+    assert promo_res.status_code == 201
+
+    active_before = client.get("/api/v1/subscriptions/me/active", headers=headers).json()["data"]
+    assert active_before["merchant_has_active_subscription"] is True
+    assert active_before["can_sell_products"] is False
+    assert active_before["user_subscriptions"] == []
+
+    # 2. Subscribe to same ₹500 Seller Plan (USER_SELLER_500) -> unlocks product selling
+    u_pkgs = client.get("/api/v1/subscriptions/packages?audience=USER").json()["data"]
+    seller_pkg = next(p for p in u_pkgs if p["code"] == "USER_SELLER_500")
+    seller_res = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": seller_pkg["id"], "payment_reference": "SELLER-500"},
+    )
+    assert seller_res.status_code == 201
+
+    active_after = client.get("/api/v1/subscriptions/me/active", headers=headers).json()["data"]
+    assert active_after["can_sell_products"] is True
+    assert active_after["is_subscriber"] is True
+    assert active_after["subscription_plan"] == "500_SELLER"
+    assert len(active_after["user_subscriptions"]) >= 1
+
+    # 3. Merchant can create, list, and manage orders on their products
+    created = client.post(
+        "/api/v1/customer/products",
+        headers=headers,
+        json={
+            "name": "Merchant Gold Kasavu Saree",
+            "category": "Kerala Kasavu Sarees",
+            "price": 1499,
+            "stock_quantity": 8,
+            "sizes": ["Free Size"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    my_prods = client.get("/api/v1/customer/products/my-products", headers=headers)
+    assert my_prods.status_code == 200
+    assert any(p["name"] == "Merchant Gold Kasavu Saree" for p in my_prods.json())
+    my_orders = client.get("/api/v1/customer/products/my-orders", headers=headers)
+    assert my_orders.status_code == 200
