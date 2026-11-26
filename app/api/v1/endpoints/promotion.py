@@ -440,13 +440,25 @@ def _normalize_slider_settings(raw: Optional[dict]) -> dict:
             field_val = raw_map.get(key)
         per_type[key] = _clamp_sec(field_val, default_for_key)
 
+    raw_overrides = src.get("merchant_overrides") if isinstance(src.get("merchant_overrides"), dict) else {}
+    merchant_overrides: Dict[str, int] = {}
+    for m_key, m_val in raw_overrides.items():
+        clean_key = str(m_key).strip()
+        if clean_key:
+            merchant_overrides[clean_key] = _clamp_sec(m_val, per_type.get("merchant_store", global_sec))
+
     result = {
         "interval_seconds": global_sec,
         "per_type_seconds": per_type,
+        "merchant_overrides": merchant_overrides,
     }
     for key, val in per_type.items():
         result[f"{key}_seconds"] = val
     return result
+
+
+class MerchantSliderSpeedPayload(BaseModel):
+    interval_seconds: int = Field(..., ge=2, le=60)
 
 
 class SliderSettingsPayload(BaseModel):
@@ -463,24 +475,88 @@ class SliderSettingsPayload(BaseModel):
 
 
 @router.get("/settings/slider", summary="Get global & per-type slider speed settings")
-def get_slider_settings(db: Session = Depends(get_db)):
+def get_slider_settings(
+    merchant_id: Optional[int] = Query(None, description="Optional merchant store ID override"),
+    db: Session = Depends(get_db),
+):
     """
-    Public endpoint: Returns global and per-ad-type slider speed intervals in seconds.
+    Public endpoint: Returns global, per-ad-type, and optional merchant-specific slider speed intervals in seconds.
     """
     from app.db.models.promotion import Promotion
     config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
+    raw_data = {}
     if config and config.description:
         try:
-            raw_data = json.loads(config.description)
-            return success_response(
-                data=_normalize_slider_settings(raw_data),
-                message="Slider settings retrieved",
-            )
+            raw_data = json.loads(config.description) or {}
         except Exception:
-            pass
+            raw_data = {}
+
+    normalized = _normalize_slider_settings(raw_data)
+    if merchant_id is not None:
+        m_default = normalized["per_type_seconds"].get("merchant_store", normalized["interval_seconds"])
+        normalized["merchant_interval_seconds"] = _clamp_sec(
+            normalized.get("merchant_overrides", {}).get(str(merchant_id)),
+            m_default,
+        )
+
     return success_response(
-        data=_normalize_slider_settings({"interval_seconds": 4}),
-        message="Default slider settings",
+        data=normalized,
+        message="Slider settings retrieved" if config else "Default slider settings",
+    )
+
+
+@router.put("/merchant/{merchant_id}/slider", summary="Update slider swipe speed for a specific merchant store")
+def update_merchant_slider_speed(
+    merchant_id: int,
+    payload: MerchantSliderSpeedPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Merchant / Admin endpoint: Saves a per-merchant store advertisement auto-slide interval in seconds.
+    """
+    from app.db.models.promotion import Promotion
+    from app.services.subscription_service import SubscriptionService
+
+    role_str = str(getattr(current_user, "role", "")).upper()
+    is_admin = (
+        "ADMIN" in role_str
+        or "SUPER" in role_str
+        or getattr(current_user, "email", "") == "admin@aurumfx.com"
+    )
+    if not is_admin:
+        SubscriptionService._assert_merchant_access(db, current_user, merchant_id)
+
+    clamped = _clamp_sec(payload.interval_seconds, 4)
+    config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
+    existing_raw = {}
+    if config and config.description:
+        try:
+            existing_raw = json.loads(config.description) or {}
+        except Exception:
+            existing_raw = {}
+
+    merged = _normalize_slider_settings(existing_raw)
+    overrides = dict(merged.get("merchant_overrides") or {})
+    overrides[str(merchant_id)] = clamped
+    merged["merchant_overrides"] = overrides
+    normalized = _normalize_slider_settings(merged)
+
+    if not config:
+        config = Promotion(
+            title="System Slider Settings",
+            type="SYSTEM_CONFIG",
+            placement="SYSTEM_CONFIG_SLIDER",
+            status="active",
+            description=json.dumps(normalized),
+        )
+        db.add(config)
+    else:
+        config.description = json.dumps(normalized)
+    db.commit()
+    return success_response(
+        data={"merchant_id": merchant_id, "interval_seconds": clamped, "slider_settings": normalized},
+        message=f"Store ad swipe speed updated to {clamped}s",
     )
 
 

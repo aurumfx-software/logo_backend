@@ -314,3 +314,77 @@ def test_slider_speed_per_ad_type_persistence(client: TestClient, db_session):
     assert fetched["per_type_seconds"]["home_top"] == 6
     assert fetched["per_type_seconds"]["home_middle"] == 8
     assert fetched["per_type_seconds"]["merchant_store"] == 3
+
+
+def test_merchant_slider_speed_override_persistence(client: TestClient, db_session):
+    from app.db.models.user import UserRole
+    from app.db.models.merchant import MerchantProfile
+
+    merch_user = User(
+        name="Speed Merchant",
+        email="speedmerchant@example.com",
+        password_hash=hash_password("Pass12345!"),
+        role=UserRole.MERCHANT,
+        is_active=True,
+        is_verified=True,
+    )
+    admin = User(
+        name="Global Admin",
+        email="globaladmin@example.com",
+        password_hash=hash_password("Pass12345!"),
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add_all([merch_user, admin])
+    db_session.commit()
+    db_session.refresh(merch_user)
+
+    shop = MerchantProfile(
+        user_id=merch_user.id,
+        business_name="Speed Shop",
+        owner_name="Speed Owner",
+        category="Retail",
+        contact_number="9876501122",
+        district="Kozhikode",
+        city="Kozhikode",
+        approval_status="APPROVED",
+        is_verified=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+    db_session.refresh(shop)
+
+    m_login = client.post("/api/v1/auth/login", json={"email": merch_user.email, "password": "Pass12345!"})
+    assert m_login.status_code == 200
+    m_headers = {"Authorization": f"Bearer {m_login.json()['access_token']}"}
+
+    a_login = client.post("/api/v1/auth/login", json={"email": admin.email, "password": "Pass12345!"})
+    assert a_login.status_code == 200
+    a_headers = {"Authorization": f"Bearer {a_login.json()['access_token']}"}
+
+    # Merchant sets store auto-swipe speed to 7s
+    upd_m = client.put(
+        f"/api/v1/promotions/merchant/{shop.id}/slider",
+        headers=m_headers,
+        json={"interval_seconds": 7},
+    )
+    assert upd_m.status_code == 200, upd_m.text
+    assert upd_m.json()["data"]["interval_seconds"] == 7
+
+    get_m = client.get(f"/api/v1/promotions/settings/slider?merchant_id={shop.id}")
+    assert get_m.status_code == 200
+    assert get_m.json()["data"]["merchant_interval_seconds"] == 7
+
+    # Super Admin updating global sliders must preserve per-merchant override
+    upd_g = client.put(
+        "/api/v1/promotions/settings/slider",
+        headers=a_headers,
+        json={"home_top_seconds": 9},
+    )
+    assert upd_g.status_code == 200
+    assert upd_g.json()["data"]["merchant_overrides"][str(shop.id)] == 7
+
+    get_m2 = client.get(f"/api/v1/promotions/settings/slider?merchant_id={shop.id}")
+    assert get_m2.status_code == 200
+    assert get_m2.json()["data"]["merchant_interval_seconds"] == 7
