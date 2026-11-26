@@ -247,6 +247,7 @@ class MerchantService:
         merchant: MerchantProfile,
         include_creator: bool = True,
         linked_user: Any = None,
+        advertisements: Optional[list] = None,
     ) -> MerchantProfileResponse:
         merchant.categories = MerchantService._coerce_str_list(merchant.categories)
         merchant.services = MerchantService._coerce_str_list(merchant.services)
@@ -320,6 +321,10 @@ class MerchantService:
             pass
         if linked_user is not None:
             resp = MerchantService.merge_linked_user(resp, linked_user)
+        if advertisements is not None:
+            from app.schemas.advertisement import AdvertisementResponse
+
+            resp.advertisements = [AdvertisementResponse.model_validate(ad) for ad in advertisements]
         return resp
 
     @staticmethod

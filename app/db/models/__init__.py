@@ -17,6 +17,7 @@ from app.db.models.product import (
     SellerBankDetail,
 )
 from app.db.models.promotion import Promotion
+from app.db.models.advertisement import MerchantAdvertisement
 from app.db.models.complaint import Complaint
 from app.db.models.subscription import SubscriptionPackage, UserSubscription
 from app.db.models.wallet import (
@@ -45,6 +46,7 @@ __all__ = [
     "MerchantProfile",
     "MerchantFavorite",
     "Promotion",
+    "MerchantAdvertisement",
     "Complaint",
     "SubscriptionPackage",
     "UserSubscription",

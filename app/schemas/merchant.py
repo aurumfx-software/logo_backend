@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.db.models.merchant import MerchantProfile
+from app.schemas.advertisement import AdvertisementResponse
 from app.schemas.auth import SafeUserResponse
 
 EMAIL_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
@@ -143,6 +144,7 @@ class MerchantProfileResponse(BaseModel):
     cashback_percent: float = 3
     company_fee_percent: float = 2
     total_deduction_percent: float = 5.0
+    advertisements: List[AdvertisementResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
 
