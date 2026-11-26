@@ -405,50 +405,140 @@ def upload_banner_media(
     )
 
 
+from typing import Dict
+
+
+SLIDER_AD_TYPE_KEYS = (
+    "home_top",
+    "home_middle",
+    "above_footer",
+    "featured_offers",
+    "business_network",
+    "moving_text",
+    "merchant_store",
+)
+
+
+def _clamp_sec(val: Optional[int], default: int = 4) -> int:
+    try:
+        num = int(val) if val is not None else default
+    except (TypeError, ValueError):
+        num = default
+    return max(2, min(num, 60))
+
+
+def _normalize_slider_settings(raw: Optional[dict]) -> dict:
+    src = raw if isinstance(raw, dict) else {}
+    global_sec = _clamp_sec(src.get("interval_seconds"), 4)
+    raw_map = src.get("per_type_seconds") if isinstance(src.get("per_type_seconds"), dict) else {}
+
+    per_type: Dict[str, int] = {}
+    for key in SLIDER_AD_TYPE_KEYS:
+        default_for_key = 5 if key == "business_network" else global_sec
+        field_val = src.get(f"{key}_seconds")
+        if field_val is None:
+            field_val = raw_map.get(key)
+        per_type[key] = _clamp_sec(field_val, default_for_key)
+
+    result = {
+        "interval_seconds": global_sec,
+        "per_type_seconds": per_type,
+    }
+    for key, val in per_type.items():
+        result[f"{key}_seconds"] = val
+    return result
+
+
 class SliderSettingsPayload(BaseModel):
-    interval_seconds: int = Field(default=4, ge=2, le=60)
+    interval_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    home_top_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    home_middle_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    above_footer_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    featured_offers_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    business_network_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    moving_text_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    merchant_store_seconds: Optional[int] = Field(default=None, ge=2, le=60)
+    per_type_seconds: Optional[Dict[str, int]] = None
+    apply_all: bool = False
 
 
-@router.get("/settings/slider", summary="Get global slider speed settings")
+@router.get("/settings/slider", summary="Get global & per-type slider speed settings")
 def get_slider_settings(db: Session = Depends(get_db)):
     """
-    Public endpoint: Returns global slider speed interval in seconds.
+    Public endpoint: Returns global and per-ad-type slider speed intervals in seconds.
     """
     from app.db.models.promotion import Promotion
     config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
     if config and config.description:
         try:
-            data = json.loads(config.description)
-            return success_response(data=data, message="Slider settings retrieved")
+            raw_data = json.loads(config.description)
+            return success_response(
+                data=_normalize_slider_settings(raw_data),
+                message="Slider settings retrieved",
+            )
         except Exception:
             pass
-    return success_response(data={"interval_seconds": 4}, message="Default slider settings")
+    return success_response(
+        data=_normalize_slider_settings({"interval_seconds": 4}),
+        message="Default slider settings",
+    )
 
 
-@router.put("/settings/slider", summary="Update global slider speed settings")
+@router.put("/settings/slider", summary="Update global & per-type slider speed settings")
 def update_slider_settings(
     payload: SliderSettingsPayload,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_admin_user_flexible),
 ):
     """
-    Admin endpoint: Updates global slider speed interval across all ad carousels.
+    Admin endpoint: Updates global and/or per-ad-type slider speed intervals across all ad carousels.
     """
     from app.db.models.promotion import Promotion
-    sec = max(2, min(int(payload.interval_seconds), 60))
-    data = {"interval_seconds": sec}
+
     config = db.query(Promotion).filter(Promotion.placement == "SYSTEM_CONFIG_SLIDER").first()
+    existing_raw = {}
+    if config and config.description:
+        try:
+            existing_raw = json.loads(config.description) or {}
+        except Exception:
+            existing_raw = {}
+
+    merged = _normalize_slider_settings(existing_raw)
+
+    if payload.interval_seconds is not None:
+        g_sec = _clamp_sec(payload.interval_seconds, merged["interval_seconds"])
+        merged["interval_seconds"] = g_sec
+        if payload.apply_all:
+            for key in SLIDER_AD_TYPE_KEYS:
+                merged["per_type_seconds"][key] = g_sec
+                merged[f"{key}_seconds"] = g_sec
+
+    if isinstance(payload.per_type_seconds, dict):
+        for key in SLIDER_AD_TYPE_KEYS:
+            if key in payload.per_type_seconds and payload.per_type_seconds[key] is not None:
+                c_val = _clamp_sec(payload.per_type_seconds[key], merged["interval_seconds"])
+                merged["per_type_seconds"][key] = c_val
+                merged[f"{key}_seconds"] = c_val
+
+    for key in SLIDER_AD_TYPE_KEYS:
+        direct_val = getattr(payload, f"{key}_seconds", None)
+        if direct_val is not None:
+            c_val = _clamp_sec(direct_val, merged["interval_seconds"])
+            merged["per_type_seconds"][key] = c_val
+            merged[f"{key}_seconds"] = c_val
+
+    normalized = _normalize_slider_settings(merged)
     if not config:
         config = Promotion(
             title="System Slider Settings",
             type="SYSTEM_CONFIG",
             placement="SYSTEM_CONFIG_SLIDER",
             status="active",
-            description=json.dumps(data),
+            description=json.dumps(normalized),
         )
         db.add(config)
     else:
-        config.description = json.dumps(data)
+        config.description = json.dumps(normalized)
     db.commit()
-    return success_response(data=data, message="Slider settings updated successfully")
+    return success_response(data=normalized, message="Slider settings updated successfully")
 

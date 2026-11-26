@@ -258,3 +258,59 @@ def test_merchant_store_ad_requires_999_subscription_and_saves_formats(client: T
 
     dele = client.delete(f"/api/v1/promotions/{ad['id']}", headers=headers)
     assert dele.status_code == 200
+
+
+def test_slider_speed_per_ad_type_persistence(client: TestClient, db_session):
+    from app.db.models.user import UserRole
+
+    admin = User(
+        name="Speed Admin",
+        email="speedadmin@example.com",
+        password_hash=hash_password("Pass12345!"),
+        role=UserRole.SUPER_ADMIN,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+
+    login_res = client.post("/api/v1/auth/login", json={"email": admin.email, "password": "Pass12345!"})
+    assert login_res.status_code == 200
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    default_res = client.get("/api/v1/promotions/settings/slider")
+    assert default_res.status_code == 200
+    d_data = default_res.json()["data"]
+    assert d_data["interval_seconds"] == 4
+    assert d_data["per_type_seconds"]["home_top"] == 4
+    assert d_data["per_type_seconds"]["merchant_store"] == 4
+
+    # Set per-type speeds independently without overwriting others
+    upd1 = client.put(
+        "/api/v1/promotions/settings/slider",
+        headers=headers,
+        json={"home_top_seconds": 6, "merchant_store_seconds": 3},
+    )
+    assert upd1.status_code == 200
+    u1 = upd1.json()["data"]
+    assert u1["home_top_seconds"] == 6
+    assert u1["merchant_store_seconds"] == 3
+    assert u1["per_type_seconds"]["home_top"] == 6
+    assert u1["per_type_seconds"]["merchant_store"] == 3
+
+    upd2 = client.put(
+        "/api/v1/promotions/settings/slider",
+        headers=headers,
+        json={"home_middle_seconds": 8},
+    )
+    assert upd2.status_code == 200
+    u2 = upd2.json()["data"]
+    assert u2["home_middle_seconds"] == 8
+    # Previously set per-type speeds stay preserved
+    assert u2["home_top_seconds"] == 6
+    assert u2["merchant_store_seconds"] == 3
+
+    fetched = client.get("/api/v1/promotions/settings/slider").json()["data"]
+    assert fetched["per_type_seconds"]["home_top"] == 6
+    assert fetched["per_type_seconds"]["home_middle"] == 8
+    assert fetched["per_type_seconds"]["merchant_store"] == 3
