@@ -1,13 +1,73 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import HTTPException, status
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, text
 from sqlalchemy.orm import Session
 
 from app.db.models.promotion import Promotion
 from app.schemas.promotion import PromotionCreateRequest, PromotionUpdateRequest
 
 
+def _as_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class PromotionService:
+    _STYLE_COLUMNS_ENSURED = False
+
+    @staticmethod
+    def ensure_style_columns(db: Session) -> None:
+        if PromotionService._STYLE_COLUMNS_ENSURED:
+            return
+        try:
+            db.execute(text("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS bg_color VARCHAR(255)"))
+            db.execute(text("ALTER TABLE promotions ADD COLUMN IF NOT EXISTS text_color VARCHAR(50)"))
+            db.commit()
+        except Exception:
+            db.rollback()
+        PromotionService._STYLE_COLUMNS_ENSURED = True
+
+    @staticmethod
+    def is_merchant_ad_subscription_active(db: Session, merchant_id: Optional[int]) -> bool:
+        if not merchant_id:
+            return False
+        from app.db.models.merchant import MerchantProfile
+        from app.db.models.subscription import (
+            SubscriptionAudience,
+            SubscriptionPackage,
+            UserSubscription,
+            UserSubscriptionStatus,
+        )
+
+        merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+        if not merchant:
+            return False
+
+        now = datetime.now(timezone.utc)
+        subs = (
+            db.query(UserSubscription)
+            .join(SubscriptionPackage)
+            .filter(
+                UserSubscription.merchant_profile_id == merchant_id,
+                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+            )
+            .all()
+        )
+        valid_subs = [
+            s for s in subs if s.expires_at is None or (_as_utc(s.expires_at) is not None and _as_utc(s.expires_at) >= now)
+        ]
+        if valid_subs:
+            if not merchant.has_active_subscription:
+                merchant.has_active_subscription = True
+                db.commit()
+            return True
+        return bool(getattr(merchant, "has_active_subscription", False))
+
     @staticmethod
     def get_all(
         db: Session,
@@ -15,9 +75,13 @@ class PromotionService:
         search: Optional[str] = None,
         placement: Optional[str] = None,
     ) -> List[Promotion]:
+        PromotionService.ensure_style_columns(db)
         query = db.query(Promotion).filter(Promotion.type != "SYSTEM_CONFIG")
         if status_filter and status_filter.lower() != "all":
-            query = query.filter(Promotion.status == status_filter.lower())
+            if status_filter.lower() in ("active", "approved"):
+                query = query.filter(or_(Promotion.status == "active", Promotion.status == "approved"))
+            else:
+                query = query.filter(Promotion.status == status_filter.lower())
         if placement:
             query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
         if search:
@@ -33,7 +97,29 @@ class PromotionService:
         return query.order_by(Promotion.id.desc()).all()
 
     @staticmethod
+    def get_merchant_promotions(
+        db: Session,
+        merchant_id: int,
+        status_filter: Optional[str] = None,
+        placement: Optional[str] = None,
+    ) -> List[Promotion]:
+        PromotionService.ensure_style_columns(db)
+        query = db.query(Promotion).filter(
+            Promotion.merchant_id == merchant_id,
+            Promotion.type != "SYSTEM_CONFIG",
+        )
+        if status_filter and status_filter.lower() != "all":
+            if status_filter.lower() in ("active", "approved"):
+                query = query.filter(or_(Promotion.status == "active", Promotion.status == "approved"))
+            else:
+                query = query.filter(Promotion.status == status_filter.lower())
+        if placement:
+            query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
+        return query.order_by(Promotion.id.desc()).all()
+
+    @staticmethod
     def get_by_id(db: Session, promo_id: int) -> Promotion:
+        PromotionService.ensure_style_columns(db)
         promo = db.query(Promotion).filter(Promotion.id == promo_id).first()
         if not promo:
             raise HTTPException(
@@ -44,6 +130,7 @@ class PromotionService:
 
     @staticmethod
     def create(db: Session, data: PromotionCreateRequest) -> Promotion:
+        PromotionService.ensure_style_columns(db)
         # Generate unique promo_code
         max_id = db.query(func.max(Promotion.id)).scalar() or 0
         counter = max_id + 1
@@ -53,12 +140,15 @@ class PromotionService:
             code = f"BNR-{counter:03d}"
 
         placement_str = data.placement or "Home Top"
+        resolved_media_type = (data.media_type or ("video" if data.video_url else "image")).strip().lower()
+        if resolved_media_type not in ("image", "video", "text"):
+            resolved_media_type = "video" if data.video_url else "image"
 
         promo = Promotion(
             promo_code=code,
             title=data.title,
             category=data.category,
-            type=data.type or ("Text Carousel" if "Moving" in placement_str or "Ticker" in placement_str else "Featured"),
+            type=data.type or ("Text Banner" if resolved_media_type == "text" else ("Text Carousel" if "Moving" in placement_str or "Ticker" in placement_str else "Featured")),
             placement=placement_str,
             location=data.location,
             start_date=data.start_date or "2026-10-01",
@@ -68,7 +158,9 @@ class PromotionService:
             clicks=data.clicks or 0,
             image_url=data.image_url,
             video_url=data.video_url,
-            media_type=data.media_type or ("video" if data.video_url else "image"),
+            media_type=resolved_media_type,
+            bg_color=data.bg_color,
+            text_color=data.text_color,
             thumbnail_url=data.thumbnail_url,
             target_url=data.target_url,
             description=data.description,
@@ -108,7 +200,13 @@ class PromotionService:
         if data.video_url is not None:
             promo.video_url = data.video_url
         if data.media_type is not None:
-            promo.media_type = data.media_type
+            mt = data.media_type.strip().lower()
+            if mt in ("image", "video", "text"):
+                promo.media_type = mt
+        if data.bg_color is not None:
+            promo.bg_color = data.bg_color
+        if data.text_color is not None:
+            promo.text_color = data.text_color
         if data.thumbnail_url is not None:
             promo.thumbnail_url = data.thumbnail_url
         if data.target_url is not None:
@@ -151,6 +249,7 @@ class PromotionService:
         placement: Optional[str] = None,
     ) -> List[Promotion]:
         from app.db.models.merchant import MerchantProfile
+        PromotionService.ensure_style_columns(db)
 
         query = db.query(Promotion).filter(
             or_(Promotion.status == "active", Promotion.status == "approved"),
@@ -158,6 +257,11 @@ class PromotionService:
         )
         if placement:
             query = query.filter(Promotion.placement.ilike(f"%{placement}%"))
+        else:
+            # Keep store-only merchant ads scoped to each store's Merchant Detail page
+            query = query.filter(
+                or_(Promotion.placement.is_(None), Promotion.placement != "Merchant Store")
+            )
         if search:
             s = f"%{search}%"
             query = query.filter(

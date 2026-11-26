@@ -131,6 +131,8 @@ class MerchantProfileResponse(BaseModel):
     merchant_videos: List[str] = []
     verification_documents: List[str] = []
     is_verified: bool = False
+    can_create_promotions: bool = False
+    has_active_subscription: bool = False
     rejection_reason: Optional[str] = None
     approved_by_id: Optional[int] = None
     approved_at: Optional[datetime] = None

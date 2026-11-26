@@ -29,6 +29,7 @@ def _login(client: TestClient, email: str) -> str:
 
 
 def test_admin_impersonates_customer_and_merchant_then_switches_back(client: TestClient, db_session: Session):
+    super_admin = _user(db_session, "imp.superadmin@example.com", UserRole.SUPER_ADMIN)
     admin = _user(db_session, "imp.admin@example.com", UserRole.ADMIN)
     customer = _user(db_session, "imp.customer@example.com", UserRole.FIELD_STAFF)
     merchant_user = _user(db_session, "imp.merchant@example.com", UserRole.MERCHANT)
@@ -37,19 +38,23 @@ def test_admin_impersonates_customer_and_merchant_then_switches_back(client: Tes
     db_session.commit()
     db_session.refresh(shop)
 
+    super_headers = {"Authorization": f"Bearer {_login(client, super_admin.email)}"}
     headers = {"Authorization": f"Bearer {_login(client, admin.email)}"}
 
-    as_customer = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=headers)
+    admin_member_denied = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=headers)
+    assert admin_member_denied.status_code == 403
+
+    as_customer = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=super_headers)
     assert as_customer.status_code == 200
     body = as_customer.json()
     assert body["is_impersonation"] is True
-    assert body["impersonated_by"] == admin.id
+    assert body["impersonated_by"] == super_admin.id
     assert body["role"] == "FIELD_STAFF"
     assert body["user"]["id"] == customer.id
     claims = decode_token(body["access_token"])
     assert claims["sub"] == str(customer.id)
     assert claims["is_impersonation"] is True
-    assert claims["impersonated_by"] == admin.id
+    assert claims["impersonated_by"] == super_admin.id
 
     me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"})
     assert me.status_code == 200
@@ -62,8 +67,8 @@ def test_admin_impersonates_customer_and_merchant_then_switches_back(client: Tes
     assert switched.status_code == 200
     admin_body = switched.json()
     assert admin_body["is_impersonation"] is False
-    assert admin_body["role"] == "ADMIN"
-    assert admin_body["user"]["id"] == admin.id
+    assert admin_body["role"] == "SUPER_ADMIN"
+    assert admin_body["user"]["id"] == super_admin.id
 
     as_merchant = client.post(f"/api/v1/admin/merchants/{shop.id}/impersonate", headers=headers)
     assert as_merchant.status_code == 200
@@ -75,10 +80,10 @@ def test_admin_impersonates_customer_and_merchant_then_switches_back(client: Tes
 
 
 def test_impersonation_rejects_inactive_and_non_admin(client: TestClient, db_session: Session):
-    admin = _user(db_session, "imp.admin2@example.com", UserRole.ADMIN)
+    super_admin = _user(db_session, "imp.superadmin2@example.com", UserRole.SUPER_ADMIN)
     blocked = _user(db_session, "imp.blocked@example.com", UserRole.FIELD_STAFF, status_value="BLOCKED")
     customer = _user(db_session, "imp.customer2@example.com", UserRole.FIELD_STAFF)
-    headers = {"Authorization": f"Bearer {_login(client, admin.email)}"}
+    headers = {"Authorization": f"Bearer {_login(client, super_admin.email)}"}
     customer_headers = {"Authorization": f"Bearer {_login(client, customer.email)}"}
 
     blocked_res = client.post(f"/api/v1/admin/members/{blocked.id}/impersonate", headers=headers)

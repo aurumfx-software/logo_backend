@@ -20,7 +20,9 @@ class Promotion(Base):
     clicks = Column(Integer, default=0, nullable=False)
     image_url = Column(String(500), nullable=True)
     video_url = Column(String(500), nullable=True)
-    media_type = Column(String(20), nullable=False, default="image")  # image, video
+    media_type = Column(String(20), nullable=False, default="image")  # image, video, text
+    bg_color = Column(String(255), nullable=True)
+    text_color = Column(String(50), nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
     target_url = Column(String(500), nullable=True)
     description = Column(Text, nullable=True)

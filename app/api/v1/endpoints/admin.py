@@ -2,7 +2,7 @@ from typing import Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin, require_any_authenticated
+from app.api.deps import require_admin, require_any_authenticated, require_super_admin
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
 from app.db.models.merchant import MerchantProfile
@@ -78,16 +78,16 @@ def list_all_wallet_transactions(
 @router.post(
     "/members/{user_id}/impersonate",
     response_model=TokenResponse,
-    summary="Open a merchant or customer session",
+    summary="Open a customer profile session (Super Admin only)",
     description=(
-        "Admin only. Returns a login token for an active merchant or customer. "
+        "Super Admin only. Returns a login token for an active customer or member. "
         "The id can be the user id, user code, or login id. "
         "Call POST /api/v1/auth/switch-back with that token to return to the admin account."
     ),
 )
 def impersonate_member(
     user_id: str,
-    current_admin: User = Depends(require_admin),
+    current_admin: User = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     return AuthService.impersonate_user(db, current_admin, user_id)
@@ -546,11 +546,11 @@ def get_activity_log_actions(
 @router.post(
     "/members/{user_id}/impersonate",
     response_model=TokenResponse,
-    summary="Impersonate customer or merchant by user id, user_code, or login_id",
+    summary="Impersonate customer or merchant by user id, user_code, or login_id (Super Admin only)",
 )
 def impersonate_member(
     user_id: str,
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_super_admin),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     target_user = None

@@ -141,3 +141,41 @@ class ActiveSubscriptionSummary(BaseModel):
     merchant_has_active_subscription: bool = False
     merchant_profile_id: Optional[int] = None
     merchant_business_name: Optional[str] = None
+
+
+class SubscriptionRazorpayOrderRequest(BaseModel):
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
+    merchant_profile_id: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_aliases(cls, data):
+        return SubscribeRequest.accept_client_aliases(data)
+
+
+class SubscriptionRazorpayOrderResponse(BaseModel):
+    message: str = "Razorpay subscription order created"
+    razorpay_key_id: str = ""
+    razorpay_order_id: str
+    amount: Decimal
+    amount_paise: int
+    currency: str = "INR"
+    package_id: int
+    package_code: str
+    package_name: str
+    merchant_profile_id: Optional[int] = None
+
+
+class SubscriptionRazorpayVerifyRequest(BaseModel):
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
+    merchant_profile_id: Optional[int] = None
+    razorpay_order_id: str = Field(..., min_length=4, max_length=64)
+    razorpay_payment_id: str = Field(..., min_length=4, max_length=64)
+    razorpay_signature: str = Field(..., min_length=8, max_length=128)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_aliases(cls, data):
+        return SubscribeRequest.accept_client_aliases(data)

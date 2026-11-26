@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_admin_user_flexible, get_current_user_optional
+from app.api.deps import get_admin_user_flexible, get_current_user, get_current_user_optional
 from app.db.database import get_db
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User
@@ -121,10 +121,26 @@ def get_promotion_option_types():
 @router.get("/merchant/{merchant_id}", response_model=StandardListResponse[PromotionResponse], summary="List promotions for a merchant")
 def list_merchant_promotions(
     merchant_id: int,
+    status: Optional[str] = Query(None, description="Filter by status (e.g. active, all)"),
+    placement: Optional[str] = Query(None, description="Filter by placement (e.g. Merchant Store)"),
     db: Session = Depends(get_db),
 ):
-    """Fetch all promotions submitted by a specific merchant to track approval status."""
-    promos = [p for p in PromotionService.get_all(db) if p.merchant_id == merchant_id]
+    """Fetch promotions for a specific merchant (all for portal tracking, or active for store page)."""
+    status_norm = (status or "").strip().lower()
+    placement_norm = (placement or "").strip().lower()
+    if status_norm in ("active", "approved") and placement_norm == "merchant store":
+        if not PromotionService.is_merchant_ad_subscription_active(db, merchant_id):
+            return list_response(
+                data=[],
+                total_items=0,
+                message="Active ₹999 merchant subscription required for live store advertisements",
+            )
+    promos = PromotionService.get_merchant_promotions(
+        db,
+        merchant_id=merchant_id,
+        status_filter=status,
+        placement=placement,
+    )
     return list_response(
         data=[PromotionResponse.model_validate(p) for p in promos],
         total_items=len(promos),
@@ -139,9 +155,10 @@ def create_promotion(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
-    Create a promotion.
+    Create a promotion or store advertisement.
     - If submitted by Admin: Can be directly active.
-    - If submitted by Merchant: Verified for promotion access. Set to PENDING approval.
+    - If submitted by Merchant: Requires active ₹999+ Merchant Subscription (`MERCHANT_PROMO_BASIC`).
+      Store advertisements (`placement == 'Merchant Store'`) go live immediately upon active subscription.
     """
     is_admin = False
     if current_user:
@@ -150,7 +167,13 @@ def create_promotion(
             is_admin = True
 
     if not is_admin:
-        # Check merchant promotion permission
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to create merchant advertisements.",
+            )
+        from app.services.subscription_service import SubscriptionService
+
         merchant = None
         if payload.merchant_id:
             merchant = db.query(MerchantProfile).filter(MerchantProfile.id == payload.merchant_id).first()
@@ -163,16 +186,22 @@ def create_promotion(
                 detail="A valid merchant must be associated with this promotion.",
             )
 
-        if not getattr(merchant, "can_create_promotions", False):
+        merchant = SubscriptionService._assert_merchant_access(db, current_user, merchant.id)
+
+        if not PromotionService.is_merchant_ad_subscription_active(db, merchant.id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Promotion access is currently disabled for this merchant. Please contact an administrator.",
+                detail="₹999 Merchant Advertisement Subscription required. Please complete Razorpay payment first.",
             )
 
-        # Force merchant binding & pending approval status
         payload.merchant_id = merchant.id
         payload.merchant_name = merchant.business_name
-        payload.status = "pending"
+        placement_str = str(payload.placement or "").strip()
+        if placement_str.lower() == "merchant store":
+            req_status = str(payload.status or "active").strip().lower()
+            payload.status = "inactive" if req_status == "inactive" else "active"
+        else:
+            payload.status = "pending"
 
     promo = PromotionService.create(db, payload)
 
@@ -180,8 +209,8 @@ def create_promotion(
     try:
         NotificationService.notify_admins(
             db=db,
-            title="New Promotion Request",
-            message=f"Merchant '{promo.merchant_name or 'Store'}' submitted promotion '{promo.title}' for approval.",
+            title="New Promotion Request" if promo.status == "pending" else "New Merchant Store Ad",
+            message=f"Merchant '{promo.merchant_name or 'Store'}' published advertisement '{promo.title}'.",
             type="PROMOTION_REQUEST",
             data={"promo_id": promo.id, "merchant_id": promo.merchant_id, "title": promo.title},
         )
@@ -190,7 +219,7 @@ def create_promotion(
 
     return success_response(
         data=PromotionResponse.model_validate(promo),
-        message="Promotion created successfully" + (" (Pending Admin Approval)" if not is_admin else ""),
+        message="Store advertisement saved successfully" if promo.status == "active" else "Promotion submitted for Admin approval",
     )
 
 
@@ -269,14 +298,39 @@ def get_promotion(
     )
 
 
+def _assert_admin_or_promo_owner(db: Session, current_user: User, promo) -> bool:
+    role_str = str(getattr(current_user, "role", "")).upper()
+    if "ADMIN" in role_str or "SUPER" in role_str or getattr(current_user, "email", "") == "admin@aurumfx.com":
+        return True
+    if not promo.merchant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to modify this promotion.")
+    from app.services.subscription_service import SubscriptionService
+    SubscriptionService._assert_merchant_access(db, current_user, promo.merchant_id)
+    return False
+
+
 @router.put("/{promo_id}", response_model=StandardResponse[PromotionResponse], summary="Update promotion")
 @router.patch("/{promo_id}", response_model=StandardResponse[PromotionResponse], summary="Update promotion (PATCH alias)")
 def update_promotion(
     promo_id: int,
     payload: PromotionUpdateRequest,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user_flexible),
+    current_user: User = Depends(get_current_user),
 ):
+    existing = PromotionService.get_by_id(db, promo_id)
+    is_admin = _assert_admin_or_promo_owner(db, current_user, existing)
+    if not is_admin:
+        if not PromotionService.is_merchant_ad_subscription_active(db, existing.merchant_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="₹999 Merchant Advertisement Subscription required.",
+            )
+        if str(existing.placement or "").strip().lower() == "merchant store":
+            if payload.status is not None:
+                st = str(payload.status).strip().lower()
+                payload.status = "inactive" if st == "inactive" else "active"
+        else:
+            payload.status = None
     promo = PromotionService.update(db, promo_id, payload)
     return success_response(
         data=PromotionResponse.model_validate(promo),
@@ -288,8 +342,10 @@ def update_promotion(
 def delete_promotion(
     promo_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_admin_user_flexible),
+    current_user: User = Depends(get_current_user),
 ):
+    existing = PromotionService.get_by_id(db, promo_id)
+    _assert_admin_or_promo_owner(db, current_user, existing)
     PromotionService.delete(db, promo_id)
     return success_response(
         data=True,

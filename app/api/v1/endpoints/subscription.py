@@ -15,6 +15,9 @@ from app.schemas.subscription import (
     SubscriptionPackageCreateRequest,
     SubscriptionPackageResponse,
     SubscriptionPackageUpdateRequest,
+    SubscriptionRazorpayOrderRequest,
+    SubscriptionRazorpayOrderResponse,
+    SubscriptionRazorpayVerifyRequest,
     UserSubscriptionResponse,
 )
 from app.services.subscription_service import SubscriptionService
@@ -90,6 +93,7 @@ def list_my_subscriptions(
     ),
 )
 def get_my_active_subscriptions(
+    merchant_profile_id: Optional[int] = Query(None, description="Optional specific shop ID to check merchant subscription"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> StandardResponse[ActiveSubscriptionSummary]:
@@ -99,8 +103,21 @@ def get_my_active_subscriptions(
             message="No active subscription",
         )
     user_subs, merchant_subs, user = SubscriptionService.get_active_summary(db=db, user=current_user)
-    shop = SubscriptionService.merchant_for_account(db, user)
-    merchant_flag = any(s.merchant_profile_id for s in merchant_subs) or bool(
+    from app.db.models.merchant import MerchantProfile
+
+    shop = None
+    if merchant_profile_id:
+        shop = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_profile_id).first()
+    if shop is None:
+        shop = SubscriptionService.merchant_for_account(db, user)
+
+    target_merchant_id = shop.id if shop else merchant_profile_id
+    filtered_merchant_subs = (
+        [s for s in merchant_subs if s.merchant_profile_id == target_merchant_id]
+        if target_merchant_id
+        else merchant_subs
+    )
+    merchant_flag = bool(filtered_merchant_subs) or bool(
         shop and shop.has_active_subscription
     )
     summary = ActiveSubscriptionSummary(
@@ -110,10 +127,42 @@ def get_my_active_subscriptions(
         is_subscriber=user.is_subscriber,
         subscription_plan=user.subscription_plan,
         merchant_has_active_subscription=merchant_flag,
-        merchant_profile_id=shop.id if shop else None,
+        merchant_profile_id=shop.id if shop else target_merchant_id,
         merchant_business_name=shop.business_name if shop else None,
     )
     return success_response(data=summary, message="Active subscription summary retrieved")
+
+
+@router.post(
+    "/razorpay/order",
+    response_model=SubscriptionRazorpayOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Razorpay checkout order for a subscription package",
+)
+def create_subscription_razorpay_order(
+    payload: SubscriptionRazorpayOrderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SubscriptionRazorpayOrderResponse:
+    res = SubscriptionService.create_razorpay_order(db=db, user=current_user, payload=payload)
+    return SubscriptionRazorpayOrderResponse(**res)
+
+
+@router.post(
+    "/razorpay/verify",
+    response_model=StandardResponse[UserSubscriptionResponse],
+    summary="Verify Razorpay signature and activate subscription",
+)
+def verify_subscription_razorpay_payment(
+    payload: SubscriptionRazorpayVerifyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardResponse[UserSubscriptionResponse]:
+    sub = SubscriptionService.verify_razorpay_and_subscribe(db=db, user=current_user, payload=payload)
+    return success_response(
+        data=SubscriptionService._subscription_to_response(sub),
+        message="Razorpay payment verified and subscription activated successfully",
+    )
 
 
 @router.post(

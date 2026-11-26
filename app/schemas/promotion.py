@@ -17,9 +17,10 @@ PROMOTION_PLACEMENT_OPTIONS: List[str] = [
     "Footer Strip",
     "Category Page",
     "Moving Ticker",
+    "Merchant Store",
 ]
 
-PROMOTION_MEDIA_TYPE_OPTIONS: List[str] = ["image", "video"]
+PROMOTION_MEDIA_TYPE_OPTIONS: List[str] = ["image", "video", "text"]
 
 
 def _normalize_promotion_type_aliases(data: Any) -> Any:
@@ -27,6 +28,22 @@ def _normalize_promotion_type_aliases(data: Any) -> Any:
         for alias in ("option_type", "optionType", "promotion_type", "promotionType"):
             if alias in data and not data.get("type"):
                 data["type"] = data[alias]
+        camel_map = {
+            "mediaType": "media_type",
+            "imageUrl": "image_url",
+            "videoUrl": "video_url",
+            "thumbnailUrl": "thumbnail_url",
+            "targetUrl": "target_url",
+            "merchantId": "merchant_id",
+            "merchantName": "merchant_name",
+            "bgColor": "bg_color",
+            "textColor": "text_color",
+            "startDate": "start_date",
+            "endDate": "end_date",
+        }
+        for camel, snake in camel_map.items():
+            if camel in data and data.get(snake) is None:
+                data[snake] = data[camel]
     return data
 
 
@@ -55,7 +72,9 @@ class PromotionCreateRequest(BaseModel):
     clicks: Optional[int] = 0
     image_url: Optional[str] = None
     video_url: Optional[str] = None
-    media_type: Optional[str] = "image"  # image, video
+    media_type: Optional[str] = "image"  # image, video, text
+    bg_color: Optional[str] = None
+    text_color: Optional[str] = None
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None
@@ -82,6 +101,8 @@ class PromotionUpdateRequest(BaseModel):
     image_url: Optional[str] = None
     video_url: Optional[str] = None
     media_type: Optional[str] = None
+    bg_color: Optional[str] = None
+    text_color: Optional[str] = None
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None
@@ -106,6 +127,8 @@ class PromotionResponse(BaseModel):
     image_url: Optional[str] = None
     video_url: Optional[str] = None
     media_type: Optional[str] = "image"
+    bg_color: Optional[str] = None
+    text_color: Optional[str] = None
     thumbnail_url: Optional[str] = None
     target_url: Optional[str] = None
     description: Optional[str] = None

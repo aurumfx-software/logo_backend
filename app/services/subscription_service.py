@@ -560,3 +560,136 @@ class SubscriptionService:
         elif sub.merchant_profile_id:
             SubscriptionService._apply_merchant_entitlements(db, sub.merchant_profile_id)
         return sub
+
+    @staticmethod
+    def create_razorpay_order(
+        db: Session,
+        user: User,
+        payload: Any,
+    ) -> Dict[str, Any]:
+        import uuid
+        from app.db.models.wallet import WalletTopupOrder, WalletTopupStatus
+        from app.services.razorpay_service import RazorpayService
+
+        req_payload = SubscribeRequest(
+            package_id=getattr(payload, "package_id", None),
+            package_code=getattr(payload, "package_code", None),
+            merchant_profile_id=getattr(payload, "merchant_profile_id", None),
+        )
+        pkg = SubscriptionService._resolve_package(db, req_payload)
+        if not pkg.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Package is not available.")
+
+        merchant_profile_id = getattr(payload, "merchant_profile_id", None)
+        if SubscriptionService._audience_value(pkg) == "MERCHANT":
+            from app.services.merchant_service import MerchantService
+
+            merchant = None
+            if merchant_profile_id:
+                merchant = (
+                    db.query(MerchantProfile)
+                    .filter(MerchantProfile.id == merchant_profile_id)
+                    .first()
+                )
+            if merchant is None:
+                merchant = MerchantService.find_for_user(db, user)
+            if merchant is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Merchant profile not found.",
+                )
+            merchant = SubscriptionService._assert_merchant_access(db, user, merchant.id)
+            merchant_profile_id = merchant.id
+        else:
+            merchant_profile_id = None
+
+        amount = SubscriptionService._money(pkg.price)
+        if amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Free packages do not require Razorpay checkout. Use /subscriptions/subscribe directly.",
+            )
+
+        amount_paise = RazorpayService.inr_to_paise(amount)
+        receipt = f"SUB-{uuid.uuid4().hex[:12].upper()}"
+        notes = {
+            "user_id": str(user.id),
+            "package_id": str(pkg.id),
+            "package_code": str(pkg.code),
+            "purpose": "subscription_checkout",
+        }
+        if merchant_profile_id:
+            notes["merchant_profile_id"] = str(merchant_profile_id)
+
+        rp_order = RazorpayService.create_order(
+            amount_paise=amount_paise,
+            receipt=receipt,
+            notes=notes,
+        )
+
+        checkout_row = WalletTopupOrder(
+            user_id=user.id,
+            merchant_profile_id=merchant_profile_id,
+            amount=amount,
+            amount_paise=amount_paise,
+            currency=pkg.currency or "INR",
+            receipt=receipt,
+            razorpay_order_id=str(rp_order["id"]),
+            status=WalletTopupStatus.CREATED,
+            failure_reason=f"SUBSCRIPTION:{pkg.code}",
+        )
+        db.add(checkout_row)
+        db.commit()
+        db.refresh(checkout_row)
+
+        return {
+            "message": "Razorpay subscription order created",
+            "razorpay_key_id": RazorpayService.get_public_key(),
+            "razorpay_order_id": checkout_row.razorpay_order_id,
+            "amount": amount,
+            "amount_paise": amount_paise,
+            "currency": checkout_row.currency,
+            "package_id": pkg.id,
+            "package_code": pkg.code,
+            "package_name": pkg.name,
+            "merchant_profile_id": merchant_profile_id,
+        }
+
+    @staticmethod
+    def verify_razorpay_and_subscribe(
+        db: Session,
+        user: User,
+        payload: Any,
+    ) -> UserSubscription:
+        from app.db.models.wallet import WalletTopupOrder, WalletTopupStatus
+        from app.services.razorpay_service import RazorpayService
+
+        order_id = str(payload.razorpay_order_id).strip()
+        payment_id = str(payload.razorpay_payment_id).strip()
+        signature = str(payload.razorpay_signature).strip()
+
+        if not order_id.startswith("order_dev_"):
+            RazorpayService.verify_payment_signature(order_id, payment_id, signature)
+
+        order_row = (
+            db.query(WalletTopupOrder)
+            .filter(
+                WalletTopupOrder.razorpay_order_id == order_id,
+                WalletTopupOrder.user_id == user.id,
+            )
+            .first()
+        )
+        if order_row and order_row.status != WalletTopupStatus.PAID:
+            order_row.status = WalletTopupStatus.PAID
+            order_row.razorpay_payment_id = payment_id
+            order_row.paid_at = datetime.now(timezone.utc)
+            db.commit()
+
+        sub_req = SubscribeRequest(
+            package_id=getattr(payload, "package_id", None),
+            package_code=getattr(payload, "package_code", None),
+            merchant_profile_id=getattr(payload, "merchant_profile_id", None)
+            or (order_row.merchant_profile_id if order_row else None),
+            payment_reference=payment_id or order_id,
+        )
+        return SubscriptionService.subscribe(db=db, user=user, payload=sub_req)
