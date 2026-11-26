@@ -107,6 +107,7 @@ def _product_response(product) -> ProductResponse:
                     "images": imgs,
                     "image": imgs[0] if imgs else None,
                     "sizes": sib.sizes if isinstance(sib.sizes, list) else [],
+                    "size_stocks": sib.size_stocks if isinstance(sib.size_stocks, dict) else {},
                     "highlights": sib.highlights if isinstance(sib.highlights, list) else [],
                     "additional_details": sib.additional_details if isinstance(sib.additional_details, list) else [],
                     "stock_quantity": sqty,

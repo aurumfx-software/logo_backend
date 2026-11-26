@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional, Any
+from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -11,6 +11,7 @@ class ProductCreateRequest(BaseModel):
     original_price: Optional[float] = Field(None, description="Strike-through / MRP Price (₹)")
     images: List[str] = Field(default_factory=list, description="List of product photo URLs")
     sizes: List[str] = Field(default_factory=list, description="Available sizes e.g. ['S', 'M', 'L'] or ['Free Size']")
+    size_stocks: Optional[Dict[str, int]] = Field(None, description="Per-size stock counts e.g. {'S': 5, 'M': 0}")
     highlights: List[dict] = Field(default_factory=list, description="Product Highlights key-value pairs")
     additional_details: List[dict] = Field(default_factory=list, description="Additional product detail key-value pairs")
     stock_status: str = Field("IN_STOCK", description="IN_STOCK or OUT_OF_STOCK")
@@ -32,6 +33,7 @@ class ProductUpdateRequest(BaseModel):
     original_price: Optional[float] = None
     images: Optional[List[str]] = None
     sizes: Optional[List[str]] = None
+    size_stocks: Optional[Dict[str, int]] = None
     highlights: Optional[List[dict]] = None
     additional_details: Optional[List[dict]] = None
     stock_status: Optional[str] = None
@@ -70,10 +72,16 @@ class ProductResponse(BaseModel):
     original_price: Optional[float] = None
     images: List[str] = []
     sizes: List[str] = []
+    size_stocks: Dict[str, int] = {}
     highlights: List[dict] = []
     additional_details: List[dict] = []
     sub_products: List[dict] = []
     stock_status: str
+
+    @field_validator("size_stocks", mode="before")
+    @classmethod
+    def missing_dict_is_empty(cls, value):
+        return {} if value is None else value
 
     @field_validator("highlights", "additional_details", "sub_products", mode="before")
     @classmethod

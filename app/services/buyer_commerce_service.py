@@ -240,6 +240,12 @@ class BuyerCommerceService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Choose one of the listed options: {', '.join(sizes)}.",
             )
+        size_stocks = product.size_stocks if isinstance(product.size_stocks, dict) else {}
+        if chosen and chosen in size_stocks and int(size_stocks.get(chosen) or 0) <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Selected size '{chosen}' is out of stock.",
+            )
         return chosen
 
     @staticmethod

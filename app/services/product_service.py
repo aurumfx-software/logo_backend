@@ -154,10 +154,12 @@ class ProductService:
                 missing.append(("additional_details", json_type))
             if "parent_product_id" not in product_columns:
                 missing.append(("parent_product_id", "INTEGER"))
+            if "size_stocks" not in product_columns:
+                missing.append(("size_stocks", json_type))
         for name, ddl in missing:
             table = (
                 "customer_products"
-                if name in {"stock_quantity", "rating_sum", "rating_count", "highlights", "additional_details", "parent_product_id"}
+                if name in {"stock_quantity", "rating_sum", "rating_count", "highlights", "additional_details", "parent_product_id", "size_stocks"}
                 else "product_orders"
             )
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
@@ -280,6 +282,10 @@ class ProductService:
         product = order.product
         if product is None or product.stock_quantity is None:
             return
+        if isinstance(product.size_stocks, dict) and order.selected_size and order.selected_size in product.size_stocks:
+            updated = dict(product.size_stocks)
+            updated[order.selected_size] = max(0, int(updated.get(order.selected_size) or 0)) + order.quantity
+            product.size_stocks = updated
         product.stock_quantity += order.quantity
         if product.stock_quantity > 0:
             product.stock_status = "IN_STOCK"
@@ -410,6 +416,18 @@ class ProductService:
             for item in (data.additional_details or [])
             if isinstance(item, dict) and (str(item.get("label") or "").strip() or str(item.get("value") or "").strip())
         ]
+        clean_size_stocks = {}
+        if isinstance(data.size_stocks, dict):
+            clean_size_stocks = {
+                str(k).strip(): max(0, int(v or 0))
+                for k, v in data.size_stocks.items()
+                if str(k).strip()
+            }
+        resolved_qty = (
+            sum(clean_size_stocks.values())
+            if clean_size_stocks
+            else (data.stock_quantity if data.stock_quantity is not None else 10)
+        )
         new_product = CustomerProduct(
             seller_id=seller.id,
             parent_product_id=data.parent_product_id,
@@ -423,10 +441,11 @@ class ProductService:
             original_price=data.original_price,
             images=data.images or [],
             sizes=data.sizes or [],
+            size_stocks=clean_size_stocks,
             highlights=clean_highlights,
             additional_details=clean_details,
-            stock_status="OUT_OF_STOCK" if (data.stock_quantity is not None and data.stock_quantity == 0) else (data.stock_status or "IN_STOCK"),
-            stock_quantity=data.stock_quantity if data.stock_quantity is not None else 10,
+            stock_status="OUT_OF_STOCK" if resolved_qty == 0 else (data.stock_status or "IN_STOCK"),
+            stock_quantity=resolved_qty,
             district=data.district or seller.district,
             city=data.city or seller.city,
             location=data.location,
@@ -491,6 +510,17 @@ class ProductService:
             product.images = data.images
         if data.sizes is not None:
             product.sizes = data.sizes
+        if data.size_stocks is not None and isinstance(data.size_stocks, dict):
+            clean_size_stocks = {
+                str(k).strip(): max(0, int(v or 0))
+                for k, v in data.size_stocks.items()
+                if str(k).strip()
+            }
+            product.size_stocks = clean_size_stocks
+            if clean_size_stocks:
+                total_qty = sum(clean_size_stocks.values())
+                product.stock_quantity = total_qty
+                product.stock_status = "OUT_OF_STOCK" if total_qty <= 0 else "IN_STOCK"
         if data.highlights is not None:
             product.highlights = [
                 {"label": str(item.get("label") or "").strip(), "value": str(item.get("value") or "").strip()}
@@ -622,7 +652,20 @@ class ProductService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Choose one of the listed options: {', '.join(sizes)}.",
             )
-        if product.stock_quantity is not None and data.quantity > product.stock_quantity:
+        size_stocks = product.size_stocks if isinstance(product.size_stocks, dict) else {}
+        if chosen_size and chosen_size in size_stocks:
+            avail_for_size = max(0, int(size_stocks.get(chosen_size) or 0))
+            if avail_for_size <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Selected size '{chosen_size}' is out of stock.",
+                )
+            if data.quantity > avail_for_size:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Only {avail_for_size} available for size {chosen_size}.",
+                )
+        elif product.stock_quantity is not None and data.quantity > product.stock_quantity:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Only {product.stock_quantity} available.",
@@ -683,7 +726,16 @@ class ProductService:
         ProductService._record_status(order, "PLACED", data.notes)
         db.add(order)
         product.orders_count += 1
-        if product.stock_quantity is not None:
+        if isinstance(product.size_stocks, dict) and chosen_size and chosen_size in product.size_stocks:
+            updated_stocks = dict(product.size_stocks)
+            cur_sz_qty = max(0, int(updated_stocks.get(chosen_size) or 0))
+            updated_stocks[chosen_size] = max(0, cur_sz_qty - data.quantity)
+            product.size_stocks = updated_stocks
+            total_sz_qty = sum(max(0, int(v or 0)) for v in updated_stocks.values())
+            product.stock_quantity = total_sz_qty
+            if total_sz_qty <= 0:
+                product.stock_status = "OUT_OF_STOCK"
+        elif product.stock_quantity is not None:
             product.stock_quantity -= data.quantity
             if product.stock_quantity <= 0:
                 product.stock_quantity = 0
