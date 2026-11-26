@@ -404,7 +404,7 @@ class MerchantService:
                 "login_id": user.login_id,
             },
         )
-
+        AuthService.email_login_id(user)
         return user, merchant
 
     @staticmethod
@@ -577,6 +577,8 @@ class MerchantService:
                 "onboarded_by": creator_user.name if creator_user else "Field Staff / Onboarding Portal",
             },
         )
+        from app.services.auth_service import AuthService
+        AuthService.email_login_id(user)
 
         return user, merchant
 
