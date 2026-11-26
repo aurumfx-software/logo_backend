@@ -1,6 +1,7 @@
 """Deliver OTP codes through MSG91 or Twilio (SMS) and Resend (email)."""
 
 import logging
+from typing import Optional
 
 import httpx
 from fastapi import HTTPException, status
@@ -269,3 +270,45 @@ class OTPDeliveryService:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Resend rejected the OTP email.",
             )
+
+    @classmethod
+    def send_login_id(cls, email: Optional[str], login_id: Optional[str], name: Optional[str] = None) -> None:
+        """Email a new account's login ID. Signup still succeeds if mail cannot be sent."""
+        destination = (email or "").strip().lower()
+        code = (login_id or "").strip()
+        if not destination or not code or "@" not in destination:
+            return
+        if destination.endswith("@logo.customer") or destination.endswith("@merchant.local"):
+            return
+        if not cls.email_configured():
+            logger.info("Login ID email skipped (Resend is not configured). Destination=%s", destination)
+            return
+        sender = settings.RESEND_FROM_EMAIL.strip()
+        if "<" not in sender:
+            sender = f"Logo <{sender}>"
+        greeting = (name or "").strip() or "there"
+        try:
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY.strip()}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": sender,
+                    "to": [destination],
+                    "subject": "Your Logo login ID",
+                    "text": (
+                        f"Hello {greeting},\n\n"
+                        f"Your Logo account has been created.\n"
+                        f"Your login ID is {code}.\n\n"
+                        "Sign in with this login ID and the password you chose.\n"
+                    ),
+                },
+                timeout=20.0,
+            )
+        except httpx.HTTPError as exc:
+            logger.error("Login ID email failed for %s: %s", destination, exc)
+            return
+        if response.status_code >= 400:
+            logger.error("Resend rejected login ID email to %s: %s %s", destination, response.status_code, response.text)

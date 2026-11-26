@@ -66,3 +66,38 @@ def test_customer_and_merchant_login_with_name_id(client: TestClient):
     )
     assert by_email_field.status_code == 200
     assert by_email_field.json()["login_id"] == merchant_id
+
+
+def test_new_account_emails_the_login_id(client: TestClient, monkeypatch):
+    sent = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent["json"] = json
+        return Response()
+
+    monkeypatch.setattr(
+        "app.services.otp_delivery.OTPDeliveryService.email_configured",
+        staticmethod(lambda: True),
+    )
+    monkeypatch.setattr("app.services.otp_delivery.httpx.post", fake_post)
+
+    created = client.post(
+        "/api/v1/customer/register",
+        json={
+            "name": "Meera Login",
+            "phone": "9011100011",
+            "password": "Pass1234",
+            "district": "Ernakulam",
+            "city": "Kochi",
+            "email": "meera.loginid@example.com",
+        },
+    )
+    assert created.status_code == 201
+    login_id = created.json()["user"]["login_id"]
+    assert sent["json"]["to"] == ["meera.loginid@example.com"]
+    assert login_id in sent["json"]["text"]
+    assert sent["json"]["subject"] == "Your Logo login ID"
