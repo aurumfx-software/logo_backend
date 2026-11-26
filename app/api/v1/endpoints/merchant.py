@@ -17,6 +17,11 @@ from app.api.deps import (
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models.user import User, UserRole
+from app.schemas.advertisement import (
+    AdvertisementCreateRequest,
+    AdvertisementResponse,
+    AdvertisementUpdateRequest,
+)
 from app.schemas.auth import GenericMessageResponse, LogoutRequest, LogoutResponse, SafeUserResponse, TokenResponse
 from app.schemas.merchant import (
     LocationCountItem,
@@ -44,6 +49,7 @@ from app.schemas.response import (
     success_response,
 )
 from app.services.admin_service import AdminService
+from app.services.advertisement_service import AdvertisementService
 from app.services.merchant_service import MerchantService
 from app.services.auth_service import AuthService
 
@@ -758,21 +764,120 @@ def get_current_merchant_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Merchant profile not found for current user.",
         )
-    return MerchantService.build_merchant_response(merchant)
+    return MerchantService.build_merchant_response(
+        merchant,
+        advertisements=AdvertisementService.list_visible(db, merchant.id),
+    )
+
+
+@router.post(
+    "/me/advertisements",
+    response_model=StandardResponse[AdvertisementResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a merchant advertisement",
+    description="Merchant advertisement form. The active advertisement is shown on that merchant's details screen.",
+)
+def create_merchant_advertisement(
+    data: AdvertisementCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardResponse[AdvertisementResponse]:
+    merchant = AdvertisementService.merchant_for_user(db, current_user)
+    ad = AdvertisementService.create(db, merchant, data)
+    return success_response(
+        data=AdvertisementResponse.model_validate(ad),
+        message="Advertisement created",
+    )
+
+
+@router.get(
+    "/me/advertisements",
+    response_model=StandardListResponse[AdvertisementResponse],
+    summary="List the current merchant's advertisements",
+)
+def list_my_advertisements(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardListResponse[AdvertisementResponse]:
+    merchant = AdvertisementService.merchant_for_user(db, current_user)
+    ads = AdvertisementService.list_for_merchant(db, merchant.id)
+    return list_response(
+        data=[AdvertisementResponse.model_validate(ad) for ad in ads],
+        total_items=len(ads),
+        page_size=max(len(ads), 1),
+        message="Advertisements retrieved",
+    )
+
+
+@router.put(
+    "/me/advertisements/{advertisement_id}",
+    response_model=StandardResponse[AdvertisementResponse],
+    summary="Update a merchant advertisement",
+)
+def update_merchant_advertisement(
+    advertisement_id: int,
+    data: AdvertisementUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StandardResponse[AdvertisementResponse]:
+    merchant = AdvertisementService.merchant_for_user(db, current_user)
+    ad = AdvertisementService.update(db, merchant.id, advertisement_id, data)
+    return success_response(
+        data=AdvertisementResponse.model_validate(ad),
+        message="Advertisement updated",
+    )
+
+
+@router.delete(
+    "/me/advertisements/{advertisement_id}",
+    response_model=GenericMessageResponse,
+    summary="Delete a merchant advertisement",
+)
+def delete_merchant_advertisement(
+    advertisement_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> GenericMessageResponse:
+    merchant = AdvertisementService.merchant_for_user(db, current_user)
+    AdvertisementService.delete(db, merchant.id, advertisement_id)
+    return GenericMessageResponse(message="Advertisement deleted")
+
+
+@router.get(
+    "/{merchant_id}/advertisements",
+    response_model=StandardListResponse[AdvertisementResponse],
+    summary="Advertisements shown on a merchant details screen",
+    description="Returns active advertisements for the merchant a customer is viewing.",
+)
+def list_merchant_advertisements(
+    merchant_id: int,
+    db: Session = Depends(get_db),
+) -> StandardListResponse[AdvertisementResponse]:
+    merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    ads = AdvertisementService.list_visible(db, merchant.id)
+    return list_response(
+        data=[AdvertisementResponse.model_validate(ad) for ad in ads],
+        total_items=len(ads),
+        page_size=max(len(ads), 1),
+        message="Advertisements retrieved",
+    )
 
 
 @router.get(
     "/{merchant_id}",
     response_model=MerchantProfileResponse,
     summary="Get merchant profile by ID",
-    description="Returns merchant business profile with linked creator summary and details.",
+    description="Returns merchant business profile, including active advertisements for the details screen.",
 )
 def get_merchant_by_id(
     merchant_id: int,
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
-    return MerchantService.build_merchant_response(merchant)
+    return MerchantService.build_merchant_response(
+        merchant,
+        advertisements=AdvertisementService.list_visible(db, merchant.id),
+    )
 
 
 @router.put(

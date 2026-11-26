@@ -272,10 +272,17 @@ class OTPDeliveryService:
             )
 
     @classmethod
-    def send_login_id(cls, email: Optional[str], login_id: Optional[str], name: Optional[str] = None) -> None:
-        """Email a new account's login ID. Signup still succeeds if mail cannot be sent."""
+    def send_login_id(
+        cls,
+        email: Optional[str],
+        login_id: Optional[str],
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> None:
+        """Email a new account's login ID and password. Signup still succeeds if mail cannot be sent."""
         destination = (email or "").strip().lower()
         code = (login_id or "").strip()
+        plain_password = (password or "").strip()
         if not destination or not code or "@" not in destination:
             return
         if destination.endswith("@logo.customer") or destination.endswith("@merchant.local"):
@@ -287,6 +294,11 @@ class OTPDeliveryService:
         if "<" not in sender:
             sender = f"Logo <{sender}>"
         greeting = (name or "").strip() or "there"
+        password_line = (
+            f"Your password is {plain_password}.\n"
+            if plain_password
+            else "Sign in with the password you chose.\n"
+        )
         try:
             response = httpx.post(
                 "https://api.resend.com/emails",
@@ -301,8 +313,9 @@ class OTPDeliveryService:
                     "text": (
                         f"Hello {greeting},\n\n"
                         f"Your Logo account has been created.\n"
-                        f"Your login ID is {code}.\n\n"
-                        "Sign in with this login ID and the password you chose.\n"
+                        f"Your login ID is {code}.\n"
+                        f"{password_line}\n"
+                        "Sign in with this login ID and password.\n"
                     ),
                 },
                 timeout=20.0,

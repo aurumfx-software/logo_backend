@@ -100,4 +100,5 @@ def test_new_account_emails_the_login_id(client: TestClient, monkeypatch):
     login_id = created.json()["user"]["login_id"]
     assert sent["json"]["to"] == ["meera.loginid@example.com"]
     assert login_id in sent["json"]["text"]
+    assert "Your password is Pass1234." in sent["json"]["text"]
     assert sent["json"]["subject"] == "Your Logo login ID"

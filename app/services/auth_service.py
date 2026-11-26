@@ -59,10 +59,10 @@ class AuthService:
         return (letters + fallback)[:3]
 
     @staticmethod
-    def email_login_id(user: User) -> None:
+    def email_login_id(user: User, password: Optional[str] = None) -> None:
         from app.services.otp_delivery import OTPDeliveryService
 
-        OTPDeliveryService.send_login_id(user.email, user.login_id, user.name)
+        OTPDeliveryService.send_login_id(user.email, user.login_id, user.name, password)
 
     @staticmethod
     def assign_login_id(
@@ -290,7 +290,7 @@ class AuthService:
         WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
-        AuthService.email_login_id(new_user)
+        AuthService.email_login_id(new_user, data.password)
         return AuthService.generate_token_pair(new_user)
 
     @staticmethod
@@ -345,7 +345,7 @@ class AuthService:
         WalletService.ensure_wallet_for_user(db, new_user.id)
         db.commit()
         db.refresh(new_user)
-        AuthService.email_login_id(new_user)
+        AuthService.email_login_id(new_user, user_data.password)
         return new_user
 
     @staticmethod

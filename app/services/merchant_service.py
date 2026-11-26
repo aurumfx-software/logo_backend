@@ -247,6 +247,7 @@ class MerchantService:
         merchant: MerchantProfile,
         include_creator: bool = True,
         linked_user: Any = None,
+        advertisements: Optional[list] = None,
     ) -> MerchantProfileResponse:
         merchant.categories = MerchantService._coerce_str_list(merchant.categories)
         merchant.services = MerchantService._coerce_str_list(merchant.services)
@@ -320,6 +321,10 @@ class MerchantService:
             pass
         if linked_user is not None:
             resp = MerchantService.merge_linked_user(resp, linked_user)
+        if advertisements is not None:
+            from app.schemas.advertisement import AdvertisementResponse
+
+            resp.advertisements = [AdvertisementResponse.model_validate(ad) for ad in advertisements]
         return resp
 
     @staticmethod
@@ -404,7 +409,7 @@ class MerchantService:
                 "login_id": user.login_id,
             },
         )
-        AuthService.email_login_id(user)
+        AuthService.email_login_id(user, data.password)
         return user, merchant
 
     @staticmethod
@@ -449,6 +454,7 @@ class MerchantService:
         # 5. Check or create linked User for merchant login if needed
         clean_email = data.email.strip().lower() if data.email else None
         user = None
+        plain_password = getattr(data, "password", None) or None
 
         if clean_email:
             user = db.query(User).filter(User.email == clean_email).first()
@@ -460,7 +466,8 @@ class MerchantService:
 
         if not user:
             owner_name = (data.owner_name or data.owner or data.business_name or "Business Owner").strip()
-            random_pw = secrets.token_urlsafe(12)
+            random_pw = plain_password or secrets.token_urlsafe(12)
+            plain_password = random_pw
             gen_email = clean_email or f"merchant_{re.sub(r'[^\w]', '', clean_phone)}@merchant.local"
             if db.query(User).filter(User.email == gen_email).first():
                 gen_email = f"merchant_{re.sub(r'[^\w]', '', clean_phone)}_{secrets.token_hex(3)}@merchant.local"
@@ -578,7 +585,7 @@ class MerchantService:
             },
         )
         from app.services.auth_service import AuthService
-        AuthService.email_login_id(user)
+        AuthService.email_login_id(user, plain_password)
 
         return user, merchant
 
