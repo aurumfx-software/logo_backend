@@ -117,6 +117,16 @@ class Settings(BaseSettings):
     RAZORPAYX_ACCOUNT_NUMBER: str = ""
     RAZORPAYX_WEBHOOK_SECRET: str = ""
 
+    # Shiprocket (https://apidocs.shiprocket.in/). Credentials stay on the server.
+    SHIPROCKET_EMAIL: str = ""
+    SHIPROCKET_PASSWORD: str = ""
+    SHIPROCKET_BASE_URL: str = "https://apiv2.shiprocket.in/v1/external"
+    SHIPROCKET_WEBHOOK_SECRET: str = ""
+    # Pickup nickname already saved in the Shiprocket dashboard, or created per seller.
+    SHIPROCKET_PICKUP_LOCATION: str = "Primary"
+    SHIPROCKET_PICKUP_PINCODE: str = ""
+    SHIPROCKET_PICKUP_STATE: str = "Kerala"
+
     # Marketplace checkout fees shown to the buyer before payment.
     CHECKOUT_MIN_ORDER_VALUE: float = 150
     CHECKOUT_FREE_DELIVERY_ABOVE: float = 499

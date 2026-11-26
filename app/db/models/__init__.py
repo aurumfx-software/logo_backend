@@ -18,6 +18,16 @@ from app.db.models.product import (
 )
 from app.db.models.promotion import Promotion
 from app.db.models.advertisement import MerchantAdvertisement
+from app.db.models.fulfillment import (
+    OrderReturn,
+    PlatformSetting,
+    RefundTransaction,
+    ReplacementOrder,
+    ReturnHistory,
+    ReturnItem,
+    Shipment,
+    ShipmentHistory,
+)
 from app.db.models.complaint import Complaint
 from app.db.models.subscription import SubscriptionPackage, UserSubscription
 from app.db.models.wallet import (

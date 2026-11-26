@@ -6,6 +6,8 @@ from app.api.v1.endpoints import (
     complaint,
     customer,
     favorite,
+    fulfillment,
+    shipping,
     geography,
     merchant,
     notification,
@@ -26,6 +28,8 @@ api_router.include_router(auth.router)
 api_router.include_router(otp.router)
 api_router.include_router(customer.router)
 api_router.include_router(product.router)
+api_router.include_router(fulfillment.router)
+api_router.include_router(shipping.router)
 api_router.include_router(user.router)
 api_router.include_router(merchant.router)
 api_router.include_router(category.router)
