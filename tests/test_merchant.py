@@ -534,3 +534,56 @@ def test_merchant_platform_banner_requires_admin_approval_before_active(client: 
 
     active_after = client.get("/api/v1/promotions/active").json()["data"]
     assert any(p["id"] == promo_data["id"] for p in active_after)
+
+
+def test_merchant_registration_succeeds_even_if_register_1000_deactivated(client: TestClient, db_session):
+    from app.db.models.subscription import SubscriptionPackage
+    from app.services.subscription_service import SubscriptionService
+    from tests.conftest import merchant_reg_payment_payload
+
+    SubscriptionService.ensure_default_packages(db_session)
+    reg_pkg = (
+        db_session.query(SubscriptionPackage)
+        .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
+        .first()
+    )
+    assert reg_pkg is not None
+    reg_pkg.is_active = False
+    db_session.commit()
+
+    # Should not show mandatory registration plan in storefront active packages list
+    merchant_pkgs = client.get("/api/v1/subscriptions/packages?audience=MERCHANT&active_only=true").json()["data"]
+    assert not any(p["code"] == "MERCHANT_REGISTER_1000" for p in merchant_pkgs)
+
+    onboard_res = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Inactive Pkg Onboard Shop",
+            "owner_name": "Owner",
+            "category": "Retail",
+            "phone_number": "9876548881",
+            "email": "inactive.onboard@example.com",
+            "password": "MerchantPassword123",
+            "address": "Kochi",
+            **merchant_reg_payment_payload(client),
+        },
+    )
+    assert onboard_res.status_code == 201, onboard_res.text
+
+    reg_res = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Inactive Pkg Reg Merchant",
+            "email": "inactive.reg@example.com",
+            "password": "MerchantPassword123",
+            "business_name": "Inactive Pkg Reg Shop",
+            "categories": ["Retail"],
+            "location": "Kochi",
+            "services": ["Sales"],
+            "service_timing": "9-9",
+            "contact_number": "9876548882",
+            "address": "Kochi",
+            **merchant_reg_payment_payload(client),
+        },
+    )
+    assert reg_res.status_code == 201, reg_res.text

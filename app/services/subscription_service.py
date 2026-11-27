@@ -285,7 +285,10 @@ class SubscriptionService:
         SubscriptionService.ensure_default_packages(db)
         q = db.query(SubscriptionPackage)
         if active_only:
-            q = q.filter(SubscriptionPackage.is_active == True)
+            q = q.filter(
+                SubscriptionPackage.is_active == True,
+                func.upper(SubscriptionPackage.code) != "MERCHANT_REGISTER_1000",
+            )
         if audience:
             q = q.filter(SubscriptionPackage.audience == audience)
         return q.order_by(SubscriptionPackage.sort_order, SubscriptionPackage.id).all()
@@ -902,7 +905,8 @@ class SubscriptionService:
     ) -> UserSubscription:
         SubscriptionService._expire_due_subscriptions(db, user.id)
         pkg = SubscriptionService._resolve_package(db, payload)
-        if not pkg.is_active:
+        is_mandatory_reg = str(pkg.code or "").strip().upper() == "MERCHANT_REGISTER_1000"
+        if not pkg.is_active and not admin_override and not is_mandatory_reg:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Package is not available.")
 
         merchant_profile_id = payload.merchant_profile_id
@@ -1116,7 +1120,8 @@ class SubscriptionService:
             merchant_profile_id=getattr(payload, "merchant_profile_id", None),
         )
         pkg = SubscriptionService._resolve_package(db, req_payload)
-        if not pkg.is_active:
+        is_mandatory_reg = str(pkg.code or "").strip().upper() == "MERCHANT_REGISTER_1000"
+        if not pkg.is_active and not is_mandatory_reg:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Package is not available.")
 
         merchant_profile_id = getattr(payload, "merchant_profile_id", None)
