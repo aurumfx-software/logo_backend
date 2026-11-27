@@ -120,12 +120,22 @@ def get_my_active_subscriptions(
     merchant_flag = bool(filtered_merchant_subs) or bool(
         shop and shop.has_active_subscription
     )
+    grants = SubscriptionService.merged_grants(db, user_id=user.id)
+    if target_merchant_id:
+        grants = {
+            **grants,
+            **SubscriptionService.merged_grants(db, merchant_profile_id=target_merchant_id),
+        }
+    access = SubscriptionService.access_from_grants(grants)
     summary = ActiveSubscriptionSummary(
         user_subscriptions=[SubscriptionService._subscription_to_response(s) for s in user_subs],
         merchant_subscriptions=[SubscriptionService._subscription_to_response(s) for s in merchant_subs],
         can_sell_products=user.can_sell_products,
+        cashback_on_sales=access.cashback_on_sales,
         is_subscriber=user.is_subscriber,
         subscription_plan=user.subscription_plan,
+        grants=grants,
+        access=access,
         merchant_has_active_subscription=merchant_flag,
         merchant_profile_id=shop.id if shop else target_merchant_id,
         merchant_business_name=shop.business_name if shop else None,
@@ -207,6 +217,19 @@ def cancel_my_subscription(
 
 
 # ── Admin ────────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/admin/access-options",
+    summary="Admin: checkbox options for subscription packages",
+)
+def admin_subscription_access_options(
+    admin_user: User = Depends(require_admin),
+):
+    return success_response(
+        data=SubscriptionService.ACCESS_OPTIONS,
+        message="Subscription access options retrieved",
+    )
 
 
 @router.post(

@@ -303,6 +303,21 @@ def update_my_merchant_profile(
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
+    from app.services.subscription_service import SubscriptionService
+
+    photos_sent = any(
+        getattr(update_data, name, None)
+        for name in ("merchant_photos", "photos", "photo_1", "photo_2", "photo_3", "photo_4", "photo_5", "photo_6")
+    )
+    videos_sent = bool(update_data.video_url or update_data.merchant_videos)
+    if photos_sent:
+        SubscriptionService.assert_merchant_grant(
+            db, merchant.id, "can_add_photos", "The ₹999 plan is required to add merchant photos."
+        )
+    if videos_sent:
+        SubscriptionService.assert_merchant_grant(
+            db, merchant.id, "can_add_videos", "The ₹1999 plan is required to add a merchant video."
+        )
     updated = MerchantService.update_merchant(
         db=db, merchant=merchant, data=update_data
     )
@@ -783,6 +798,14 @@ def create_merchant_advertisement(
     db: Session = Depends(get_db),
 ) -> StandardResponse[AdvertisementResponse]:
     merchant = AdvertisementService.merchant_for_user(db, current_user)
+    from app.services.subscription_service import SubscriptionService
+
+    SubscriptionService.assert_merchant_grant(
+        db,
+        merchant.id,
+        "can_add_detail_page_ad",
+        "The ₹3999 plan is required to add an advertisement on the merchant details page.",
+    )
     ad = AdvertisementService.create(db, merchant, data)
     return success_response(
         data=AdvertisementResponse.model_validate(ad),
@@ -900,6 +923,24 @@ def update_merchant_by_id(
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    role = str(getattr(current_user, "role", "") or "").upper() if current_user else ""
+    is_admin = "ADMIN" in role or "SUPER" in role
+    if current_user and not is_admin:
+        from app.services.subscription_service import SubscriptionService
+
+        photos_sent = any(
+            getattr(data, name, None)
+            for name in ("merchant_photos", "photos", "photo_1", "photo_2", "photo_3", "photo_4", "photo_5", "photo_6")
+        )
+        videos_sent = bool(data.video_url or data.merchant_videos)
+        if photos_sent:
+            SubscriptionService.assert_merchant_grant(
+                db, merchant.id, "can_add_photos", "The ₹999 plan is required to add merchant photos."
+            )
+        if videos_sent:
+            SubscriptionService.assert_merchant_grant(
+                db, merchant.id, "can_add_videos", "The ₹1999 plan is required to add a merchant video."
+            )
     updated = MerchantService.update_merchant(db=db, merchant=merchant, data=data)
     return MerchantService.build_merchant_response(updated)
 

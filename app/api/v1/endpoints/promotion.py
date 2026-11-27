@@ -188,19 +188,24 @@ def create_promotion(
 
         merchant = SubscriptionService._assert_merchant_access(db, current_user, merchant.id)
 
-        if not PromotionService.is_merchant_ad_subscription_active(db, merchant.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="₹999 Merchant Advertisement Subscription required. Please complete Razorpay payment first.",
-            )
-
+        grants = SubscriptionService.merged_grants(db, merchant_profile_id=merchant.id)
         payload.merchant_id = merchant.id
         payload.merchant_name = merchant.business_name
         placement_str = str(payload.placement or "").strip()
         if placement_str.lower() == "merchant store":
+            if not grants.get("can_add_detail_page_ad"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="The ₹3999 plan is required to advertise on the merchant details page.",
+                )
             req_status = str(payload.status or "active").strip().lower()
             payload.status = "inactive" if req_status == "inactive" else "active"
         else:
+            if not grants.get("can_promote_landing"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="The ₹4999 plan is required to promote on the app landing page. An admin must approve the ad.",
+                )
             payload.status = "pending"
 
     promo = PromotionService.create(db, payload)

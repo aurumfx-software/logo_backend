@@ -168,11 +168,11 @@ def test_merchant_store_ad_requires_999_subscription_and_saves_formats(client: T
     order_res = client.post(
         "/api/v1/subscriptions/razorpay/order",
         headers=headers,
-        json={"package_code": "MERCHANT_PROMO_BASIC", "merchant_profile_id": shop.id},
+        json={"package_code": "MERCHANT_DETAIL_3999", "merchant_profile_id": shop.id},
     )
     assert order_res.status_code == 201, order_res.text
     order_data = order_res.json()
-    assert float(order_data["amount"]) == 999.0
+    assert float(order_data["amount"]) == 3999.0
     assert order_data["razorpay_order_id"] == "order_unit_999"
 
     pay_id = "pay_unit_999_ok"

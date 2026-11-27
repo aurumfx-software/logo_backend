@@ -103,6 +103,11 @@ class AdvertisementService:
 
     @staticmethod
     def list_visible(db: Session, merchant_id: int) -> List[MerchantAdvertisement]:
+        from app.services.subscription_service import SubscriptionService
+
+        grants = SubscriptionService.merged_grants(db, merchant_profile_id=merchant_id)
+        if not grants.get("can_add_detail_page_ad"):
+            return []
         return [ad for ad in AdvertisementService.list_for_merchant(db, merchant_id) if AdvertisementService.visible_on(ad)]
 
     @staticmethod

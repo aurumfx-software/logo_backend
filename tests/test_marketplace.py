@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db.models.user import User, UserRole
+from tests.conftest import grant_seller_plan
 
 
 def _user(db: Session, email: str, name: str) -> User:
@@ -34,6 +35,7 @@ def test_stock_is_saved_reduced_and_can_be_added_again(client: TestClient, db_se
     buyer = _user(db_session, "buyer.stock@example.com", "Buyer")
     seller_headers = _headers(client, seller.email)
     buyer_headers = _headers(client, buyer.email)
+    grant_seller_plan(client, seller_headers)
 
     listed = client.post(
         "/api/v1/customer/products",
@@ -98,6 +100,7 @@ def test_any_customer_can_sell_and_buyer_tracks_delivery(client: TestClient, db_
     buyer = _user(db_session, "buyer.market@example.com", "Buyer")
     seller_headers = _headers(client, seller.email)
     buyer_headers = _headers(client, buyer.email)
+    grant_seller_plan(client, seller_headers)
 
     listed = client.post(
         "/api/v1/customer/products",

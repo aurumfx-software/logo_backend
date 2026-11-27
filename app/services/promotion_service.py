@@ -35,38 +35,10 @@ class PromotionService:
     def is_merchant_ad_subscription_active(db: Session, merchant_id: Optional[int]) -> bool:
         if not merchant_id:
             return False
-        from app.db.models.merchant import MerchantProfile
-        from app.db.models.subscription import (
-            SubscriptionAudience,
-            SubscriptionPackage,
-            UserSubscription,
-            UserSubscriptionStatus,
-        )
+        from app.services.subscription_service import SubscriptionService
 
-        merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
-        if not merchant:
-            return False
-
-        now = datetime.now(timezone.utc)
-        subs = (
-            db.query(UserSubscription)
-            .join(SubscriptionPackage)
-            .filter(
-                UserSubscription.merchant_profile_id == merchant_id,
-                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
-                SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
-            )
-            .all()
-        )
-        valid_subs = [
-            s for s in subs if s.expires_at is None or (_as_utc(s.expires_at) is not None and _as_utc(s.expires_at) >= now)
-        ]
-        if valid_subs:
-            if not merchant.has_active_subscription:
-                merchant.has_active_subscription = True
-                db.commit()
-            return True
-        return bool(getattr(merchant, "has_active_subscription", False))
+        grants = SubscriptionService.merged_grants(db, merchant_profile_id=merchant_id)
+        return bool(grants.get("can_add_detail_page_ad"))
 
     @staticmethod
     def get_all(
@@ -290,7 +262,13 @@ class PromotionService:
                     continue
                 if str(merch.approval_status).upper() != "APPROVED" and str(merch.status).upper() != "APPROVED":
                     continue
-                if getattr(merch, "can_create_promotions", True) is False:
+                placement = (p.placement or "").strip().lower()
+                if placement == "merchant store":
+                    continue
+                from app.services.subscription_service import SubscriptionService
+
+                grants = SubscriptionService.merged_grants(db, merchant_profile_id=p.merchant_id)
+                if not grants.get("can_promote_landing"):
                     continue
 
             valid_promos.append(p)

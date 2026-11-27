@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db.models.user import User, UserRole
+from tests.conftest import grant_seller_plan
 
 
 def _user(db: Session, email: str, name: str, phone: str) -> User:
@@ -32,6 +33,7 @@ def test_buyer_cart_payment_tracking_and_review(client: TestClient, db_session: 
     buyer = _user(db_session, "buyer.shop@example.com", "Buyer", "9876500012")
     seller_headers = _headers(client, seller.email)
     buyer_headers = _headers(client, buyer.email)
+    grant_seller_plan(client, seller_headers)
 
     listed = client.post(
         "/api/v1/customer/products",
@@ -173,6 +175,7 @@ def test_buyer_can_cancel_before_shipping(client: TestClient, db_session: Sessio
     buyer = _user(db_session, "buyer.cancel@example.com", "Buyer", "9876500022")
     seller_headers = _headers(client, seller.email)
     buyer_headers = _headers(client, buyer.email)
+    grant_seller_plan(client, seller_headers)
     listed = client.post(
         "/api/v1/customer/products",
         headers=seller_headers,
@@ -188,9 +191,10 @@ def test_buyer_can_cancel_before_shipping(client: TestClient, db_session: Sessio
             "buyer_phone": "9876500022",
             "buyer_address": "Flat 2, Kadavanthra",
             "buyer_pincode": "682020",
-            "quantity": 1,
+            "quantity": 2,
         },
     )
+    assert bought.status_code == 201, bought.text
     order_id = bought.json()["id"]
     cod = client.post(
         f"/api/v1/marketplace/orders/{order_id}/pay",
@@ -233,6 +237,7 @@ def test_order_detail_without_token(client: TestClient, db_session: Session):
     buyer = _user(db_session, "buyer.open@example.com", "Buyer", "9876500082")
     seller_headers = _headers(client, seller.email)
     buyer_headers = _headers(client, buyer.email)
+    grant_seller_plan(client, seller_headers)
     listed = client.post(
         "/api/v1/customer/products",
         headers=seller_headers,
@@ -247,9 +252,10 @@ def test_order_detail_without_token(client: TestClient, db_session: Session):
             "buyer_phone": "9876500082",
             "buyer_address": "House 8, Kochi",
             "buyer_pincode": "682001",
-            "quantity": 1,
+            "quantity": 2,
         },
     )
+    assert bought.status_code == 201, bought.text
     order_id = bought.json()["id"]
     open_order = client.get(f"/api/v1/marketplace/orders/{order_id}")
     assert open_order.status_code == 200

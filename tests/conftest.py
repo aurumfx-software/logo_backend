@@ -65,3 +65,15 @@ def client(db_session):
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+def grant_seller_plan(client, headers):
+    """Give a test seller the ₹499 cashback selling plan."""
+    packages = client.get("/api/v1/subscriptions/packages?audience=USER").json()["data"]
+    package = next(item for item in packages if item["code"] == "USER_SELLER_500")
+    result = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": package["id"], "payment_reference": "TEST-SELLER"},
+    )
+    assert result.status_code == 201, result.text
+

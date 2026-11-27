@@ -55,8 +55,10 @@ def test_user_subscribe_seller_plan(client: TestClient, db_session: Session):
     assert active.status_code == 200
     summary = active.json()["data"]
     assert summary["can_sell_products"] is True
+    assert summary["cashback_on_sales"] is True
     assert summary["is_subscriber"] is True
-    assert summary["subscription_plan"] == "500_SELLER"
+    assert summary["subscription_plan"] == "499_SELLER"
+    assert float(seller["price"]) == 499.0
 
 
 def test_admin_assign_merchant_subscription(client: TestClient, db_session: Session):
@@ -196,7 +198,7 @@ def test_merchant_seller_500_plan_unlocks_products(client: TestClient, db_sessio
     active_after = client.get("/api/v1/subscriptions/me/active", headers=headers).json()["data"]
     assert active_after["can_sell_products"] is True
     assert active_after["is_subscriber"] is True
-    assert active_after["subscription_plan"] == "500_SELLER"
+    assert active_after["subscription_plan"] == "499_SELLER"
     assert len(active_after["user_subscriptions"]) >= 1
 
     # 3. Merchant can create, list, and manage orders on their products
@@ -217,3 +219,126 @@ def test_merchant_seller_500_plan_unlocks_products(client: TestClient, db_sessio
     assert any(p["name"] == "Merchant Gold Kasavu Saree" for p in my_prods.json())
     my_orders = client.get("/api/v1/customer/products/my-orders", headers=headers)
     assert my_orders.status_code == 200
+
+
+def test_catalog_has_customer_and_merchant_plans(client: TestClient):
+    users = client.get("/api/v1/subscriptions/packages?audience=USER").json()["data"]
+    merchants = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    assert {p["code"] for p in users} >= {"USER_FREE", "USER_SELLER_500"}
+    assert {p["code"] for p in merchants} >= {
+        "MERCHANT_PROMO_BASIC",
+        "MERCHANT_PREMIUM",
+        "MERCHANT_SELL_2999",
+        "MERCHANT_DETAIL_3999",
+        "MERCHANT_LANDING_4999",
+    }
+    by_code = {p["code"]: p for p in merchants}
+    assert by_code["MERCHANT_PROMO_BASIC"]["access"]["can_add_photos"] is True
+    assert by_code["MERCHANT_PROMO_BASIC"]["access"]["can_add_videos"] is False
+    assert by_code["MERCHANT_PREMIUM"]["access"]["can_add_videos"] is True
+    assert by_code["MERCHANT_SELL_2999"]["access"]["can_sell_products"] is True
+    assert by_code["MERCHANT_DETAIL_3999"]["access"]["can_add_detail_page_ad"] is True
+    assert by_code["MERCHANT_LANDING_4999"]["access"]["can_promote_landing"] is True
+    free = next(p for p in users if p["code"] == "USER_FREE")
+    seller = next(p for p in users if p["code"] == "USER_SELLER_500")
+    assert float(free["price"]) == 0.0
+    assert seller["access"]["cashback_on_sales"] is True
+
+
+def test_admin_checkbox_removes_selling_access(client: TestClient, db_session: Session):
+    user = _create_user(db_session, "checkbox.user@example.com")
+    headers = _auth_headers(client, user.email)
+    admin = _create_user(db_session, "checkbox.admin@example.com", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email)
+
+    seller = next(
+        p
+        for p in client.get("/api/v1/subscriptions/packages?audience=USER").json()["data"]
+        if p["code"] == "USER_SELLER_500"
+    )
+    sub = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": seller["id"], "payment_reference": "CHECKBOX"},
+    )
+    assert sub.status_code == 201
+
+    options = client.get("/api/v1/subscriptions/admin/access-options", headers=admin_headers)
+    assert options.status_code == 200
+    assert "can_sell_products" in {item["key"] for item in options.json()["data"]["USER"]}
+
+    updated = client.patch(
+        f"/api/v1/subscriptions/admin/packages/{seller['id']}",
+        headers=admin_headers,
+        json={"access": {"can_sell_products": False, "cashback_on_sales": False}},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["access"]["can_sell_products"] is False
+
+    active = client.get("/api/v1/subscriptions/me/active", headers=headers).json()["data"]
+    assert active["can_sell_products"] is False
+    assert active["cashback_on_sales"] is False
+
+
+def test_landing_promotion_needs_4999_and_admin_approval(client: TestClient, db_session: Session):
+    from app.db.models.merchant import MerchantProfile
+
+    merchant_user = _create_user(db_session, "landing.merchant@example.com", UserRole.MERCHANT)
+    shop = MerchantProfile(
+        user_id=merchant_user.id,
+        business_name="Landing Shop",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+    db_session.refresh(shop)
+    headers = _auth_headers(client, merchant_user.email)
+
+    detail = next(
+        p
+        for p in client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+        if p["code"] == "MERCHANT_DETAIL_3999"
+    )
+    client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": detail["id"], "merchant_profile_id": shop.id, "payment_reference": "D3999"},
+    )
+    blocked = client.post(
+        "/api/v1/promotions",
+        headers=headers,
+        json={"title": "Home Feature", "placement": "Home Top", "merchant_id": shop.id},
+    )
+    assert blocked.status_code == 403
+
+    landing = next(
+        p
+        for p in client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+        if p["code"] == "MERCHANT_LANDING_4999"
+    )
+    subscribed = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": landing["id"], "merchant_profile_id": shop.id, "payment_reference": "L4999"},
+    )
+    assert subscribed.status_code == 201
+    created = client.post(
+        "/api/v1/promotions",
+        headers=headers,
+        json={"title": "Landing Feature", "placement": "Home Top", "merchant_id": shop.id, "status": "active"},
+    )
+    assert created.status_code == 201, created.text
+    promo = created.json()["data"]
+    assert promo["status"] == "pending"
+
+    public = client.get("/api/v1/promotions/active")
+    assert all(item["id"] != promo["id"] for item in public.json()["data"])
+
+    admin = _create_user(db_session, "landing.admin@example.com", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email)
+    approved = client.post(f"/api/v1/promotions/{promo['id']}/approve", headers=admin_headers)
+    assert approved.status_code == 200, approved.text
+    public_after = client.get("/api/v1/promotions/active")
+    assert any(item["id"] == promo["id"] for item in public_after.json()["data"])
