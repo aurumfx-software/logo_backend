@@ -419,5 +419,8 @@ def reset_password(
     reset_req: ResetPasswordRequest,
     db: Session = Depends(get_db),
 ) -> GenericMessageResponse:
-    AuthService.reset_password(db=db, reset_data=reset_req)
-    return GenericMessageResponse(message="Password has been reset successfully. You can now log in.")
+    login_id = AuthService.reset_password(db=db, reset_data=reset_req)
+    return GenericMessageResponse(
+        message="Password has been reset successfully. You can now log in using your Login ID.",
+        login_id=login_id,
+    )

@@ -396,6 +396,11 @@ class AuthService:
     def authenticate_user(db: Session, login_data: UserLoginRequest) -> User:
         AuthService.ensure_login_id_column(db)
         identifier = login_data.email.strip()
+        if getattr(login_data, "login_id_only", False) and "@" in identifier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email login is not allowed. Please sign in using your assigned Login ID and password.",
+            )
         if "@" in identifier:
             user = db.query(User).filter(func.lower(User.email) == identifier.lower()).first()
         else:
@@ -804,7 +809,7 @@ class AuthService:
         return plain_otp
 
     @staticmethod
-    def reset_password(db: Session, reset_data: ResetPasswordRequest) -> None:
+    def reset_password(db: Session, reset_data: ResetPasswordRequest) -> Optional[str]:
         _user, identifier = AuthService._password_reset_target(
             db, email=reset_data.email, phone=reset_data.phone
         )
@@ -837,4 +842,8 @@ class AuthService:
         MerchantService.sync_merchant_password_from_user(
             db=db, user=user, plain_password=reset_data.new_password
         )
+        if not user.login_id:
+            AuthService.assign_login_id(db, user)
         db.commit()
+        db.refresh(user)
+        return user.login_id

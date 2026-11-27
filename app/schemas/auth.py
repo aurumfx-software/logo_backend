@@ -122,10 +122,11 @@ class UserRegisterRequest(UserBase):
 
 
 class UserLoginRequest(BaseModel):
-    """Sign in with an email address or a login ID such as ASH4906."""
+    """Sign in with a login ID such as ASH4906 (or admin email when login_id_only is False)."""
 
     email: str = Field(..., json_schema_extra={"example": "ASH4906"})
     password: str = Field(..., json_schema_extra={"example": "TestPassword123"})
+    login_id_only: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -141,13 +142,19 @@ class UserLoginRequest(BaseModel):
     def email_or_login_id(cls, value: str) -> str:
         clean = str(value or "").strip()
         if not clean:
-            raise ValueError("Email or login ID is required")
+            raise ValueError("Login ID is required")
         if "@" in clean:
             lowered = clean.lower()
             if not re.match(EMAIL_REGEX, lowered):
                 raise ValueError("Invalid email format")
             return lowered
         return clean.upper()
+
+    @model_validator(mode="after")
+    def enforce_login_id_only(self) -> "UserLoginRequest":
+        if self.login_id_only and "@" in (self.email or ""):
+            raise ValueError("Email login is not allowed. Please sign in using your assigned Login ID and password.")
+        return self
 
 
 class UserPhoneLoginRequest(BaseModel):
@@ -546,3 +553,4 @@ class LogoutResponse(BaseModel):
 
 class GenericMessageResponse(BaseModel):
     message: str
+    login_id: Optional[str] = None

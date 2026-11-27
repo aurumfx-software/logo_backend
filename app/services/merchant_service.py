@@ -1204,6 +1204,11 @@ class MerchantService:
         from app.services.auth_service import AuthService
 
         identifier = login_data.email.strip()
+        if getattr(login_data, "login_id_only", False) and "@" in identifier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email login is not allowed for merchants. Please sign in using your Merchant Login ID and password.",
+            )
         if "@" in identifier:
             merchant, user = MerchantService.resolve_merchant_by_email(db, identifier)
         else:

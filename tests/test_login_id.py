@@ -102,3 +102,63 @@ def test_new_account_emails_the_login_id(client: TestClient, monkeypatch):
     assert login_id in sent["json"]["text"]
     assert "Your password is Pass1234." in sent["json"]["text"]
     assert sent["json"]["subject"] == "Your Logo login ID"
+
+
+def test_login_id_only_flag_blocks_email_for_customer_and_merchant(client: TestClient):
+    customer = client.post(
+        "/api/v1/customer/register",
+        json={
+            "name": "Kiran Pillai",
+            "phone": "9011199988",
+            "password": "Pass1234",
+            "district": "Ernakulam",
+            "city": "Kochi",
+            "email": "kiran.idonly@example.com",
+        },
+    )
+    assert customer.status_code == 201
+    cust_login_id = customer.json()["user"]["login_id"]
+
+    blocked_cust = client.post(
+        "/api/v1/auth/login",
+        json={"email": "kiran.idonly@example.com", "password": "Pass1234", "login_id_only": True},
+    )
+    assert blocked_cust.status_code in (400, 422)
+
+    ok_cust = client.post(
+        "/api/v1/auth/login",
+        json={"login_id": cust_login_id, "password": "Pass1234", "login_id_only": True},
+    )
+    assert ok_cust.status_code == 200
+    assert ok_cust.json()["login_id"] == cust_login_id
+
+    merchant = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Ravi Merchant",
+            "email": "ravi.idonly@example.com",
+            "password": "MerchantPassword123",
+            "business_name": "Sunrise Traders",
+            "categories": ["Retail"],
+            "location": "Kochi",
+            "services": ["Sales"],
+            "service_timing": "9-9",
+            "contact_number": "9876508877",
+            "address": "MG Road, Kochi",
+        },
+    )
+    assert merchant.status_code == 201
+    merch_login_id = merchant.json()["user"]["login_id"]
+
+    blocked_merch = client.post(
+        "/api/v1/merchants/login",
+        json={"email": "ravi.idonly@example.com", "password": "MerchantPassword123", "login_id_only": True},
+    )
+    assert blocked_merch.status_code in (400, 422)
+
+    ok_merch = client.post(
+        "/api/v1/auth/login",
+        json={"login_id": merch_login_id, "password": "MerchantPassword123", "login_id_only": True},
+    )
+    assert ok_merch.status_code == 200
+    assert ok_merch.json()["login_id"] == merch_login_id

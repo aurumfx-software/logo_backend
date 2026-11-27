@@ -521,21 +521,37 @@ class MerchantUpdateRequest(BaseModel):
 
 
 class MerchantLoginRequest(BaseModel):
-    email: str = Field(..., description="Merchant email or login ID", json_schema_extra={"example": "rajesh.salon@example.com"})
+    email: str = Field(..., description="Merchant login ID (or legacy email when login_id_only is False)", json_schema_extra={"example": "ASH4906"})
     password: str = Field(..., min_length=8, max_length=100, json_schema_extra={"example": "MerchantPass123"})
+    login_id_only: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def login_id_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict) and not str(data.get("email") or "").strip():
+            alias = data.get("login_id") or data.get("user_id") or data.get("username")
+            if alias:
+                data["email"] = alias
+        return data
 
     @field_validator("email")
     @classmethod
     def email_or_login_id(cls, v: str) -> str:
         clean = str(v or "").strip()
         if not clean:
-            raise ValueError("Email or login ID is required")
+            raise ValueError("Merchant Login ID is required")
         if "@" in clean:
             lowered = clean.lower()
             if not re.match(EMAIL_REGEX, lowered):
                 raise ValueError("Invalid email format")
             return lowered
         return clean.upper()
+
+    @model_validator(mode="after")
+    def enforce_login_id_only(self) -> "MerchantLoginRequest":
+        if self.login_id_only and "@" in (self.email or ""):
+            raise ValueError("Email login is not allowed for merchants. Please sign in using your Merchant Login ID and password.")
+        return self
 
 
 class MerchantPhotosUploadResponse(BaseModel):
