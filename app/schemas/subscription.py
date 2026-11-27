@@ -11,6 +11,28 @@ from app.db.models.subscription import (
 )
 
 
+class SubscriptionAccessFlags(BaseModel):
+    """Checkbox access stored on a package. Admin can turn each one on or off."""
+
+    can_sell_products: bool = False
+    cashback_on_sales: bool = False
+    can_add_photos: bool = False
+    can_add_videos: bool = False
+    can_add_detail_page_ad: bool = False
+    can_promote_landing: bool = False
+
+
+class SubscriptionAccessUpdate(BaseModel):
+    """Partial checkbox update. Omitted keys are left unchanged."""
+
+    can_sell_products: Optional[bool] = None
+    cashback_on_sales: Optional[bool] = None
+    can_add_photos: Optional[bool] = None
+    can_add_videos: Optional[bool] = None
+    can_add_detail_page_ad: Optional[bool] = None
+    can_promote_landing: Optional[bool] = None
+
+
 class SubscriptionPackageResponse(BaseModel):
     id: int
     code: str
@@ -23,10 +45,42 @@ class SubscriptionPackageResponse(BaseModel):
     duration_days: int
     features: List[str] = Field(default_factory=list)
     grants: Dict[str, Any] = Field(default_factory=dict)
+    access: SubscriptionAccessFlags = Field(default_factory=SubscriptionAccessFlags)
     is_active: bool = True
     sort_order: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def access_from_grants(self):
+        grants = self.grants or {}
+        self.access = SubscriptionAccessFlags(
+            can_sell_products=bool(grants.get("can_sell_products") or grants.get("merchant_product_section")),
+            cashback_on_sales=bool(grants.get("cashback_on_sales")),
+            can_add_photos=bool(grants.get("can_add_photos") or grants.get("merchant_profile_photos")),
+            can_add_videos=bool(grants.get("can_add_videos") or grants.get("merchant_profile_video")),
+            can_add_detail_page_ad=bool(
+                grants.get("can_add_detail_page_ad")
+                or grants.get("merchant_store_ad")
+                or grants.get("merchant_store_video_ad")
+            ),
+            can_promote_landing=bool(
+                grants.get("can_promote_landing")
+                or any(
+                    grants.get(k)
+                    for k in (
+                        "ad_home_top",
+                        "ad_home_middle",
+                        "ad_above_footer",
+                        "ad_featured_offers",
+                        "ad_special_deals",
+                        "ad_business_network",
+                        "ad_square_poster",
+                    )
+                )
+            ),
+        )
+        return self
 
 
 class SubscriptionPackageCreateRequest(BaseModel):
@@ -40,6 +94,7 @@ class SubscriptionPackageCreateRequest(BaseModel):
     duration_days: int = Field(default=30, ge=1, le=3650)
     features: Optional[List[str]] = None
     grants: Optional[Dict[str, Any]] = None
+    access: Optional[SubscriptionAccessUpdate] = None
     is_active: bool = True
     sort_order: int = 0
 
@@ -53,6 +108,7 @@ class SubscriptionPackageUpdateRequest(BaseModel):
     duration_days: Optional[int] = Field(None, ge=1, le=3650)
     features: Optional[List[str]] = None
     grants: Optional[Dict[str, Any]] = None
+    access: Optional[SubscriptionAccessUpdate] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
 
@@ -214,8 +270,11 @@ class ActiveSubscriptionSummary(BaseModel):
     user_subscriptions: List[UserSubscriptionResponse] = Field(default_factory=list)
     merchant_subscriptions: List[UserSubscriptionResponse] = Field(default_factory=list)
     can_sell_products: bool = False
+    cashback_on_sales: bool = False
     is_subscriber: bool = False
     subscription_plan: Optional[str] = None
+    grants: Dict[str, Any] = Field(default_factory=dict)
+    access: SubscriptionAccessFlags = Field(default_factory=SubscriptionAccessFlags)
     merchant_has_active_subscription: bool = False
     merchant_profile_id: Optional[int] = None
     merchant_business_name: Optional[str] = None

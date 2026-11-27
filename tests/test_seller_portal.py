@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.db.models.product import ProductOrder
 from app.db.models.user import User, UserRole
+from tests.conftest import grant_seller_plan
 
 
 def _user(db: Session, email: str, name: str, phone: str) -> User:
@@ -105,6 +106,7 @@ def test_seller_bank_details_save_and_read(client: TestClient, db_session: Sessi
 def test_seller_analytics_and_checkout_rules(client: TestClient, db_session: Session):
     seller = _user(db_session, "analytics.seller@example.com", "Seller", "9876500102")
     headers = _headers(client, seller.email)
+    grant_seller_plan(client, headers)
     product_id = _list(client, headers, 1000)
 
     paid_id = _order(client, product_id, "9876501101")

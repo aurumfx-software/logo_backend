@@ -35,44 +35,14 @@ class PromotionService:
     def is_merchant_ad_subscription_active(db: Session, merchant_id: Optional[int]) -> bool:
         if not merchant_id:
             return False
-        from app.db.models.merchant import MerchantProfile
-        from app.db.models.subscription import (
-            SubscriptionAudience,
-            SubscriptionPackage,
-            UserSubscription,
-            UserSubscriptionStatus,
+        from app.services.subscription_service import SubscriptionService
+
+        grants = SubscriptionService.get_merchant_grants(
+            db, merchant_id, include_user_seller=False
         )
-
-        merchant = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
-        if not merchant:
-            return False
-
-        now = datetime.now(timezone.utc)
-        subs = (
-            db.query(UserSubscription)
-            .join(SubscriptionPackage)
-            .filter(
-                UserSubscription.merchant_profile_id == merchant_id,
-                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
-                SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
-            )
-            .all()
+        return bool(
+            grants.get("merchant_store_ad") or grants.get("merchant_store_video_ad")
         )
-        valid_subs = [
-            s for s in subs if s.expires_at is None or (_as_utc(s.expires_at) is not None and _as_utc(s.expires_at) >= now)
-        ]
-        if valid_subs:
-            from app.services.subscription_service import MERCHANT_AD_PERMISSION_KEYS, SubscriptionService
-
-            grants = SubscriptionService.get_merchant_grants(
-                db, merchant_id, include_user_seller=False
-            )
-            has_any_ad = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
-            if not merchant.has_active_subscription:
-                merchant.has_active_subscription = True
-                db.commit()
-            return has_any_ad
-        return bool(getattr(merchant, "has_active_subscription", False))
 
     @staticmethod
     def get_all(
@@ -296,7 +266,18 @@ class PromotionService:
                     continue
                 if str(merch.approval_status).upper() != "APPROVED" and str(merch.status).upper() != "APPROVED":
                     continue
-                if getattr(merch, "can_create_promotions", True) is False:
+                placement = (p.placement or "").strip().lower()
+                if placement == "merchant store":
+                    continue
+                from app.services.subscription_service import SubscriptionService
+
+                req_key, _ = SubscriptionService.required_promotion_permission(
+                    p.placement, p.media_type
+                )
+                grants = SubscriptionService.get_merchant_grants(
+                    db, p.merchant_id, include_user_seller=False
+                )
+                if not grants.get(req_key):
                     continue
 
             valid_promos.append(p)

@@ -621,6 +621,9 @@ def create_customer_product(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required to create a product",
         )
+    from app.services.subscription_service import SubscriptionService
+
+    SubscriptionService.assert_can_sell(db, seller)
     product = ProductService.create_product(db=db, seller=seller, data=data)
     return _product_response(product)
 

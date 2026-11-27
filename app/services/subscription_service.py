@@ -19,6 +19,8 @@ from app.schemas.subscription import (
     MERCHANT_PERMISSION_KEYS,
     AdminAssignSubscriptionRequest,
     SubscribeRequest,
+    SubscriptionAccessFlags,
+    SubscriptionAccessUpdate,
     SubscriptionPackageCreateRequest,
     SubscriptionPackageUpdateRequest,
     UserSubscriptionResponse,
@@ -46,81 +48,216 @@ def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 class SubscriptionService:
+    # Checkbox keys stored on subscription_packages.grants. Admin can turn each one on or off.
+    CUSTOMER_GRANT_KEYS = ("can_sell_products", "cashback_on_sales")
+    MERCHANT_GRANT_KEYS = (
+        "can_add_photos",
+        "can_add_videos",
+        "can_sell_products",
+        "can_add_detail_page_ad",
+        "can_promote_landing",
+    )
+
     DEFAULT_PACKAGES: List[Dict[str, Any]] = [
         {
             "code": "USER_FREE",
-            "name": "User Free",
-            "description": "Browse merchants, favorites, and wallet cashback.",
+            "name": "Customer Free ₹0",
+            "description": "Browse the app. Product selling and sale cashback are not included.",
             "audience": SubscriptionAudience.USER,
             "price": Decimal("0"),
             "billing_period": "ONE_TIME",
             "duration_days": 3650,
-            "features": ["Browse directory", "Wallet cashback"],
+            "features": ["Browse directory", "Browse marketplace"],
             "grants": {},
             "sort_order": 0,
         },
         {
             "code": "USER_SELLER_500",
-            "name": "Seller Plan ₹500",
-            "description": "List products on Logo marketplace.",
+            "name": "Customer Cashback Seller ₹499",
+            "description": "Sell products and receive cashback on those sales.",
             "audience": SubscriptionAudience.USER,
-            "price": Decimal("500"),
+            "price": Decimal("499"),
             "billing_period": "MONTHLY",
             "duration_days": 30,
-            "features": ["List products", "Seller dashboard", "Order notifications"],
+            "features": ["Sell products", "Cashback on sales", "Seller dashboard"],
             "grants": {
                 "can_sell_products": True,
+                "cashback_on_sales": True,
                 "is_subscriber": True,
-                "subscription_plan": "500_SELLER",
+                "subscription_plan": "499_SELLER",
             },
             "sort_order": 1,
         },
         {
             "code": "MERCHANT_PROMO_BASIC",
-            "name": "Merchant Promotions",
-            "description": "Create shop promotions and hero banners.",
+            "name": "Merchant Photos ₹999",
+            "description": "Add photos on the merchant profile.",
             "audience": SubscriptionAudience.MERCHANT,
             "price": Decimal("999"),
             "billing_period": "MONTHLY",
             "duration_days": 30,
-            "features": ["Create promotions", "Hero banners"],
-            "grants": {"can_create_promotions": True},
+            "features": ["Profile photos"],
+            "grants": {"can_add_photos": True},
             "sort_order": 0,
         },
         {
             "code": "MERCHANT_PREMIUM",
-            "name": "Merchant Premium",
-            "description": "Promotions plus premium discovery visibility.",
+            "name": "Merchant Photos & Video ₹1999",
+            "description": "Add photos and video on the merchant profile.",
             "audience": SubscriptionAudience.MERCHANT,
             "price": Decimal("1999"),
             "billing_period": "MONTHLY",
             "duration_days": 30,
-            "features": ["All promotion features", "Premium listing badge"],
-            "grants": {"can_create_promotions": True, "premium_listing": True},
+            "features": ["Profile photos", "Profile video"],
+            "grants": {"can_add_photos": True, "can_add_videos": True},
             "sort_order": 1,
+        },
+        {
+            "code": "MERCHANT_SELL_2999",
+            "name": "Merchant Seller ₹2999",
+            "description": "Photos, video, and product selling.",
+            "audience": SubscriptionAudience.MERCHANT,
+            "price": Decimal("2999"),
+            "billing_period": "MONTHLY",
+            "duration_days": 30,
+            "features": ["Profile photos", "Profile video", "Sell products"],
+            "grants": {"can_add_photos": True, "can_add_videos": True, "can_sell_products": True},
+            "sort_order": 2,
+        },
+        {
+            "code": "MERCHANT_DETAIL_3999",
+            "name": "Merchant Detail Ad ₹3999",
+            "description": "Photos, video, product selling, and an advertisement on the merchant details page.",
+            "audience": SubscriptionAudience.MERCHANT,
+            "price": Decimal("3999"),
+            "billing_period": "MONTHLY",
+            "duration_days": 30,
+            "features": ["Profile photos", "Profile video", "Sell products", "Details page advertisement"],
+            "grants": {
+                "can_add_photos": True,
+                "can_add_videos": True,
+                "can_sell_products": True,
+                "can_add_detail_page_ad": True,
+            },
+            "sort_order": 3,
+        },
+        {
+            "code": "MERCHANT_LANDING_4999",
+            "name": "Merchant Landing Promotion ₹4999",
+            "description": "Everything in the ₹3999 plan, plus a landing-page promotion. Landing ads stay pending until an admin approves them.",
+            "audience": SubscriptionAudience.MERCHANT,
+            "price": Decimal("4999"),
+            "billing_period": "MONTHLY",
+            "duration_days": 30,
+            "features": [
+                "Profile photos",
+                "Profile video",
+                "Sell products",
+                "Details page advertisement",
+                "Landing page promotion",
+            ],
+            "grants": {
+                "can_add_photos": True,
+                "can_add_videos": True,
+                "can_sell_products": True,
+                "can_add_detail_page_ad": True,
+                "can_promote_landing": True,
+            },
+            "sort_order": 4,
         },
     ]
 
+    # Previous seed values. These are upgraded once. Later admin checkbox edits are kept.
+    LEGACY_GRANTS = {
+        "USER_SELLER_500": [
+            {"can_sell_products": True, "is_subscriber": True, "subscription_plan": "500_SELLER"},
+        ],
+        "MERCHANT_PROMO_BASIC": [
+            {"can_create_promotions": True},
+        ],
+        "MERCHANT_PREMIUM": [
+            {"can_create_promotions": True, "premium_listing": True},
+        ],
+    }
+
+    ACCESS_OPTIONS = {
+        "USER": [
+            {"key": "can_sell_products", "label": "Sell products"},
+            {"key": "cashback_on_sales", "label": "Cashback when selling a product"},
+        ],
+        "MERCHANT": [
+            {"key": "can_add_photos", "label": "Add photos"},
+            {"key": "can_add_videos", "label": "Add video"},
+            {"key": "can_sell_products", "label": "Sell products"},
+            {"key": "can_add_detail_page_ad", "label": "Advertisement on the merchant details page"},
+            {"key": "can_promote_landing", "label": "Promote on the app landing page (admin approval required)"},
+        ],
+    }
+
+    @staticmethod
+    def _grant_signature(grants: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        signature: Dict[str, Any] = {}
+        for key, value in (grants or {}).items():
+            if not value:
+                continue
+            signature[key] = value if key == "subscription_plan" else True
+        return signature
+
+    @staticmethod
+    def _apply_catalog_row(pkg: SubscriptionPackage, row: Dict[str, Any]) -> None:
+        pkg.name = row["name"]
+        pkg.description = row["description"]
+        pkg.price = row["price"]
+        pkg.billing_period = row["billing_period"]
+        pkg.duration_days = row["duration_days"]
+        pkg.features = row.get("features") or []
+        pkg.grants = dict(row.get("grants") or {})
+        pkg.sort_order = row.get("sort_order", pkg.sort_order or 0)
+        pkg.is_active = True
+
     @staticmethod
     def ensure_default_packages(db: Session) -> None:
-        if db.query(SubscriptionPackage).count() > 0:
-            return
+        existing = {pkg.code: pkg for pkg in db.query(SubscriptionPackage).all()}
+        changed = False
         for row in SubscriptionService.DEFAULT_PACKAGES:
-            pkg = SubscriptionPackage(
-                code=row["code"],
-                name=row["name"],
-                description=row["description"],
-                audience=row["audience"],
-                price=row["price"],
-                currency="INR",
-                billing_period=row["billing_period"],
-                duration_days=row["duration_days"],
-                features=row.get("features") or [],
-                grants=row.get("grants") or {},
-                is_active=True,
-                sort_order=row.get("sort_order", 0),
+            current = existing.get(row["code"])
+            if current is None:
+                continue
+            legacy = SubscriptionService.LEGACY_GRANTS.get(row["code"], [])
+            signature = SubscriptionService._grant_signature(current.grants)
+            price = Decimal(str(current.price or 0))
+            still_legacy = signature in legacy or (
+                row["code"] == "USER_SELLER_500" and price == Decimal("500")
+            ) or (
+                row["code"] == "USER_FREE" and (current.name or "") == "User Free"
             )
-            db.add(pkg)
+            if still_legacy:
+                SubscriptionService._apply_catalog_row(current, row)
+                changed = True
+        if changed:
+            db.commit()
+        # A database that already has packages keeps later admin checkbox edits.
+        # Only missing catalog codes are inserted.
+        missing = [row for row in SubscriptionService.DEFAULT_PACKAGES if row["code"] not in existing]
+        if not missing:
+            return
+        for row in missing:
+            db.add(
+                SubscriptionPackage(
+                    code=row["code"],
+                    name=row["name"],
+                    description=row["description"],
+                    audience=row["audience"],
+                    price=row["price"],
+                    currency="INR",
+                    billing_period=row["billing_period"],
+                    duration_days=row["duration_days"],
+                    features=row.get("features") or [],
+                    grants=row.get("grants") or {},
+                    is_active=True,
+                    sort_order=row.get("sort_order", 0),
+                )
+            )
         db.commit()
 
     @staticmethod
@@ -157,15 +294,37 @@ class SubscriptionService:
         if has_granular:
             for key in MERCHANT_PERMISSION_KEYS:
                 resolved[key] = bool(raw.get(key))
+            if raw.get("can_add_photos"):
+                resolved["merchant_profile_photos"] = True
+            if raw.get("can_add_videos"):
+                resolved["merchant_profile_video"] = True
             if raw.get("can_sell_products"):
                 resolved["merchant_product_section"] = True
             return resolved
-        # Legacy non-granular merchant promo packages retain full ad access for backwards compatibility.
+        # Seeded / legacy Bitbucket access packages map cleanly to granular capabilities
+        if raw.get("can_add_photos"):
+            resolved["merchant_profile_photos"] = True
+        if raw.get("can_add_videos"):
+            resolved["merchant_profile_video"] = True
+        if raw.get("can_sell_products"):
+            resolved["merchant_product_section"] = True
+        if raw.get("can_add_detail_page_ad"):
+            resolved["merchant_store_ad"] = True
+            resolved["merchant_store_video_ad"] = True
+        if raw.get("can_promote_landing"):
+            for key in (
+                "ad_home_top",
+                "ad_home_middle",
+                "ad_above_footer",
+                "ad_featured_offers",
+                "ad_special_deals",
+                "ad_business_network",
+                "ad_square_poster",
+            ):
+                resolved[key] = True
         if raw.get("can_create_promotions"):
             for key in MERCHANT_AD_PERMISSION_KEYS:
                 resolved[key] = True
-        if raw.get("can_sell_products"):
-            resolved["merchant_product_section"] = True
         return resolved
 
     @staticmethod
@@ -239,8 +398,8 @@ class SubscriptionService:
             currency=(data.currency or "INR").upper(),
             billing_period=data.billing_period,
             duration_days=data.duration_days,
-            features=features,
-            grants=data.grants or {},
+            features=SubscriptionService.build_features_from_grants(data.grants, data.features),
+            grants=SubscriptionService._grants_with_access(data.grants or {}, data.access),
             is_active=data.is_active,
             sort_order=data.sort_order,
         )
@@ -266,12 +425,15 @@ class SubscriptionService:
             pkg.billing_period = data.billing_period
         if data.duration_days is not None:
             pkg.duration_days = data.duration_days
-        if data.grants is not None:
-            pkg.grants = data.grants
+        if data.grants is not None or data.access is not None:
+            pkg.grants = SubscriptionService._grants_with_access(
+                data.grants if data.grants is not None else (pkg.grants or {}),
+                data.access,
+            )
             if data.features is not None:
-                pkg.features = SubscriptionService.build_features_from_grants(data.grants, data.features)
+                pkg.features = SubscriptionService.build_features_from_grants(pkg.grants, data.features)
             else:
-                pkg.features = SubscriptionService.build_features_from_grants(data.grants, None) or pkg.features
+                pkg.features = SubscriptionService.build_features_from_grants(pkg.grants, None) or pkg.features
         elif data.features is not None:
             pkg.features = data.features
         if data.is_active is not None:
@@ -281,6 +443,7 @@ class SubscriptionService:
         db.commit()
         db.refresh(pkg)
         SubscriptionService._sync_subscribers_for_package(db, pkg)
+        SubscriptionService._refresh_package_holders(db, pkg.id)
         return pkg
 
     @staticmethod
@@ -312,6 +475,102 @@ class SubscriptionService:
         db.commit()
         db.refresh(dup)
         return dup
+
+    @staticmethod
+    def _grants_with_access(
+        grants: Optional[Dict[str, Any]],
+        access: Optional[SubscriptionAccessUpdate],
+    ) -> Dict[str, Any]:
+        merged = dict(grants or {})
+        if access is not None:
+            dump = access.model_dump(exclude_unset=True)
+            for key, value in dump.items():
+                if value is None:
+                    continue
+                bval = bool(value)
+                merged[key] = bval
+                if key == "can_add_photos":
+                    merged["merchant_profile_photos"] = bval
+                elif key == "can_add_videos":
+                    merged["merchant_profile_video"] = bval
+                elif key == "can_sell_products":
+                    merged["merchant_product_section"] = bval
+                elif key == "can_add_detail_page_ad":
+                    merged["merchant_store_ad"] = bval
+                    merged["merchant_store_video_ad"] = bval
+                elif key == "can_promote_landing":
+                    for ad_k in (
+                        "ad_home_top",
+                        "ad_home_middle",
+                        "ad_above_footer",
+                        "ad_featured_offers",
+                        "ad_special_deals",
+                        "ad_business_network",
+                        "ad_square_poster",
+                    ):
+                        merged[ad_k] = bval
+        if bool(merged.get("_granular")) or any(k in merged for k in MERCHANT_PERMISSION_KEYS):
+            merged["can_add_photos"] = bool(merged.get("merchant_profile_photos"))
+            merged["can_add_videos"] = bool(merged.get("merchant_profile_video"))
+            if "merchant_product_section" in merged or "can_sell_products" in merged:
+                merged["can_sell_products"] = bool(
+                    merged.get("merchant_product_section")
+                    if "merchant_product_section" in merged
+                    else merged.get("can_sell_products")
+                )
+            merged["can_add_detail_page_ad"] = bool(
+                merged.get("merchant_store_ad") or merged.get("merchant_store_video_ad")
+            )
+            merged["can_promote_landing"] = bool(
+                any(
+                    merged.get(k)
+                    for k in (
+                        "ad_home_top",
+                        "ad_home_middle",
+                        "ad_above_footer",
+                        "ad_featured_offers",
+                        "ad_special_deals",
+                        "ad_business_network",
+                        "ad_square_poster",
+                    )
+                )
+            )
+        return merged
+
+    @staticmethod
+    def access_from_grants(grants: Optional[Dict[str, Any]]) -> SubscriptionAccessFlags:
+        source = grants or {}
+        resolved = SubscriptionService.package_merchant_grants(source)
+        return SubscriptionAccessFlags(
+            can_sell_products=bool(source.get("can_sell_products") or resolved.get("merchant_product_section")),
+            cashback_on_sales=bool(source.get("cashback_on_sales")),
+            can_add_photos=bool(source.get("can_add_photos") or resolved.get("merchant_profile_photos")),
+            can_add_videos=bool(source.get("can_add_videos") or resolved.get("merchant_profile_video")),
+            can_add_detail_page_ad=bool(
+                source.get("can_add_detail_page_ad")
+                or resolved.get("merchant_store_ad")
+                or resolved.get("merchant_store_video_ad")
+            ),
+            can_promote_landing=bool(
+                source.get("can_promote_landing")
+                or any(
+                    resolved.get(k)
+                    for k in (
+                        "ad_home_top",
+                        "ad_home_middle",
+                        "ad_above_footer",
+                        "ad_featured_offers",
+                        "ad_special_deals",
+                        "ad_business_network",
+                        "ad_square_poster",
+                    )
+                )
+            ),
+        )
+
+    @staticmethod
+    def _refresh_package_holders(db: Session, package_id: int) -> None:
+        SubscriptionService._sync_subscribers_for_package(db, SubscriptionService.get_package(db, package_id))
 
     @staticmethod
     def _subscription_to_response(sub: UserSubscription) -> UserSubscriptionResponse:
@@ -401,7 +660,7 @@ class SubscriptionService:
         plan: Optional[str] = None
         for sub in active_subs:
             grants = (sub.package.grants or {}) if sub.package else {}
-            if grants.get("can_sell_products"):
+            if grants.get("can_sell_products") or grants.get("cashback_on_sales"):
                 can_sell = True
             if grants.get("is_subscriber"):
                 is_subscriber = True
@@ -429,10 +688,13 @@ class SubscriptionService:
                 mgrants = SubscriptionService.package_merchant_grants(
                     msub.package.grants if msub.package else {}
                 )
-                if mgrants.get("merchant_product_section"):
+                if mgrants.get("merchant_product_section") or (msub.package and (msub.package.grants or {}).get("can_sell_products")):
                     can_sell = True
                     if not plan:
                         plan = msub.package.code if msub.package else "MERCHANT_PRODUCTS"
+        merchant_grants = SubscriptionService.merged_grants(db, user_id=user_id)
+        if merchant_grants.get("can_sell_products"):
+            can_sell = True
         user.can_sell_products = can_sell
         user.is_subscriber = is_subscriber or can_sell
         user.subscription_plan = plan
@@ -525,19 +787,71 @@ class SubscriptionService:
             for s in active_subs
             if s.expires_at is None or _as_utc(s.expires_at) >= now
         ]
+        grants = SubscriptionService.get_merchant_grants(
+            db, merchant_profile_id, include_user_seller=False
+        )
         merchant.has_active_subscription = len(active_subs) > 0
-        if active_subs:
-            grants = SubscriptionService.get_merchant_grants(
-                db, merchant_profile_id, include_user_seller=False
-            )
-            merchant.can_create_promotions = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS) or True
-        else:
-            merchant.can_create_promotions = True
+        merchant.can_create_promotions = (
+            any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
+            if active_subs
+            else True
+        )
         db.commit()
         db.refresh(merchant)
         if merchant.user_id:
             SubscriptionService._apply_user_entitlements(db, merchant.user_id)
         return merchant
+
+    @staticmethod
+    def merged_grants(
+        db: Session,
+        user_id: Optional[int] = None,
+        merchant_profile_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """OR together the checkbox grants on every active subscription."""
+        SubscriptionService.ensure_default_packages(db)
+        SubscriptionService._expire_due_subscriptions(db, user_id)
+        now = datetime.now(timezone.utc)
+        query = (
+            db.query(UserSubscription)
+            .options(joinedload(UserSubscription.package))
+            .filter(UserSubscription.status == UserSubscriptionStatus.ACTIVE)
+        )
+        if merchant_profile_id is not None:
+            query = query.filter(UserSubscription.merchant_profile_id == merchant_profile_id)
+        elif user_id is not None:
+            query = query.filter(UserSubscription.user_id == user_id)
+        else:
+            return {}
+        merged: Dict[str, Any] = {}
+        for sub in query.all():
+            if sub.expires_at and _as_utc(sub.expires_at) < now:
+                continue
+            normalized = SubscriptionService._grants_with_access(
+                (sub.package.grants or {}) if sub.package else {}, None
+            )
+            for key, value in normalized.items():
+                if value:
+                    merged[key] = True
+        return merged
+
+    @staticmethod
+    def assert_can_sell(db: Session, user: User) -> None:
+        if user.role in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            return
+        SubscriptionService._apply_user_entitlements(db, user.id)
+        db.refresh(user)
+        if not user.can_sell_products:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="A subscription with product selling is required. Customers need the ₹499 plan. Merchants need the ₹2999 plan or higher.",
+            )
+
+    @staticmethod
+    def assert_merchant_grant(db: Session, merchant_profile_id: int, key: str, message: str) -> None:
+        grants = SubscriptionService.merged_grants(db, merchant_profile_id=merchant_profile_id)
+        if not grants.get(key):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
 
     @staticmethod
     def _audience_value(pkg: SubscriptionPackage) -> str:

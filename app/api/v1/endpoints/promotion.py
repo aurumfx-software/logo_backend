@@ -272,7 +272,6 @@ def create_promotion(
         _assert_merchant_promo_permission(
             db, merchant, current_user, payload.placement, payload.media_type
         )
-
         payload.merchant_id = merchant.id
         payload.merchant_name = merchant.business_name
         placement_str = str(payload.placement or "").strip()

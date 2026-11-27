@@ -31,6 +31,14 @@ def _register_and_login(client: TestClient) -> tuple[str, int]:
 def test_merchant_advertisement_shows_on_details(client: TestClient):
     token, merchant_id = _register_and_login(client)
     headers = {"Authorization": f"Bearer {token}"}
+    packages = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    detail_plan = next(item for item in packages if item["code"] == "MERCHANT_DETAIL_3999")
+    subscribed = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=headers,
+        json={"package_id": detail_plan["id"], "merchant_profile_id": merchant_id, "payment_reference": "AD-3999"},
+    )
+    assert subscribed.status_code == 201, subscribed.text
 
     created = client.post(
         "/api/v1/merchants/me/advertisements",

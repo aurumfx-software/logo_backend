@@ -923,6 +923,14 @@ def create_merchant_advertisement(
     db: Session = Depends(get_db),
 ) -> StandardResponse[AdvertisementResponse]:
     merchant = AdvertisementService.merchant_for_user(db, current_user)
+    from app.services.subscription_service import SubscriptionService
+
+    SubscriptionService.assert_merchant_grant(
+        db,
+        merchant.id,
+        "can_add_detail_page_ad",
+        "The ₹3999 plan is required to add an advertisement on the merchant details page.",
+    )
     ad = AdvertisementService.create(db, merchant, data)
     return success_response(
         data=AdvertisementResponse.model_validate(ad),
