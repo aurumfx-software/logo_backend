@@ -87,7 +87,7 @@ def list_all_wallet_transactions(
 )
 def impersonate_member(
     user_id: str,
-    current_admin: User = Depends(require_super_admin),
+    current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     return AuthService.impersonate_user(db, current_admin, user_id)
@@ -550,7 +550,7 @@ def get_activity_log_actions(
 )
 def impersonate_member(
     user_id: str,
-    admin_user: User = Depends(require_super_admin),
+    admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     target_user = None

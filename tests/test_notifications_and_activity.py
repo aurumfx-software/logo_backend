@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.security import hash_password
 from app.db.models.user import User, UserRole
 from app.db.models.merchant import MerchantProfile
+from tests.conftest import merchant_reg_payment_payload
 
 
 def get_token(client: TestClient, email: str, password: str) -> str:
@@ -38,6 +39,7 @@ def setup_admin_and_merchant(client: TestClient, db_session: Session):
         "merchant_photos": ["https://example.com/salon1.jpg"],
         "contact_number": "9876500001",
         "address": "Opposite Metro Pillar 490, Palarivattom, Kochi",
+        **merchant_reg_payment_payload(client),
     }
     client.post("/api/v1/merchants/register", json=reg_payload)
     merchant_token = get_token(client, "suresh.salon@example.com", "MerchantPass123!")

@@ -1685,6 +1685,22 @@ class WalletService:
 
     @staticmethod
     def redeem_sale_cashback(db: Session, customer: User, token: str) -> SaleRedeemResponse:
+        from app.services.subscription_service import SubscriptionService
+
+        if customer.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            SubscriptionService._apply_user_entitlements(db, customer.id)
+            db.refresh(customer)
+            u_grants = SubscriptionService.merged_grants(db, user_id=customer.id)
+            if not (
+                customer.can_sell_products
+                or u_grants.get("cashback_on_sales")
+                or u_grants.get("can_sell_products")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="₹500 Seller & Cashback Plan subscription required to unlock Wallet Cashback rewards.",
+                )
+
         sale_qr = (
             db.query(MerchantSaleQR)
             .filter(MerchantSaleQR.token == token)
@@ -1964,6 +1980,22 @@ class WalletService:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This reward does not belong to you.")
         if claim.status != RewardClaimStatus.PENDING:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"This reward has already been {claim.status.lower()}.")
+
+        if not claim.merchant_profile_id and user.role not in (UserRole.MERCHANT, UserRole.ADMIN, UserRole.SUPER_ADMIN):
+            from app.services.subscription_service import SubscriptionService
+
+            SubscriptionService._apply_user_entitlements(db, user.id)
+            db.refresh(user)
+            u_grants = SubscriptionService.merged_grants(db, user_id=user.id)
+            if not (
+                user.can_sell_products
+                or u_grants.get("cashback_on_sales")
+                or u_grants.get("can_sell_products")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="₹500 Seller & Cashback Plan subscription required to redeem cashback rewards.",
+                )
 
         wallet = WalletService.ensure_wallet_for_user(db, user.id)
         db.flush()

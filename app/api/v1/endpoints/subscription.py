@@ -123,8 +123,9 @@ def get_my_active_subscriptions(
         user_id=user.id,
         include_user_seller=True,
     )
-    merchant_flag = bool(filtered_merchant_subs) or bool(
-        shop and shop.has_active_subscription
+    merchant_flag = any(
+        str(getattr(s.package, "code", "") or "").upper() != "MERCHANT_REGISTER_1000"
+        for s in filtered_merchant_subs
     )
     grants = SubscriptionService.merged_grants(db, user_id=user.id)
     if target_merchant_id:

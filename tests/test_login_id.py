@@ -2,6 +2,8 @@ import re
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import merchant_reg_payment_payload
+
 
 LOGIN_ID = re.compile(r"^[A-Z]{3}\d{5,6}$")
 
@@ -43,6 +45,7 @@ def test_customer_and_merchant_login_with_name_id(client: TestClient):
             "service_timing": "Mon-Sun: 09:00 AM - 09:00 PM",
             "contact_number": "9876501199",
             "address": "Door No 14, Edappally, Kochi",
+            **merchant_reg_payment_payload(client),
         },
     )
     assert merchant.status_code == 201
@@ -145,6 +148,7 @@ def test_login_id_only_flag_blocks_email_for_customer_and_merchant(client: TestC
             "service_timing": "9-9",
             "contact_number": "9876508877",
             "address": "MG Road, Kochi",
+            **merchant_reg_payment_payload(client),
         },
     )
     assert merchant.status_code == 201

@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
 
+from tests.conftest import merchant_reg_payment_payload
+
 
 def _register_and_login(client: TestClient) -> tuple[str, int]:
     created = client.post(
@@ -16,6 +18,7 @@ def _register_and_login(client: TestClient) -> tuple[str, int]:
             "merchant_photos": [],
             "contact_number": "9876500111",
             "address": "MG Road, Kochi",
+            **merchant_reg_payment_payload(client),
         },
     )
     assert created.status_code == 201

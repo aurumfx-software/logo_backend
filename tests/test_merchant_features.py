@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db.models.user import User, UserRole
+from tests.conftest import merchant_reg_payment_payload
 
 
 def get_token(client: TestClient, email: str, password: str) -> str:
@@ -38,6 +39,7 @@ def register_merchant_helper(client: TestClient, name: str, email: str, loc: str
         "merchant_photos": [],
         "contact_number": phone_digits,
         "address": f"123 Main Street, {loc}",
+        **merchant_reg_payment_payload(client),
     }
     res = client.post("/api/v1/merchants/register", json=payload)
     assert res.status_code == 201
@@ -267,6 +269,7 @@ def test_field_staff_merchant_onboarding(client: TestClient, db_session: Session
         "merchant_photos": ["/static/merchants/photos/photo1.jpg"],
         "verification_documents": ["/static/merchants/documents/lic.pdf"],
         "merchant_videos": ["/static/merchants/videos/tour.mp4"],
+        **merchant_reg_payment_payload(client),
     }
     res = client.post("/api/v1/merchants/onboard", json=payload_no_email)
     assert res.status_code == 201, res.text
@@ -345,6 +348,7 @@ def test_merchant_media_upload_flow(client: TestClient, db_session: Session):
             "owner_name": "Sunil Kumar",
             "phone_number": "9112233445",
             "address": "Service Bay 3",
+            **merchant_reg_payment_payload(client),
         },
     )
     assert onboard_res.status_code == 201
@@ -614,6 +618,7 @@ def test_merchant_list_and_onboard_by_user_code(client: TestClient, db_session: 
         "district": "Ernakulam",
         "city": "Kochi",
         "location": "Edappally",
+        **merchant_reg_payment_payload(client),
     }
     res = client.post("/api/v1/merchants/onboard", json=onboard_payload)
     assert res.status_code == 201
@@ -663,6 +668,7 @@ def test_new_merchant_profile_schema_fields(client: TestClient, db_session: Sess
         "photo_4": "https://example.com/photo4.jpg",
         "video_url": "https://example.com/promo.mp4",
         "status": "PENDING",
+        **merchant_reg_payment_payload(client),
     }
     res = client.post("/api/v1/merchants/onboard", json=payload)
     assert res.status_code == 201

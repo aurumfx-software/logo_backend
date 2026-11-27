@@ -9,6 +9,7 @@ from app.core.security import hash_password
 from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
 from app.services.wallet_service import WalletService
+from tests.conftest import grant_seller_plan
 
 
 def _auth_headers(client: TestClient, email: str, password: str) -> dict:
@@ -112,6 +113,14 @@ def test_sale_qr_cashback_split(client: TestClient, db_session: Session):
     assert qr_res.json()["estimated_company_fee"] == "20.00"
 
     customer_headers = _auth_headers(client, customer.email, "Password123!")
+    denied_without_plan = client.post(
+        "/api/v1/wallet/sales/redeem",
+        headers=customer_headers,
+        json={"token": token},
+    )
+    assert denied_without_plan.status_code == 403
+
+    grant_seller_plan(client, customer_headers)
     redeem_res = client.post(
         "/api/v1/wallet/sales/redeem",
         headers=customer_headers,
@@ -180,6 +189,10 @@ def test_sale_qr_uses_merchant_table_cashback_percent(client: TestClient, db_ses
     assert qr["estimated_cashback_total"] == "80.00"
 
     customer_headers = _auth_headers(client, customer.email, "Password123!")
+    grant_seller_plan(client, customer_headers)
+    before_platform = client.get("/api/v1/wallet/platform", headers=admin_headers).json()
+    before_balance = Decimal(before_platform["balance"])
+    before_rev = Decimal(before_platform["total_platform_revenue"])
     redeem_res = client.post(
         "/api/v1/wallet/sales/redeem",
         headers=customer_headers,
@@ -196,8 +209,8 @@ def test_sale_qr_uses_merchant_table_cashback_percent(client: TestClient, db_ses
     platform = client.get("/api/v1/wallet/platform", headers=admin_headers)
     assert platform.status_code == 200
     screen = platform.json()
-    assert screen["balance"] == "30.00"
-    assert screen["total_platform_revenue"] == "30.00"
+    assert Decimal(screen["balance"]) - before_balance == Decimal("30.00")
+    assert Decimal(screen["total_platform_revenue"]) - before_rev == Decimal("30.00")
     assert screen["cashback_distributed"] == "50.00"
     assert screen["gross_sales_volume"] == "1000.00"
     assert screen["qr_redemptions"] == 1
@@ -234,6 +247,7 @@ def test_merchant_qr_status_pending_then_redeemed(client: TestClient, db_session
     assert pending.json()["qr_payload"]
 
     customer_headers = _auth_headers(client, customer.email, "Password123!")
+    grant_seller_plan(client, customer_headers)
     client.post(
         "/api/v1/wallet/sales/redeem",
         headers=customer_headers,
@@ -261,6 +275,14 @@ def test_insufficient_merchant_balance_blocks_redeem(client: TestClient, db_sess
     token = qr_res.json()["token"]
 
     customer_headers = _auth_headers(client, customer.email, "Password123!")
+    denied_without_plan = client.post(
+        "/api/v1/wallet/sales/redeem",
+        headers=customer_headers,
+        json={"token": token},
+    )
+    assert denied_without_plan.status_code == 403
+
+    grant_seller_plan(client, customer_headers)
     redeem_res = client.post(
         "/api/v1/wallet/sales/redeem",
         headers=customer_headers,
@@ -300,6 +322,7 @@ def test_websocket_merchant_receives_sale_redeemed(client: TestClient, db_sessio
         assert ws.receive_json()["event"] == "subscribed"
 
         customer_headers = _auth_headers(client, customer.email, "Password123!")
+        grant_seller_plan(client, customer_headers)
         redeem_res = client.post(
             "/api/v1/wallet/sales/redeem",
             headers=customer_headers,

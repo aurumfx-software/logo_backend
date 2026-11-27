@@ -20,9 +20,15 @@ os.environ["SMTP_PASSWORD"] = ""
 os.environ["SMTP_FROM"] = ""
 os.environ["RESEND_API_KEY"] = ""
 os.environ["RESEND_FROM_EMAIL"] = ""
+os.environ["RAZORPAY_KEY_ID"] = ""
+os.environ["RAZORPAY_KEY_SECRET"] = ""
 
+from app.core.config import settings
 from app.db.database import Base, get_db
 from app.main import app
+
+settings.RAZORPAY_KEY_ID = ""
+settings.RAZORPAY_KEY_SECRET = ""
 
 # Create in-memory SQLite engine for tests
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -76,4 +82,16 @@ def grant_seller_plan(client, headers):
         json={"package_id": package["id"], "payment_reference": "TEST-SELLER"},
     )
     assert result.status_code == 201, result.text
+
+
+def merchant_reg_payment_payload(client):
+    """Create a ₹1,000 Razorpay merchant registration order + simulated proof."""
+    order_res = client.post("/api/v1/merchants/register/razorpay-order", json={})
+    assert order_res.status_code in (200, 201), order_res.text
+    order_data = order_res.json()
+    return {
+        "razorpay_order_id": order_data["razorpay_order_id"],
+        "razorpay_payment_id": "pay_dev_mreg_test",
+        "razorpay_signature": "dev_signature_ok",
+    }
 

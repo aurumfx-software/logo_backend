@@ -41,8 +41,11 @@ def test_admin_impersonates_customer_and_merchant_then_switches_back(client: Tes
     super_headers = {"Authorization": f"Bearer {_login(client, super_admin.email)}"}
     headers = {"Authorization": f"Bearer {_login(client, admin.email)}"}
 
-    admin_member_denied = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=headers)
-    assert admin_member_denied.status_code == 403
+    admin_member_ok = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=headers)
+    assert admin_member_ok.status_code == 200
+    assert admin_member_ok.json()["impersonated_by"] == admin.id
+    assert admin_member_ok.json()["role"] == "FIELD_STAFF"
+    assert admin_member_ok.json()["user"]["id"] == customer.id
 
     as_customer = client.post(f"/api/v1/admin/members/{customer.id}/impersonate", headers=super_headers)
     assert as_customer.status_code == 200

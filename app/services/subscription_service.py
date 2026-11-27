@@ -89,6 +89,18 @@ class SubscriptionService:
             "sort_order": 1,
         },
         {
+            "code": "MERCHANT_REGISTER_1000",
+            "name": "Merchant Registration ₹1000",
+            "description": "Mandatory ₹1000 onboarding & directory registration subscription for new merchants.",
+            "audience": SubscriptionAudience.MERCHANT,
+            "price": Decimal("1000"),
+            "billing_period": "ONE_TIME",
+            "duration_days": 3650,
+            "features": ["Merchant Directory Registration"],
+            "grants": {"_granular": True},
+            "sort_order": -1,
+        },
+        {
             "code": "MERCHANT_PROMO_BASIC",
             "name": "Merchant Photos ₹999",
             "description": "Add photos on the merchant profile.",
@@ -775,6 +787,7 @@ class SubscriptionService:
         active_subs = (
             db.query(UserSubscription)
             .join(SubscriptionPackage)
+            .options(joinedload(UserSubscription.package))
             .filter(
                 UserSubscription.merchant_profile_id == merchant_profile_id,
                 UserSubscription.status == UserSubscriptionStatus.ACTIVE,
@@ -782,20 +795,17 @@ class SubscriptionService:
             )
             .all()
         )
-        active_subs = [
+        feature_subs = [
             s
             for s in active_subs
-            if s.expires_at is None or _as_utc(s.expires_at) >= now
+            if (s.expires_at is None or _as_utc(s.expires_at) >= now)
+            and (not s.package or str(s.package.code or "").upper() != "MERCHANT_REGISTER_1000")
         ]
         grants = SubscriptionService.get_merchant_grants(
             db, merchant_profile_id, include_user_seller=False
         )
-        merchant.has_active_subscription = len(active_subs) > 0
-        merchant.can_create_promotions = (
-            any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
-            if active_subs
-            else True
-        )
+        merchant.has_active_subscription = len(feature_subs) > 0
+        merchant.can_create_promotions = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
         db.commit()
         db.refresh(merchant)
         if merchant.user_id:
@@ -925,7 +935,7 @@ class SubscriptionService:
             status_ok = (merchant.approval_status or "").upper() in approved or (
                 merchant.status or ""
             ).upper() in approved
-            if not status_ok:
+            if not status_ok and str(pkg.code or "").upper() != "MERCHANT_REGISTER_1000":
                 merchant.status = "APPROVED"
                 merchant.approval_status = "APPROVED"
                 db.commit()
@@ -1222,3 +1232,96 @@ class SubscriptionService:
             payment_reference=payment_id or order_id,
         )
         return SubscriptionService.subscribe(db=db, user=user, payload=sub_req)
+
+    @staticmethod
+    def create_merchant_registration_order(
+        db: Session,
+        email: Optional[str] = None,
+        business_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        import uuid
+        from app.services.razorpay_service import RazorpayService
+
+        SubscriptionService.ensure_default_packages(db)
+        pkg = (
+            db.query(SubscriptionPackage)
+            .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
+            .first()
+        )
+        amount = SubscriptionService._money(pkg.price if pkg and pkg.price else Decimal("1000"))
+        if amount <= 0:
+            amount = Decimal("1000.00")
+        amount_paise = RazorpayService.inr_to_paise(amount)
+        receipt = f"MREG-{uuid.uuid4().hex[:12].upper()}"
+        notes = {
+            "purpose": "merchant_registration",
+            "package_code": "MERCHANT_REGISTER_1000",
+            "email": str(email or ""),
+            "business_name": str(business_name or ""),
+        }
+        if RazorpayService.is_configured():
+            rp_order = RazorpayService.create_order(
+                amount_paise=amount_paise,
+                receipt=receipt,
+                notes=notes,
+            )
+            order_id = str(rp_order["id"])
+        else:
+            order_id = f"order_dev_mreg_{uuid.uuid4().hex[:12]}"
+        return {
+            "message": "Razorpay ₹1000 merchant registration order created",
+            "razorpay_key_id": RazorpayService.get_public_key(),
+            "razorpay_order_id": order_id,
+            "amount": float(amount),
+            "amount_paise": amount_paise,
+            "currency": "INR",
+            "package_code": "MERCHANT_REGISTER_1000",
+            "package_name": pkg.name if pkg else "Merchant Registration ₹1000",
+        }
+
+    @staticmethod
+    def assert_merchant_registration_payment(
+        razorpay_order_id: Optional[str],
+        razorpay_payment_id: Optional[str],
+        razorpay_signature: Optional[str],
+    ) -> Tuple[str, str]:
+        from app.services.razorpay_service import RazorpayService
+
+        order_id = str(razorpay_order_id or "").strip()
+        payment_id = str(razorpay_payment_id or "").strip()
+        signature = str(razorpay_signature or "").strip()
+        if not order_id or not payment_id:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail="₹1,000 Merchant Registration Subscription payment via Razorpay is required to register as a Merchant.",
+            )
+        if not order_id.startswith("order_dev_mreg_") and not order_id.startswith("order_dev_"):
+            RazorpayService.verify_payment_signature(order_id, payment_id, signature)
+        return order_id, payment_id
+
+    @staticmethod
+    def record_merchant_registration_subscription(
+        db: Session,
+        user: User,
+        merchant: MerchantProfile,
+        payment_reference: str,
+    ) -> Optional[UserSubscription]:
+        SubscriptionService.ensure_default_packages(db)
+        pkg = (
+            db.query(SubscriptionPackage)
+            .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
+            .first()
+        )
+        if not pkg:
+            return None
+        return SubscriptionService.subscribe(
+            db=db,
+            user=user,
+            payload=SubscribeRequest(
+                package_id=pkg.id,
+                merchant_profile_id=merchant.id,
+                payment_reference=payment_reference,
+            ),
+            admin_override=True,
+            amount_paid=SubscriptionService._money(pkg.price or Decimal("1000")),
+        )

@@ -36,6 +36,9 @@ class MerchantRegisterRequest(BaseModel):
         le=100,
         description="Merchant commission percent. Zero is allowed and sets both commissions to zero.",
     )
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
     @field_validator("email")
     @classmethod
@@ -216,6 +219,9 @@ class MerchantOnboardingRequest(BaseModel):
         le=100,
         description="Merchant commission percent. Zero is allowed and sets both commissions to zero.",
     )
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
     # Social & Web links
     website: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://example.com"})
@@ -249,6 +255,9 @@ class MerchantOnboardingRequest(BaseModel):
     status: Optional[str] = Field("PENDING", max_length=50)
     services: Optional[List[str]] = Field(default_factory=list)
     service_timing: Optional[str] = Field("General Store Hours")
+    razorpay_order_id: Optional[str] = None
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -358,6 +367,22 @@ class MerchantOnboardingResponse(BaseModel):
     message: str
     merchant: MerchantProfileResponse
     user: Optional[SafeUserResponse] = None
+
+
+class MerchantRegistrationOrderRequest(BaseModel):
+    email: Optional[str] = None
+    business_name: Optional[str] = None
+
+
+class MerchantRegistrationOrderResponse(BaseModel):
+    message: str = "Razorpay merchant registration order created"
+    razorpay_key_id: str = ""
+    razorpay_order_id: str
+    amount: float
+    amount_paise: int
+    currency: str = "INR"
+    package_code: str = "MERCHANT_REGISTER_1000"
+    package_name: str = "Merchant Registration ₹1000"
 
 
 class MerchantMediaUploadResponse(BaseModel):

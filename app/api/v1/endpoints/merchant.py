@@ -37,6 +37,8 @@ from app.schemas.merchant import (
     MerchantProfileResponse,
     MerchantRegisterRequest,
     MerchantRegisterResponse,
+    MerchantRegistrationOrderRequest,
+    MerchantRegistrationOrderResponse,
     MerchantRejectRequest,
     MerchantStatsResponse,
     MerchantUpdateRequest,
@@ -153,23 +155,59 @@ def _assert_merchant_media_permissions(
 
 
 @router.post(
+    "/register/razorpay-order",
+    response_model=MerchantRegistrationOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create ₹1000 Razorpay order for new merchant registration",
+)
+def create_merchant_registration_razorpay_order(
+    payload: Optional[MerchantRegistrationOrderRequest] = None,
+    db: Session = Depends(get_db),
+) -> MerchantRegistrationOrderResponse:
+    from app.services.subscription_service import SubscriptionService
+
+    res = SubscriptionService.create_merchant_registration_order(
+        db=db,
+        email=payload.email if payload else None,
+        business_name=payload.business_name if payload else None,
+    )
+    return MerchantRegistrationOrderResponse(**res)
+
+
+@router.post(
     "/register",
     response_model=MerchantRegisterResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new merchant",
     description=(
-        "Creates a merchant owner in users (role MERCHANT) and a business profile in merchant_profiles."
+        "Creates a merchant owner in users (role MERCHANT) and a business profile in merchant_profiles. "
+        "Requires verified ₹1,000 Merchant Registration Subscription payment via Razorpay."
     ),
 )
 def register_merchant(
     merchant_data: MerchantRegisterRequest,
     db: Session = Depends(get_db),
 ) -> MerchantRegisterResponse:
+    from app.services.subscription_service import SubscriptionService
+
+    order_id, payment_id = SubscriptionService.assert_merchant_registration_payment(
+        merchant_data.razorpay_order_id,
+        merchant_data.razorpay_payment_id,
+        merchant_data.razorpay_signature,
+    )
     user, merchant = MerchantService.register_merchant(db=db, data=merchant_data)
+    SubscriptionService.record_merchant_registration_subscription(
+        db=db,
+        user=user,
+        merchant=merchant,
+        payment_reference=payment_id or order_id,
+    )
+    db.refresh(merchant)
+    grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=user.id)
     return MerchantRegisterResponse(
         message="Merchant registered successfully",
         user=SafeUserResponse.model_validate(user),
-        merchant=MerchantService.build_merchant_response(merchant),
+        merchant=MerchantService.build_merchant_response(merchant, merchant_grants=grants),
     )
 
 
@@ -192,9 +230,7 @@ def register_merchant(
     status_code=status.HTTP_201_CREATED,
     summary="Field Staff Merchant Onboarding",
     description=(
-        "Registers a new merchant via the Field Staff Onboarding Form. "
-        "Captures Business Name, Category, Owner/Contact Person, Phone Number, "
-        "District, City, Location, Address, Landmark, Photos, Documents, and Videos."
+        "Registers a new merchant via the Field Staff Onboarding Form or Self-Registration (₹1,000 subscription required for self-registration)."
     ),
 )
 @router.post(
@@ -208,12 +244,38 @@ def onboard_merchant(
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> MerchantOnboardingResponse:
+    from app.services.subscription_service import SubscriptionService
+
+    role_val = (
+        str(getattr(current_user.role, "value", current_user.role) or "").strip().upper()
+        if current_user
+        else ""
+    )
+    is_privileged = role_val in ("ADMIN", "SUPER_ADMIN", "FIELD_STAFF", "MANAGER")
+    payment_ref = None
+    if not is_privileged:
+        order_id, payment_id = SubscriptionService.assert_merchant_registration_payment(
+            data.razorpay_order_id,
+            data.razorpay_payment_id,
+            data.razorpay_signature,
+        )
+        payment_ref = payment_id or order_id
+
     user, merchant = MerchantService.onboard_merchant(
         db=db, data=data, onboarded_by=current_user
     )
+    if payment_ref:
+        SubscriptionService.record_merchant_registration_subscription(
+            db=db,
+            user=user,
+            merchant=merchant,
+            payment_reference=payment_ref,
+        )
+        db.refresh(merchant)
+    grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=user.id)
     return MerchantOnboardingResponse(
         message="Merchant onboarded successfully",
-        merchant=MerchantService.build_merchant_response(merchant),
+        merchant=MerchantService.build_merchant_response(merchant, merchant_grants=grants),
         user=SafeUserResponse.model_validate(user),
     )
 

@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from tests.conftest import merchant_reg_payment_payload
+
 
 def test_merchant_registration_success(client: TestClient):
     payload = {
@@ -18,6 +20,7 @@ def test_merchant_registration_success(client: TestClient):
         ],
         "contact_number": "9876543999",
         "address": "Door No 14/204, Toll Junction, Edappally, Kochi - 682024",
+        **merchant_reg_payment_payload(client),
     }
     response = client.post("/api/v1/merchants/register", json=payload)
     assert response.status_code == 201
@@ -49,6 +52,7 @@ def test_merchant_login_and_get_profile(client: TestClient):
         "merchant_photos": [],
         "contact_number": "9876543888",
         "address": "Main Avenue, Panampilly Nagar, Kochi",
+        **merchant_reg_payment_payload(client),
     }
     client.post("/api/v1/merchants/register", json=reg_payload)
 
@@ -89,6 +93,7 @@ def test_merchant_me_returns_cashback_rates_from_table(client: TestClient, db_se
             "service_timing": "09:00 AM - 09:00 PM",
             "contact_number": "9876501122",
             "address": "MG Road, Kochi",
+            **merchant_reg_payment_payload(client),
         },
     )
     assert created.status_code == 201
@@ -129,6 +134,7 @@ def test_merchant_update_profile(client: TestClient):
         "merchant_photos": [],
         "contact_number": "9876543777",
         "address": "Kaloor Stadium Link Road, Kochi",
+        **merchant_reg_payment_payload(client),
     }
     client.post("/api/v1/merchants/register", json=reg_payload)
 
@@ -267,6 +273,7 @@ def test_merchant_logout(client: TestClient):
         "merchant_photos": [],
         "contact_number": "9876500001",
         "address": "Kochi Kerala",
+        **merchant_reg_payment_payload(client),
     }
     client.post("/api/v1/merchants/register", json=reg_payload)
     login_res = client.post(
@@ -301,6 +308,7 @@ def test_create_merchant_accepts_password_and_zero_commission(client: TestClient
             "category": "Retail",
             "cashback_percent": 0,
             "company_fee_percent": 4,
+            **merchant_reg_payment_payload(client),
         },
     )
     assert created.status_code == 201
@@ -330,3 +338,199 @@ def test_create_merchant_accepts_password_and_zero_commission(client: TestClient
     assert cleared.status_code == 200
     assert cleared.json()["cashback_percent"] == 0
     assert cleared.json()["company_fee_percent"] == 0
+
+
+def test_merchant_register_requires_1000_payment_and_grants_zero_features(client: TestClient):
+    unpaid_reg = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Unpaid Merchant",
+            "email": "unpaid.mreg@example.com",
+            "password": "MerchantPassword123",
+            "business_name": "Unpaid Shop",
+            "categories": ["Retail"],
+            "location": "Kochi",
+            "services": ["Sales"],
+            "service_timing": "9-9",
+            "contact_number": "9876541111",
+            "address": "Kochi",
+        },
+    )
+    assert unpaid_reg.status_code == 402
+
+    unpaid_onboard = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Unpaid Onboard Shop",
+            "category": "Retail",
+            "owner_name": "Owner",
+            "phone_number": "9876541112",
+            "address": "Kochi",
+        },
+    )
+    assert unpaid_onboard.status_code == 402
+
+    paid_reg = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Paid Merchant",
+            "email": "paid.mreg@example.com",
+            "password": "MerchantPassword123",
+            "business_name": "Paid Shop",
+            "categories": ["Retail"],
+            "location": "Kochi",
+            "services": ["Sales"],
+            "service_timing": "9-9",
+            "contact_number": "9876541113",
+            "address": "Kochi",
+            **merchant_reg_payment_payload(client),
+        },
+    )
+    assert paid_reg.status_code == 201
+    grants = paid_reg.json()["merchant"]["merchant_grants"]
+    assert all(bool(grants.get(k)) is False for k in (
+        "merchant_profile_photos",
+        "merchant_profile_video",
+        "merchant_store_ad",
+        "merchant_store_video_ad",
+        "merchant_product_section",
+        "ad_home_top",
+    ))
+
+
+def test_old_merchant_stale_subscription_column_stays_locked(client: TestClient, db_session: Session):
+    from app.core.security import hash_password
+    from app.db.models.merchant import MerchantProfile
+    from app.db.models.user import User, UserRole
+
+    old_user = User(
+        name="Legacy Merchant",
+        email="legacy.locked@example.com",
+        password_hash=hash_password("MerchantPass123!"),
+        role=UserRole.MERCHANT,
+        is_active=True,
+    )
+    db_session.add(old_user)
+    db_session.commit()
+    db_session.refresh(old_user)
+
+    old_shop = MerchantProfile(
+        user_id=old_user.id,
+        business_name="Legacy Stale Flags Shop",
+        email="legacy.locked@example.com",
+        approval_status="APPROVED",
+        status="APPROVED",
+        has_active_subscription=True,
+        can_create_promotions=True,
+    )
+    db_session.add(old_shop)
+    db_session.commit()
+    db_session.refresh(old_shop)
+
+    token = client.post(
+        "/api/v1/auth/login",
+        json={"email": "legacy.locked@example.com", "password": "MerchantPass123!"},
+    ).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    sub_state = client.get(
+        f"/api/v1/subscriptions/me/active?merchant_profile_id={old_shop.id}",
+        headers=headers,
+    )
+    assert sub_state.status_code == 200
+    body = sub_state.json()["data"]
+    assert body["merchant_has_active_subscription"] is False
+    assert body["merchant_grants"]["merchant_store_ad"] is False
+    assert body["merchant_grants"]["ad_home_top"] is False
+
+    promo_attempt = client.post(
+        "/api/v1/promotions/",
+        headers=headers,
+        json={
+            "title": "Should Stay Locked",
+            "placement": "Merchant Store",
+            "media_type": "image",
+            "image_url": "https://example.com/ad.jpg",
+            "merchant_id": old_shop.id,
+        },
+    )
+    assert promo_attempt.status_code == 403
+
+
+def test_merchant_platform_banner_requires_admin_approval_before_active(client: TestClient, db_session: Session):
+    from app.core.security import hash_password
+    from app.db.models.user import User, UserRole
+
+    admin = User(
+        name="Banner Admin",
+        email="banner.admin@example.com",
+        password_hash=hash_password("AdminPass123!"),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    admin_token = client.post(
+        "/api/v1/auth/login",
+        json={"email": "banner.admin@example.com", "password": "AdminPass123!"},
+    ).json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    created_m = client.post(
+        "/api/v1/merchants/register",
+        json={
+            "name": "Banner Merchant",
+            "email": "banner.merchant@example.com",
+            "password": "MerchantPassword123",
+            "business_name": "Banner World",
+            "categories": ["Retail"],
+            "location": "Kochi",
+            "services": ["Sales"],
+            "service_timing": "9-9",
+            "contact_number": "9876542222",
+            "address": "Kochi",
+            **merchant_reg_payment_payload(client),
+        },
+    )
+    assert created_m.status_code == 201
+    merchant_id = created_m.json()["merchant"]["id"]
+
+    m_token = client.post(
+        "/api/v1/auth/login",
+        json={"email": "banner.merchant@example.com", "password": "MerchantPassword123"},
+    ).json()["access_token"]
+    m_headers = {"Authorization": f"Bearer {m_token}"}
+
+    packages = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    landing_pkg = next(p for p in packages if p["code"] == "MERCHANT_LANDING_4999")
+    sub_res = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=m_headers,
+        json={"package_id": landing_pkg["id"], "merchant_profile_id": merchant_id, "payment_reference": "LAND-4999"},
+    )
+    assert sub_res.status_code == 201
+
+    created_promo = client.post(
+        "/api/v1/promotions/",
+        headers=m_headers,
+        json={
+            "title": "Hero Top Merchant Promo",
+            "placement": "Home Top",
+            "media_type": "image",
+            "image_url": "https://example.com/hero.jpg",
+            "merchant_id": merchant_id,
+        },
+    )
+    assert created_promo.status_code in (200, 201), created_promo.text
+    promo_data = created_promo.json()["data"]
+    assert promo_data["status"] == "pending"
+
+    active_before = client.get("/api/v1/promotions/active").json()["data"]
+    assert not any(p["id"] == promo_data["id"] for p in active_before)
+
+    approved = client.post(f"/api/v1/promotions/{promo_data['id']}/approve", headers=admin_headers)
+    assert approved.status_code == 200
+    assert approved.json()["data"]["status"].lower() in ("active", "approved")
+
+    active_after = client.get("/api/v1/promotions/active").json()["data"]
+    assert any(p["id"] == promo_data["id"] for p in active_after)

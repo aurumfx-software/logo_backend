@@ -207,27 +207,10 @@ def _assert_merchant_promo_permission(
     )
     if grants.get(req_key):
         return
-    if not PromotionService.is_merchant_ad_subscription_active(db, merchant.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Subscription permission required: '{req_label}'. Please subscribe to a Merchant plan that unlocks this feature.",
-        )
-    has_sub_rows = (
-        db.query(UserSubscription)
-        .join(SubscriptionPackage)
-        .filter(
-            UserSubscription.merchant_profile_id == merchant.id,
-            UserSubscription.status == UserSubscriptionStatus.ACTIVE,
-            SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
-        )
-        .count()
-        > 0
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Subscription permission required: '{req_label}'. Please subscribe to an Admin plan that unlocks this feature.",
     )
-    if has_sub_rows:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Your active Merchant plan does not unlock '{req_label}'. Upgrade or add a plan with this permission.",
-        )
 
 
 @router.post("", response_model=StandardResponse[PromotionResponse], status_code=status.HTTP_201_CREATED, summary="Create promotion")
