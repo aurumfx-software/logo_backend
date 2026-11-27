@@ -117,18 +117,25 @@ def get_my_active_subscriptions(
         if target_merchant_id
         else merchant_subs
     )
+    merchant_grants = SubscriptionService.get_merchant_grants(
+        db=db,
+        merchant_profile_id=shop.id if shop else target_merchant_id,
+        user_id=user.id,
+        include_user_seller=True,
+    )
     merchant_flag = bool(filtered_merchant_subs) or bool(
         shop and shop.has_active_subscription
     )
     summary = ActiveSubscriptionSummary(
         user_subscriptions=[SubscriptionService._subscription_to_response(s) for s in user_subs],
         merchant_subscriptions=[SubscriptionService._subscription_to_response(s) for s in merchant_subs],
-        can_sell_products=user.can_sell_products,
-        is_subscriber=user.is_subscriber,
+        can_sell_products=bool(user.can_sell_products or merchant_grants.get("merchant_product_section")),
+        is_subscriber=bool(user.is_subscriber or merchant_grants.get("merchant_product_section")),
         subscription_plan=user.subscription_plan,
         merchant_has_active_subscription=merchant_flag,
         merchant_profile_id=shop.id if shop else target_merchant_id,
         merchant_business_name=shop.business_name if shop else None,
+        merchant_grants=merchant_grants,
     )
     return success_response(data=summary, message="Active subscription summary retrieved")
 
@@ -242,6 +249,24 @@ def admin_update_package(
     return success_response(
         data=SubscriptionPackageResponse.model_validate(pkg),
         message="Subscription package updated",
+    )
+
+
+@router.post(
+    "/admin/packages/{package_id}/duplicate",
+    response_model=StandardResponse[SubscriptionPackageResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Admin: duplicate subscription package",
+)
+def admin_duplicate_package(
+    package_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> StandardResponse[SubscriptionPackageResponse]:
+    pkg = SubscriptionService.duplicate_package(db=db, package_id=package_id)
+    return success_response(
+        data=SubscriptionPackageResponse.model_validate(pkg),
+        message="Subscription package duplicated",
     )
 
 

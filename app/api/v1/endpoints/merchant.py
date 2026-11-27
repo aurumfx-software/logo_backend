@@ -16,6 +16,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.db.database import get_db
+from app.db.models.merchant import MerchantProfile
 from app.db.models.user import User, UserRole
 from app.schemas.advertisement import (
     AdvertisementCreateRequest,
@@ -58,6 +59,97 @@ router = APIRouter(prefix="/merchants", tags=["Merchants"])
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".webm", ".avi", ".mkv", ".3gp"}
 ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"}
+
+
+def _assert_merchant_media_permissions(
+    db: Session,
+    merchant: Optional[MerchantProfile],
+    current_user: Optional[User],
+    *,
+    data: Optional[MerchantUpdateRequest] = None,
+    uploading_photos: bool = False,
+    uploading_videos: bool = False,
+) -> None:
+    """Enforce Admin-ticked subscription permissions on merchant profile photo/video updates."""
+    if current_user is None:
+        return
+    role_val = str(getattr(current_user.role, "value", current_user.role) or "").strip().upper()
+    if role_val in ("ADMIN", "SUPER_ADMIN", "FIELD_STAFF", "MANAGER"):
+        return
+
+    from app.services.subscription_service import SubscriptionService
+
+    grants = SubscriptionService.get_merchant_grants(
+        db,
+        merchant.id if merchant else None,
+        user_id=current_user.id,
+        include_user_seller=False,
+    )
+
+    if uploading_photos and not grants.get("merchant_profile_photos"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription with 'Store Profile Photos' permission is required to upload shop photos.",
+        )
+    if uploading_videos and not grants.get("merchant_profile_video"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription with 'Store Tour & Promo Video' permission is required to upload a store video.",
+        )
+    if data is None or merchant is None:
+        return
+
+    existing_photos = {
+        str(p).strip()
+        for p in (
+            [
+                merchant.photo_1,
+                merchant.photo_2,
+                merchant.photo_3,
+                merchant.photo_4,
+                merchant.photo_5,
+                merchant.photo_6,
+            ]
+            + list(merchant.merchant_photos or [])
+        )
+        if p and str(p).strip()
+    }
+    incoming_photos = []
+    for attr in ("photo_1", "photo_2", "photo_3", "photo_4", "photo_5", "photo_6"):
+        val = getattr(data, attr, None)
+        if val and str(val).strip():
+            incoming_photos.append(str(val).strip())
+    for attr in ("photos", "merchant_photos"):
+        lst = getattr(data, attr, None)
+        if isinstance(lst, list):
+            for val in lst:
+                if val and str(val).strip():
+                    incoming_photos.append(str(val).strip())
+
+    if any(p not in existing_photos for p in incoming_photos) and not grants.get("merchant_profile_photos"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription with 'Store Profile Photos' permission is required to add or update store photos.",
+        )
+
+    existing_videos = {
+        str(v).strip()
+        for v in ([merchant.video_url] + list(merchant.merchant_videos or []))
+        if v and str(v).strip()
+    }
+    incoming_videos = []
+    if getattr(data, "video_url", None) and str(data.video_url).strip():
+        incoming_videos.append(str(data.video_url).strip())
+    if isinstance(getattr(data, "merchant_videos", None), list):
+        for v in data.merchant_videos:
+            if v and str(v).strip():
+                incoming_videos.append(str(v).strip())
+
+    if any(v not in existing_videos for v in incoming_videos) and not grants.get("merchant_profile_video"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active subscription with 'Store Tour & Promo Video' permission is required to add or update store video.",
+        )
 
 
 @router.post(
@@ -141,8 +233,32 @@ def upload_merchant_media(
     documents: Optional[List[UploadFile]] = File(None, description="Verification documents (PDF, JPG, PNG)"),
     files: Optional[List[UploadFile]] = File(None, description="General media files auto-detected by extension"),
     merchant_id: Optional[int] = Form(None, description="Optional merchant ID to attach media to"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> MerchantMediaUploadResponse:
+    if current_user is not None:
+        has_img = bool(photos) or any(
+            os.path.splitext(getattr(f, "filename", "") or "")[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+            for f in (files or [])
+        )
+        has_vid = bool(videos) or any(
+            os.path.splitext(getattr(f, "filename", "") or "")[1].lower() in ALLOWED_VIDEO_EXTENSIONS
+            for f in (files or [])
+        )
+        if has_img or has_vid:
+            target_shop = (
+                db.query(MerchantProfile).filter(MerchantProfile.id == merchant_id).first()
+                if merchant_id
+                else None
+            )
+            _assert_merchant_media_permissions(
+                db,
+                target_shop,
+                current_user,
+                uploading_photos=has_img,
+                uploading_videos=has_vid,
+            )
+
     photos_dir = os.path.join("uploads", "merchants", "photos")
     videos_dir = os.path.join("uploads", "merchants", "videos")
     documents_dir = os.path.join("uploads", "merchants", "documents")
@@ -257,6 +373,7 @@ def upload_merchant_media_by_id(
     videos: Optional[List[UploadFile]] = File(None, description="Shop tour or promotion videos"),
     documents: Optional[List[UploadFile]] = File(None, description="Verification documents or licenses"),
     files: Optional[List[UploadFile]] = File(None, description="General media files auto-detected by extension"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> MerchantMediaUploadResponse:
     return upload_merchant_media(
@@ -265,6 +382,7 @@ def upload_merchant_media_by_id(
         documents=documents,
         files=files,
         merchant_id=merchant_id,
+        current_user=current_user,
         db=db,
     )
 
@@ -282,11 +400,14 @@ def get_my_merchant_profile(
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
+    from app.services.subscription_service import SubscriptionService
+
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
     db.refresh(merchant)
-    return MerchantService.build_merchant_response(merchant)
+    grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=current_user.id)
+    return MerchantService.build_merchant_response(merchant, merchant_grants=grants)
 
 
 @router.put(
@@ -300,13 +421,17 @@ def update_my_merchant_profile(
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
+    from app.services.subscription_service import SubscriptionService
+
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
+    _assert_merchant_media_permissions(db, merchant, current_user, data=update_data)
     updated = MerchantService.update_merchant(
         db=db, merchant=merchant, data=update_data
     )
-    return MerchantService.build_merchant_response(updated)
+    grants = SubscriptionService.get_merchant_grants(db, updated.id, user_id=current_user.id)
+    return MerchantService.build_merchant_response(updated, merchant_grants=grants)
 
 
 @router.get(
@@ -324,13 +449,23 @@ def get_my_merchants(
     current_user: User = Depends(require_any_authenticated),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
+    from app.services.subscription_service import SubscriptionService
+
     merchants = MerchantService.list_merchants(
         db=db,
         current_user=current_user,
         limit=200,
         scope_to_current_user=True,
     )
-    return [MerchantService.build_merchant_response(m) for m in merchants]
+    return [
+        MerchantService.build_merchant_response(
+            m,
+            merchant_grants=SubscriptionService.get_merchant_grants(
+                db, m.id, user_id=current_user.id
+            ),
+        )
+        for m in merchants
+    ]
 
 
 @router.post(
@@ -392,6 +527,7 @@ def upload_merchant_photos(
     merchant = MerchantService.get_merchant_by_user_id(
         db=db, user_id=current_user.id
     )
+    _assert_merchant_media_permissions(db, merchant, current_user, uploading_photos=True)
 
     upload_dir = os.path.join("uploads", "merchants")
     os.makedirs(upload_dir, exist_ok=True)
@@ -764,9 +900,13 @@ def get_current_merchant_profile(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Merchant profile not found for current user.",
         )
+    from app.services.subscription_service import SubscriptionService
+
+    grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=current_user.id)
     return MerchantService.build_merchant_response(
         merchant,
         advertisements=AdvertisementService.list_visible(db, merchant.id),
+        merchant_grants=grants,
     )
 
 
@@ -874,9 +1014,13 @@ def get_merchant_by_id(
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    from app.services.subscription_service import SubscriptionService
+
+    grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=merchant.user_id)
     return MerchantService.build_merchant_response(
         merchant,
         advertisements=AdvertisementService.list_visible(db, merchant.id),
+        merchant_grants=grants,
     )
 
 
@@ -900,8 +1044,9 @@ def update_merchant_by_id(
     db: Session = Depends(get_db),
 ) -> MerchantProfileResponse:
     merchant = MerchantService.get_merchant_by_id(db=db, merchant_id=merchant_id)
+    _assert_merchant_media_permissions(db, merchant, current_user, data=data)
     updated = MerchantService.update_merchant(db=db, merchant=merchant, data=data)
-    return MerchantService.build_merchant_response(updated)
+    return MerchantService.build_merchant_response(updated, include_grants=True)
 
 
 @router.delete(

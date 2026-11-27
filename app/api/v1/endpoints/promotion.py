@@ -141,11 +141,93 @@ def list_merchant_promotions(
         status_filter=status,
         placement=placement,
     )
+    if status_norm in ("active", "approved") and placement_norm == "merchant store":
+        from app.db.models.subscription import (
+            SubscriptionAudience,
+            SubscriptionPackage,
+            UserSubscription,
+            UserSubscriptionStatus,
+        )
+        from app.services.subscription_service import SubscriptionService
+
+        has_sub_rows = (
+            db.query(UserSubscription)
+            .join(SubscriptionPackage)
+            .filter(
+                UserSubscription.merchant_profile_id == merchant_id,
+                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+            )
+            .count()
+            > 0
+        )
+        if has_sub_rows:
+            grants = SubscriptionService.get_merchant_grants(
+                db, merchant_id, include_user_seller=False
+            )
+            promos = [
+                p
+                for p in promos
+                if (
+                    grants.get("merchant_store_video_ad")
+                    if str(getattr(p, "media_type", "") or "").strip().lower() == "video"
+                    else grants.get("merchant_store_ad")
+                )
+            ]
     return list_response(
         data=[PromotionResponse.model_validate(p) for p in promos],
         total_items=len(promos),
         message=f"Retrieved {len(promos)} promotions for merchant {merchant_id}",
     )
+
+
+def _assert_merchant_promo_permission(
+    db: Session,
+    merchant: MerchantProfile,
+    current_user: Optional[User],
+    placement: Optional[str],
+    media_type: Optional[str],
+) -> None:
+    from app.db.models.subscription import (
+        SubscriptionAudience,
+        SubscriptionPackage,
+        UserSubscription,
+        UserSubscriptionStatus,
+    )
+    from app.services.subscription_service import SubscriptionService
+
+    grants = SubscriptionService.get_merchant_grants(
+        db,
+        merchant.id,
+        user_id=current_user.id if current_user else None,
+        include_user_seller=False,
+    )
+    req_key, req_label = SubscriptionService.required_promotion_permission(
+        placement, media_type
+    )
+    if grants.get(req_key):
+        return
+    if not PromotionService.is_merchant_ad_subscription_active(db, merchant.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Subscription permission required: '{req_label}'. Please subscribe to a Merchant plan that unlocks this feature.",
+        )
+    has_sub_rows = (
+        db.query(UserSubscription)
+        .join(SubscriptionPackage)
+        .filter(
+            UserSubscription.merchant_profile_id == merchant.id,
+            UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+            SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+        )
+        .count()
+        > 0
+    )
+    if has_sub_rows:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Your active Merchant plan does not unlock '{req_label}'. Upgrade or add a plan with this permission.",
+        )
 
 
 @router.post("", response_model=StandardResponse[PromotionResponse], status_code=status.HTTP_201_CREATED, summary="Create promotion")
@@ -187,12 +269,9 @@ def create_promotion(
             )
 
         merchant = SubscriptionService._assert_merchant_access(db, current_user, merchant.id)
-
-        if not PromotionService.is_merchant_ad_subscription_active(db, merchant.id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="₹999 Merchant Advertisement Subscription required. Please complete Razorpay payment first.",
-            )
+        _assert_merchant_promo_permission(
+            db, merchant, current_user, payload.placement, payload.media_type
+        )
 
         payload.merchant_id = merchant.id
         payload.merchant_name = merchant.business_name
@@ -320,11 +399,22 @@ def update_promotion(
     existing = PromotionService.get_by_id(db, promo_id)
     is_admin = _assert_admin_or_promo_owner(db, current_user, existing)
     if not is_admin:
-        if not PromotionService.is_merchant_ad_subscription_active(db, existing.merchant_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="₹999 Merchant Advertisement Subscription required.",
-            )
+        from app.db.models.merchant import MerchantProfile
+
+        merch = (
+            db.query(MerchantProfile)
+            .filter(MerchantProfile.id == existing.merchant_id)
+            .first()
+        )
+        if not merch:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant not found.")
+        _assert_merchant_promo_permission(
+            db,
+            merch,
+            current_user,
+            payload.placement if payload.placement is not None else existing.placement,
+            payload.media_type if payload.media_type is not None else existing.media_type,
+        )
         if str(existing.placement or "").strip().lower() == "merchant store":
             if payload.status is not None:
                 st = str(payload.status).strip().lower()

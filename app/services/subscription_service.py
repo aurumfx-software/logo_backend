@@ -15,11 +15,25 @@ from app.db.models.subscription import (
 )
 from app.db.models.user import User, UserRole
 from app.schemas.subscription import (
+    MERCHANT_PERMISSION_CATALOG,
+    MERCHANT_PERMISSION_KEYS,
     AdminAssignSubscriptionRequest,
     SubscribeRequest,
     SubscriptionPackageCreateRequest,
     SubscriptionPackageUpdateRequest,
     UserSubscriptionResponse,
+)
+
+MERCHANT_AD_PERMISSION_KEYS: Tuple[str, ...] = (
+    "merchant_store_ad",
+    "merchant_store_video_ad",
+    "ad_home_top",
+    "ad_home_middle",
+    "ad_above_footer",
+    "ad_featured_offers",
+    "ad_special_deals",
+    "ad_business_network",
+    "ad_square_poster",
 )
 
 
@@ -136,10 +150,86 @@ class SubscriptionService:
         return pkg
 
     @staticmethod
+    def package_merchant_grants(grants: Optional[Dict[str, Any]]) -> Dict[str, bool]:
+        raw = grants if isinstance(grants, dict) else {}
+        resolved: Dict[str, bool] = {k: False for k in MERCHANT_PERMISSION_KEYS}
+        has_granular = bool(raw.get("_granular")) or any(k in raw for k in MERCHANT_PERMISSION_KEYS)
+        if has_granular:
+            for key in MERCHANT_PERMISSION_KEYS:
+                resolved[key] = bool(raw.get(key))
+            if raw.get("can_sell_products"):
+                resolved["merchant_product_section"] = True
+            return resolved
+        # Legacy non-granular merchant promo packages retain full ad access for backwards compatibility.
+        if raw.get("can_create_promotions"):
+            for key in MERCHANT_AD_PERMISSION_KEYS:
+                resolved[key] = True
+        if raw.get("can_sell_products"):
+            resolved["merchant_product_section"] = True
+        return resolved
+
+    @staticmethod
+    def build_features_from_grants(
+        grants: Optional[Dict[str, Any]], explicit_features: Optional[List[str]]
+    ) -> List[str]:
+        if explicit_features:
+            return [str(f).strip() for f in explicit_features if str(f).strip()]
+        raw = grants if isinstance(grants, dict) else {}
+        if bool(raw.get("_granular")) or any(k in raw for k in MERCHANT_PERMISSION_KEYS):
+            resolved = SubscriptionService.package_merchant_grants(raw)
+            return [item["label"] for item in MERCHANT_PERMISSION_CATALOG if resolved.get(item["key"])]
+        return []
+
+    @staticmethod
+    def required_promotion_permission(placement: Optional[str], media_type: Optional[str]) -> Tuple[str, str]:
+        p = str(placement or "").strip().lower()
+        m = str(media_type or "image").strip().lower()
+        if not p or p == "merchant store":
+            if m == "video":
+                return ("merchant_store_video_ad", "Store Video Advertisements")
+            return ("merchant_store_ad", "Store Page Ads (Image & Text)")
+        if "home top" in p or "hero" in p:
+            return ("ad_home_top", "Hero / Home Top Banner Ad")
+        if "home middle" in p or "middle banner" in p:
+            return ("ad_home_middle", "Home Middle Showcase Ad")
+        if "footer" in p:
+            return ("ad_above_footer", "Above Footer / Footer Strip Ad")
+        if "featured" in p or "category" in p:
+            return ("ad_featured_offers", "Featured Offers / Category Top Ad")
+        if "special" in p or "moving" in p or "in-between" in p or "popup" in p:
+            return ("ad_special_deals", "Special Deals / Feed / Popup Ad")
+        if "business network" in p:
+            return ("ad_business_network", "Business Network Poster Ad")
+        if "square" in p or "product section" in p:
+            return ("ad_square_poster", "Square Poster & Product Ad")
+        return ("merchant_store_ad", "Store Page Ads (Image & Text)")
+
+    @staticmethod
+    def _sync_subscribers_for_package(db: Session, pkg: SubscriptionPackage) -> None:
+        subs = (
+            db.query(UserSubscription)
+            .filter(
+                UserSubscription.package_id == pkg.id,
+                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+            )
+            .all()
+        )
+        seen_users = set()
+        seen_merchants = set()
+        for sub in subs:
+            if sub.merchant_profile_id and sub.merchant_profile_id not in seen_merchants:
+                seen_merchants.add(sub.merchant_profile_id)
+                SubscriptionService._apply_merchant_entitlements(db, sub.merchant_profile_id)
+            if sub.user_id and sub.user_id not in seen_users:
+                seen_users.add(sub.user_id)
+                SubscriptionService._apply_user_entitlements(db, sub.user_id)
+
+    @staticmethod
     def create_package(db: Session, data: SubscriptionPackageCreateRequest) -> SubscriptionPackage:
         code = data.code.strip().upper()
         if db.query(SubscriptionPackage).filter(SubscriptionPackage.code == code).first():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Package code already exists.")
+        features = SubscriptionService.build_features_from_grants(data.grants, data.features)
         pkg = SubscriptionPackage(
             code=code,
             name=data.name.strip(),
@@ -149,7 +239,7 @@ class SubscriptionService:
             currency=(data.currency or "INR").upper(),
             billing_period=data.billing_period,
             duration_days=data.duration_days,
-            features=data.features or [],
+            features=features,
             grants=data.grants or {},
             is_active=data.is_active,
             sort_order=data.sort_order,
@@ -176,17 +266,52 @@ class SubscriptionService:
             pkg.billing_period = data.billing_period
         if data.duration_days is not None:
             pkg.duration_days = data.duration_days
-        if data.features is not None:
-            pkg.features = data.features
         if data.grants is not None:
             pkg.grants = data.grants
+            if data.features is not None:
+                pkg.features = SubscriptionService.build_features_from_grants(data.grants, data.features)
+            else:
+                pkg.features = SubscriptionService.build_features_from_grants(data.grants, None) or pkg.features
+        elif data.features is not None:
+            pkg.features = data.features
         if data.is_active is not None:
             pkg.is_active = data.is_active
         if data.sort_order is not None:
             pkg.sort_order = data.sort_order
         db.commit()
         db.refresh(pkg)
+        SubscriptionService._sync_subscribers_for_package(db, pkg)
         return pkg
+
+    @staticmethod
+    def duplicate_package(db: Session, package_id: int) -> SubscriptionPackage:
+        src = SubscriptionService.get_package(db, package_id)
+        base_code = str(src.code or "MERCHANT_PLAN").strip().upper()[:48]
+        candidate = f"{base_code}_COPY"
+        idx = 2
+        while db.query(SubscriptionPackage).filter(SubscriptionPackage.code == candidate).first():
+            suffix = f"_COPY_{idx}"
+            candidate = f"{base_code[: max(1, 64 - len(suffix))]}{suffix}"
+            idx += 1
+        max_order = db.query(func.max(SubscriptionPackage.sort_order)).scalar() or 0
+        dup = SubscriptionPackage(
+            code=candidate,
+            name=f"{src.name} (Copy)"[:120],
+            description=src.description,
+            audience=src.audience,
+            price=src.price,
+            currency=src.currency,
+            billing_period=src.billing_period,
+            duration_days=src.duration_days,
+            features=list(src.features or []),
+            grants=dict(src.grants or {}),
+            is_active=True,
+            sort_order=int(max_order) + 1,
+        )
+        db.add(dup)
+        db.commit()
+        db.refresh(dup)
+        return dup
 
     @staticmethod
     def _subscription_to_response(sub: UserSubscription) -> UserSubscriptionResponse:
@@ -282,12 +407,102 @@ class SubscriptionService:
                 is_subscriber = True
             if grants.get("subscription_plan"):
                 plan = str(grants["subscription_plan"])
+        user_obj = user
+        shop = db.query(MerchantProfile).filter(MerchantProfile.user_id == user_id).first()
+        if not shop:
+            shop = SubscriptionService.merchant_for_account(db, user_obj)
+        if shop:
+            merchant_subs = (
+                db.query(UserSubscription)
+                .join(SubscriptionPackage)
+                .options(joinedload(UserSubscription.package))
+                .filter(
+                    UserSubscription.merchant_profile_id == shop.id,
+                    UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                    SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+                )
+                .all()
+            )
+            for msub in merchant_subs:
+                if msub.expires_at is not None and _as_utc(msub.expires_at) < now:
+                    continue
+                mgrants = SubscriptionService.package_merchant_grants(
+                    msub.package.grants if msub.package else {}
+                )
+                if mgrants.get("merchant_product_section"):
+                    can_sell = True
+                    if not plan:
+                        plan = msub.package.code if msub.package else "MERCHANT_PRODUCTS"
         user.can_sell_products = can_sell
         user.is_subscriber = is_subscriber or can_sell
         user.subscription_plan = plan
         db.commit()
         db.refresh(user)
         return user
+
+    @staticmethod
+    def get_merchant_grants(
+        db: Session,
+        merchant_profile_id: Optional[int],
+        user_id: Optional[int] = None,
+        include_user_seller: bool = True,
+    ) -> Dict[str, bool]:
+        combined: Dict[str, bool] = {k: False for k in MERCHANT_PERMISSION_KEYS}
+        now = datetime.now(timezone.utc)
+        shop: Optional[MerchantProfile] = None
+        if merchant_profile_id:
+            shop = db.query(MerchantProfile).filter(MerchantProfile.id == merchant_profile_id).first()
+        if shop is None and user_id:
+            owner = db.query(User).filter(User.id == user_id).first()
+            if owner:
+                shop = SubscriptionService.merchant_for_account(db, owner)
+
+        if shop:
+            active_subs = (
+                db.query(UserSubscription)
+                .join(SubscriptionPackage)
+                .options(joinedload(UserSubscription.package))
+                .filter(
+                    UserSubscription.merchant_profile_id == shop.id,
+                    UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                    SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+                )
+                .all()
+            )
+            for sub in active_subs:
+                if sub.expires_at is not None and _as_utc(sub.expires_at) < now:
+                    continue
+                pkg_grants = SubscriptionService.package_merchant_grants(
+                    sub.package.grants if sub.package else {}
+                )
+                for key, allowed in pkg_grants.items():
+                    if allowed:
+                        combined[key] = True
+
+        target_uid = user_id or (shop.user_id if shop else None)
+        if include_user_seller and target_uid:
+            owner_row = db.query(User).filter(User.id == target_uid).first()
+            if owner_row and owner_row.can_sell_products:
+                combined["merchant_product_section"] = True
+            else:
+                u_subs = (
+                    db.query(UserSubscription)
+                    .join(SubscriptionPackage)
+                    .options(joinedload(UserSubscription.package))
+                    .filter(
+                        UserSubscription.user_id == target_uid,
+                        UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                        SubscriptionPackage.audience == SubscriptionAudience.USER,
+                    )
+                    .all()
+                )
+                for usub in u_subs:
+                    if usub.expires_at is not None and _as_utc(usub.expires_at) < now:
+                        continue
+                    raw = (usub.package.grants or {}) if usub.package else {}
+                    if raw.get("can_sell_products"):
+                        combined["merchant_product_section"] = True
+        return combined
 
     @staticmethod
     def _apply_merchant_entitlements(db: Session, merchant_profile_id: int) -> MerchantProfile:
@@ -310,18 +525,18 @@ class SubscriptionService:
             for s in active_subs
             if s.expires_at is None or _as_utc(s.expires_at) >= now
         ]
-        can_promo = False
-        for sub in active_subs:
-            grants = (sub.package.grants or {}) if sub.package else {}
-            if grants.get("can_create_promotions"):
-                can_promo = True
         merchant.has_active_subscription = len(active_subs) > 0
         if active_subs:
-            merchant.can_create_promotions = can_promo or True
+            grants = SubscriptionService.get_merchant_grants(
+                db, merchant_profile_id, include_user_seller=False
+            )
+            merchant.can_create_promotions = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS) or True
         else:
             merchant.can_create_promotions = True
         db.commit()
         db.refresh(merchant)
+        if merchant.user_id:
+            SubscriptionService._apply_user_entitlements(db, merchant.user_id)
         return merchant
 
     @staticmethod

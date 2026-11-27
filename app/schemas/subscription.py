@@ -132,6 +132,84 @@ class AdminAssignSubscriptionRequest(BaseModel):
     amount_paid: Optional[Decimal] = None
 
 
+MERCHANT_PERMISSION_CATALOG: list[dict[str, str]] = [
+    {
+        "key": "merchant_profile_photos",
+        "label": "Store Profile Photos",
+        "group": "Profile Media",
+        "description": "Upload and update up to 4 shop gallery photos on Web & Mobile",
+    },
+    {
+        "key": "merchant_profile_video",
+        "label": "Store Tour & Promo Video",
+        "group": "Profile Media",
+        "description": "Upload store tour video in profile header on Web & Mobile",
+    },
+    {
+        "key": "merchant_store_ad",
+        "label": "Store Page Ads (Image & Text)",
+        "group": "Store Advertisements",
+        "description": "Create and publish image banners and text ads inside store page",
+    },
+    {
+        "key": "merchant_store_video_ad",
+        "label": "Store Video Advertisements",
+        "group": "Store Advertisements",
+        "description": "Upload and publish video ads inside store advertisements",
+    },
+    {
+        "key": "merchant_product_section",
+        "label": "Product Selling & Storefront Orders",
+        "group": "Products & Selling",
+        "description": "Unlock My Products, Sell / Post an Ad, Customer Orders & Dispatched tabs",
+    },
+    {
+        "key": "ad_home_top",
+        "label": "Hero / Home Top Banner Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Home Top / Hero Banner slider",
+    },
+    {
+        "key": "ad_home_middle",
+        "label": "Home Middle Showcase Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Home Middle Showcase / Middle Banner",
+    },
+    {
+        "key": "ad_above_footer",
+        "label": "Above Footer / Footer Strip Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Above Footer / Footer Strip slider",
+    },
+    {
+        "key": "ad_featured_offers",
+        "label": "Featured Offers / Category Top Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Featured Offers / Category Top placement",
+    },
+    {
+        "key": "ad_special_deals",
+        "label": "Special Deals / Feed / Popup Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Special Deals, Moving Text, In-Between Feed, or Popup",
+    },
+    {
+        "key": "ad_business_network",
+        "label": "Business Network Poster Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Business Network Poster slider",
+    },
+    {
+        "key": "ad_square_poster",
+        "label": "Square Poster & Product Ad",
+        "group": "Platform Ad Placements",
+        "description": "Publish advertisements in Square Poster & Product Section placement",
+    },
+]
+
+MERCHANT_PERMISSION_KEYS: tuple[str, ...] = tuple(item["key"] for item in MERCHANT_PERMISSION_CATALOG)
+
+
 class ActiveSubscriptionSummary(BaseModel):
     user_subscriptions: List[UserSubscriptionResponse] = Field(default_factory=list)
     merchant_subscriptions: List[UserSubscriptionResponse] = Field(default_factory=list)
@@ -141,6 +219,7 @@ class ActiveSubscriptionSummary(BaseModel):
     merchant_has_active_subscription: bool = False
     merchant_profile_id: Optional[int] = None
     merchant_business_name: Optional[str] = None
+    merchant_grants: dict[str, bool] = Field(default_factory=dict)
 
 
 class SubscriptionRazorpayOrderRequest(BaseModel):

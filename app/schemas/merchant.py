@@ -147,6 +147,7 @@ class MerchantProfileResponse(BaseModel):
     company_fee_percent: float = 2
     total_deduction_percent: float = 5.0
     advertisements: List[AdvertisementResponse] = []
+    merchant_grants: dict[str, bool] = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True)
 

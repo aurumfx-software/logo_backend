@@ -2,7 +2,7 @@ import re
 from typing import Any, List, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy import String, cast, func, or_, select
-from sqlalchemy.orm import Session, joinedload, load_only
+from sqlalchemy.orm import Session, joinedload, load_only, object_session
 
 from app.core.security import hash_password, verify_password
 from app.db.models.merchant import MerchantProfile
@@ -248,6 +248,8 @@ class MerchantService:
         include_creator: bool = True,
         linked_user: Any = None,
         advertisements: Optional[list] = None,
+        merchant_grants: Optional[dict] = None,
+        include_grants: bool = False,
     ) -> MerchantProfileResponse:
         merchant.categories = MerchantService._coerce_str_list(merchant.categories)
         merchant.services = MerchantService._coerce_str_list(merchant.services)
@@ -325,6 +327,19 @@ class MerchantService:
             from app.schemas.advertisement import AdvertisementResponse
 
             resp.advertisements = [AdvertisementResponse.model_validate(ad) for ad in advertisements]
+        if merchant_grants is not None:
+            resp.merchant_grants = merchant_grants
+        elif include_grants:
+            try:
+                sess = object_session(merchant)
+                if sess is not None and getattr(merchant, "id", None):
+                    from app.services.subscription_service import SubscriptionService
+
+                    resp.merchant_grants = SubscriptionService.get_merchant_grants(
+                        sess, merchant.id, user_id=getattr(merchant, "user_id", None)
+                    )
+            except Exception:
+                pass
         return resp
 
     @staticmethod

@@ -217,3 +217,209 @@ def test_merchant_seller_500_plan_unlocks_products(client: TestClient, db_sessio
     assert any(p["name"] == "Merchant Gold Kasavu Saree" for p in my_prods.json())
     my_orders = client.get("/api/v1/customer/products/my-orders", headers=headers)
     assert my_orders.status_code == 200
+
+
+def test_granular_merchant_subscription_permissions_and_duplication(client: TestClient, db_session: Session):
+    from app.db.models.merchant import MerchantProfile
+
+    admin = _create_user(db_session, "perm.admin@example.com", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email)
+
+    merch_user = _create_user(db_session, "perm.merchant@example.com", UserRole.MERCHANT)
+    shop = MerchantProfile(
+        user_id=merch_user.id,
+        business_name="Granular Permissions Shop",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+    db_session.refresh(shop)
+    merch_headers = _auth_headers(client, merch_user.email)
+
+    # Unsubscribed merchant can still update timing/name, but cannot add photos, video, or ads
+    ok_timing = client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"service_timing": "9 AM - 9 PM"},
+    )
+    assert ok_timing.status_code == 200
+
+    blocked_photo = client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"photo_1": "/static/merchants/photos/test_lock.jpg", "merchant_photos": ["/static/merchants/photos/test_lock.jpg"]},
+    )
+    assert blocked_photo.status_code == 403
+
+    blocked_video = client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"video_url": "/static/merchants/videos/test_lock.mp4"},
+    )
+    assert blocked_video.status_code == 403
+
+    # Admin creates a Photo + Store Image Ad plan ONLY (no video, no hero, no product section)
+    create_pkg = client.post(
+        "/api/v1/subscriptions/admin/packages",
+        headers=admin_headers,
+        json={
+            "code": "MERCH_STARTER_PHOTO_AD",
+            "name": "Photo & Store Ad Plan",
+            "description": "Only store photos and image ads",
+            "audience": "MERCHANT",
+            "price": 499,
+            "billing_period": "MONTHLY",
+            "duration_days": 30,
+            "grants": {
+                "_granular": True,
+                "merchant_profile_photos": True,
+                "merchant_profile_video": False,
+                "merchant_store_ad": True,
+                "merchant_store_video_ad": False,
+                "merchant_product_section": False,
+                "ad_home_top": False,
+            },
+        },
+    )
+    assert create_pkg.status_code == 201, create_pkg.text
+    starter_pkg = create_pkg.json()["data"]
+    assert "Store Profile Photos" in starter_pkg["features"]
+    assert "Store Page Ads (Image & Text)" in starter_pkg["features"]
+
+    # Duplicate the form plan into a full-access duplicate and customize price & ticks
+    dup_res = client.post(
+        f"/api/v1/subscriptions/admin/packages/{starter_pkg['id']}/duplicate",
+        headers=admin_headers,
+    )
+    assert dup_res.status_code == 201, dup_res.text
+    dup_pkg = dup_res.json()["data"]
+    assert dup_pkg["code"].startswith("MERCH_STARTER_PHOTO_AD_COPY")
+    assert "(Copy)" in dup_pkg["name"]
+    assert dup_pkg["grants"]["merchant_profile_photos"] is True
+
+    # Merchant subscribes ONLY to starter_pkg
+    sub_res = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=merch_headers,
+        json={"package_id": starter_pkg["id"], "merchant_profile_id": shop.id, "payment_reference": "GRAN-499"},
+    )
+    assert sub_res.status_code == 201
+
+    active = client.get("/api/v1/subscriptions/me/active", headers=merch_headers).json()["data"]
+    assert active["merchant_grants"]["merchant_profile_photos"] is True
+    assert active["merchant_grants"]["merchant_store_ad"] is True
+    assert active["merchant_grants"]["merchant_profile_video"] is False
+    assert active["merchant_grants"]["merchant_store_video_ad"] is False
+    assert active["merchant_grants"]["ad_home_top"] is False
+    assert active["can_sell_products"] is False
+
+    # Photo update now succeeds, video still blocked
+    ok_photo = client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"photo_1": "/static/merchants/photos/allowed.jpg", "merchant_photos": ["/static/merchants/photos/allowed.jpg"]},
+    )
+    assert ok_photo.status_code == 200
+    assert ok_photo.json()["merchant_grants"]["merchant_profile_photos"] is True
+
+    still_blocked_video = client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"video_url": "/static/merchants/videos/blocked.mp4"},
+    )
+    assert still_blocked_video.status_code == 403
+
+    # Store Image ad allowed; Store Video ad & Home Top ad blocked!
+    ok_store_img = client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Store Image Promo",
+            "media_type": "image",
+            "image_url": "/static/merchants/photos/allowed.jpg",
+            "placement": "Merchant Store",
+            "merchant_id": shop.id,
+        },
+    )
+    assert ok_store_img.status_code == 201, ok_store_img.text
+
+    blocked_store_video = client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Blocked Store Video",
+            "media_type": "video",
+            "video_url": "/static/merchants/videos/blocked.mp4",
+            "placement": "Merchant Store",
+            "merchant_id": shop.id,
+        },
+    )
+    assert blocked_store_video.status_code == 403
+
+    blocked_hero = client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Blocked Hero Ad",
+            "media_type": "image",
+            "image_url": "/static/merchants/photos/allowed.jpg",
+            "placement": "Home Top",
+            "merchant_id": shop.id,
+        },
+    )
+    assert blocked_hero.status_code == 403
+
+    # Admin updates starter_pkg to tick video, hero banner & product selling -> syncs live subscriber!
+    upd_pkg = client.patch(
+        f"/api/v1/subscriptions/admin/packages/{starter_pkg['id']}",
+        headers=admin_headers,
+        json={
+            "price": 1499,
+            "grants": {
+                "_granular": True,
+                "merchant_profile_photos": True,
+                "merchant_profile_video": True,
+                "merchant_store_ad": True,
+                "merchant_store_video_ad": True,
+                "merchant_product_section": True,
+                "ad_home_top": True,
+            },
+        },
+    )
+    assert upd_pkg.status_code == 200
+
+    active2 = client.get("/api/v1/subscriptions/me/active", headers=merch_headers).json()["data"]
+    assert active2["can_sell_products"] is True
+    assert active2["merchant_grants"]["merchant_profile_video"] is True
+    assert active2["merchant_grants"]["merchant_store_video_ad"] is True
+    assert active2["merchant_grants"]["ad_home_top"] is True
+
+    assert client.put(
+        "/api/v1/merchants/me",
+        headers=merch_headers,
+        json={"video_url": "/static/merchants/videos/now_allowed.mp4"},
+    ).status_code == 200
+    assert client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Now Allowed Video Ad",
+            "media_type": "video",
+            "video_url": "/static/merchants/videos/now_allowed.mp4",
+            "placement": "Merchant Store",
+            "merchant_id": shop.id,
+        },
+    ).status_code == 201
+    assert client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Now Allowed Hero Ad",
+            "media_type": "image",
+            "image_url": "/static/merchants/photos/allowed.jpg",
+            "placement": "Home Top",
+            "merchant_id": shop.id,
+        },
+    ).status_code == 201

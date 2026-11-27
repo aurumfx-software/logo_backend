@@ -62,10 +62,16 @@ class PromotionService:
             s for s in subs if s.expires_at is None or (_as_utc(s.expires_at) is not None and _as_utc(s.expires_at) >= now)
         ]
         if valid_subs:
+            from app.services.subscription_service import MERCHANT_AD_PERMISSION_KEYS, SubscriptionService
+
+            grants = SubscriptionService.get_merchant_grants(
+                db, merchant_id, include_user_seller=False
+            )
+            has_any_ad = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
             if not merchant.has_active_subscription:
                 merchant.has_active_subscription = True
                 db.commit()
-            return True
+            return has_any_ad
         return bool(getattr(merchant, "has_active_subscription", False))
 
     @staticmethod
