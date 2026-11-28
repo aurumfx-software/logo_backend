@@ -1003,9 +1003,46 @@ class MerchantService:
             )
 
         if public_catalog:
+            from datetime import datetime, timezone
+            from app.db.models.subscription import (
+                SubscriptionAudience,
+                SubscriptionPackage,
+                UserSubscription,
+                UserSubscriptionStatus,
+            )
+
+            now_utc = datetime.now(timezone.utc)
+            stopped_feature_exists = (
+                select(UserSubscription.id)
+                .join(SubscriptionPackage, UserSubscription.package_id == SubscriptionPackage.id)
+                .where(
+                    UserSubscription.merchant_profile_id == MerchantProfile.id,
+                    SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+                    func.upper(SubscriptionPackage.code) != "MERCHANT_REGISTER_1000",
+                    UserSubscription.status == UserSubscriptionStatus.CANCELLED,
+                )
+                .exists()
+            )
+            active_feature_exists = (
+                select(UserSubscription.id)
+                .join(SubscriptionPackage, UserSubscription.package_id == SubscriptionPackage.id)
+                .where(
+                    UserSubscription.merchant_profile_id == MerchantProfile.id,
+                    SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+                    func.upper(SubscriptionPackage.code) != "MERCHANT_REGISTER_1000",
+                    UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                    or_(UserSubscription.expires_at.is_(None), UserSubscription.expires_at >= now_utc),
+                )
+                .exists()
+            )
             q = q.filter(
                 MerchantProfile.is_active == True,
                 func.upper(MerchantProfile.approval_status) == "APPROVED",
+                or_(
+                    MerchantProfile.status.is_(None),
+                    ~func.upper(MerchantProfile.status).in_(["SUSPENDED", "INACTIVE", "REJECTED"]),
+                ),
+                or_(~stopped_feature_exists, active_feature_exists),
             )
         else:
             if approval_status:

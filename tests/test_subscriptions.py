@@ -646,3 +646,20 @@ def test_admin_subscribers_list_stop_and_merchant_moving_text_moderation(client:
     after_stop = client.get("/api/v1/subscriptions/me/active", headers=merch_headers).json()["data"]
     assert after_stop["merchant_grants"]["ad_home_top"] is False
     assert after_stop["merchant_grants"]["ad_special_deals"] is False
+
+    # All feature plans stopped -> merchant removed from public landing page catalog,
+    # still visible in admin status=all list
+    public_after_all_stop = client.get("/api/v1/merchants").json()
+    assert not any(m["id"] == shop.id for m in public_after_all_stop)
+    admin_all = client.get("/api/v1/merchants?status=all").json()
+    assert any(m["id"] == shop.id for m in admin_all)
+
+    # Admin un-stops subscription -> merchant returns to public landing page catalog
+    unstop_res = client.post(
+        f"/api/v1/subscriptions/admin/subscriptions/{sub_id}/unstop",
+        headers=admin_headers,
+    )
+    assert unstop_res.status_code == 200, unstop_res.text
+    assert unstop_res.json()["data"]["status"] == "ACTIVE"
+    public_after_unstop = client.get("/api/v1/merchants").json()
+    assert any(m["id"] == shop.id for m in public_after_unstop)
