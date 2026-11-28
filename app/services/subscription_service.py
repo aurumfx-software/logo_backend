@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -588,6 +589,49 @@ class SubscriptionService:
         SubscriptionService._sync_subscribers_for_package(db, SubscriptionService.get_package(db, package_id))
 
     @staticmethod
+    def _is_merchant_approved(shop: Optional[MerchantProfile]) -> bool:
+        if not shop:
+            return False
+        return (shop.approval_status or "").upper() in ("APPROVED", "ACTIVE") or (
+            shop.status or ""
+        ).upper() in ("APPROVED", "ACTIVE")
+
+    @staticmethod
+    def _days_remaining(expires_at: Optional[datetime]) -> Optional[int]:
+        exp = _as_utc(expires_at)
+        if exp is None:
+            return None
+        now = datetime.now(timezone.utc)
+        secs = (exp - now).total_seconds()
+        if secs <= 0:
+            return 0
+        return int(math.ceil(secs / 86400.0))
+
+    @staticmethod
+    def _find_active_duplicate_sub(
+        db: Session,
+        user_id: int,
+        pkg: SubscriptionPackage,
+        merchant_profile_id: Optional[int],
+    ) -> Optional[UserSubscription]:
+        now = datetime.now(timezone.utc)
+        q = db.query(UserSubscription).filter(
+            UserSubscription.package_id == pkg.id,
+            UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+        )
+        if SubscriptionService._audience_value(pkg) == "MERCHANT" and merchant_profile_id is not None:
+            q = q.filter(UserSubscription.merchant_profile_id == merchant_profile_id)
+        else:
+            q = q.filter(
+                UserSubscription.user_id == user_id,
+                UserSubscription.merchant_profile_id.is_(None),
+            )
+        for existing in q.order_by(UserSubscription.id.desc()).all():
+            if existing.expires_at is None or (_as_utc(existing.expires_at) and _as_utc(existing.expires_at) >= now):
+                return existing
+        return None
+
+    @staticmethod
     def _subscription_to_response(sub: UserSubscription) -> UserSubscriptionResponse:
         pkg = sub.package
         return UserSubscriptionResponse(
@@ -601,6 +645,9 @@ class SubscriptionService:
             audience=pkg.audience if pkg else None,
             status=sub.status,
             amount_paid=sub.amount_paid,
+            price=pkg.price if pkg else sub.amount_paid,
+            duration_days=pkg.duration_days if pkg else None,
+            days_remaining=SubscriptionService._days_remaining(sub.expires_at),
             currency=sub.currency,
             payment_reference=sub.payment_reference,
             started_at=sub.started_at,
@@ -685,7 +732,7 @@ class SubscriptionService:
         shop = db.query(MerchantProfile).filter(MerchantProfile.user_id == user_id).first()
         if not shop:
             shop = SubscriptionService.merchant_for_account(db, user_obj)
-        if shop:
+        if shop and SubscriptionService._is_merchant_approved(shop):
             merchant_subs = (
                 db.query(UserSubscription)
                 .join(SubscriptionPackage)
@@ -707,9 +754,10 @@ class SubscriptionService:
                     can_sell = True
                     if not plan:
                         plan = msub.package.code if msub.package else "MERCHANT_PRODUCTS"
-        merchant_grants = SubscriptionService.merged_grants(db, user_id=user_id)
-        if merchant_grants.get("can_sell_products"):
-            can_sell = True
+        if SubscriptionService._is_merchant_approved(shop) or shop is None:
+            merchant_grants = SubscriptionService.merged_grants(db, user_id=user_id)
+            if merchant_grants.get("can_sell_products"):
+                can_sell = True
         user.can_sell_products = can_sell
         user.is_subscriber = is_subscriber or can_sell
         user.subscription_plan = plan
@@ -733,6 +781,9 @@ class SubscriptionService:
             owner = db.query(User).filter(User.id == user_id).first()
             if owner:
                 shop = SubscriptionService.merchant_for_account(db, owner)
+
+        if shop is not None and not SubscriptionService._is_merchant_approved(shop):
+            return combined
 
         if shop:
             active_subs = (
@@ -804,11 +855,14 @@ class SubscriptionService:
             if (s.expires_at is None or _as_utc(s.expires_at) >= now)
             and (not s.package or str(s.package.code or "").upper() != "MERCHANT_REGISTER_1000")
         ]
+        is_approved = SubscriptionService._is_merchant_approved(merchant)
         grants = SubscriptionService.get_merchant_grants(
             db, merchant_profile_id, include_user_seller=False
         )
-        merchant.has_active_subscription = len(feature_subs) > 0
-        merchant.can_create_promotions = any(grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS)
+        merchant.has_active_subscription = len(feature_subs) > 0 and is_approved
+        merchant.can_create_promotions = is_approved and any(
+            grants.get(k) for k in MERCHANT_AD_PERMISSION_KEYS
+        )
         db.commit()
         db.refresh(merchant)
         if merchant.user_id:
@@ -902,6 +956,8 @@ class SubscriptionService:
         *,
         admin_override: bool = False,
         amount_paid: Optional[Decimal] = None,
+        keep_pending: bool = False,
+        allow_duplicate: bool = False,
     ) -> UserSubscription:
         SubscriptionService._expire_due_subscriptions(db, user.id)
         pkg = SubscriptionService._resolve_package(db, payload)
@@ -935,11 +991,8 @@ class SubscriptionService:
                     detail="Merchant profile not found.",
                 )
             merchant = SubscriptionService._assert_merchant_access(db, user, merchant.id)
-            approved = {"APPROVED", "ACTIVE"}
-            status_ok = (merchant.approval_status or "").upper() in approved or (
-                merchant.status or ""
-            ).upper() in approved
-            if not status_ok and str(pkg.code or "").upper() != "MERCHANT_REGISTER_1000":
+            status_ok = SubscriptionService._is_merchant_approved(merchant)
+            if not keep_pending and not status_ok and not is_mandatory_reg:
                 merchant.status = "APPROVED"
                 merchant.approval_status = "APPROVED"
                 db.commit()
@@ -949,23 +1002,63 @@ class SubscriptionService:
             merchant_profile_id = None
 
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(days=pkg.duration_days) if pkg.duration_days else None
         paid = SubscriptionService._money(amount_paid if amount_paid is not None else pkg.price)
-
-        sub = UserSubscription(
-            user_id=user.id,
-            merchant_profile_id=merchant_profile_id,
-            package_id=pkg.id,
-            status=UserSubscriptionStatus.ACTIVE,
-            amount_paid=paid,
-            currency=pkg.currency,
-            payment_reference=payload.payment_reference,
-            started_at=now,
-            expires_at=expires_at,
+        is_renew = bool(getattr(payload, "renew", False))
+        existing_sub = SubscriptionService._find_active_duplicate_sub(
+            db, user.id, pkg, merchant_profile_id
         )
-        db.add(sub)
-        db.commit()
-        db.refresh(sub)
+        if existing_sub is not None:
+            if is_renew:
+                base_exp = _as_utc(existing_sub.expires_at) if existing_sub.expires_at else now
+                if not base_exp or base_exp < now:
+                    base_exp = now
+                existing_sub.expires_at = (
+                    base_exp + timedelta(days=pkg.duration_days) if pkg.duration_days else existing_sub.expires_at
+                )
+                if payload.payment_reference:
+                    existing_sub.payment_reference = payload.payment_reference
+                if paid and paid > 0:
+                    existing_sub.amount_paid = (existing_sub.amount_paid or Decimal("0")) + paid
+                sub = existing_sub
+                db.commit()
+                db.refresh(sub)
+            elif not allow_duplicate and not admin_override and not is_mandatory_reg:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="You are already subscribed to this plan while it is active.",
+                )
+            else:
+                expires_at = now + timedelta(days=pkg.duration_days) if pkg.duration_days else None
+                sub = UserSubscription(
+                    user_id=user.id,
+                    merchant_profile_id=merchant_profile_id,
+                    package_id=pkg.id,
+                    status=UserSubscriptionStatus.ACTIVE,
+                    amount_paid=paid,
+                    currency=pkg.currency,
+                    payment_reference=payload.payment_reference,
+                    started_at=now,
+                    expires_at=expires_at,
+                )
+                db.add(sub)
+                db.commit()
+                db.refresh(sub)
+        else:
+            expires_at = now + timedelta(days=pkg.duration_days) if pkg.duration_days else None
+            sub = UserSubscription(
+                user_id=user.id,
+                merchant_profile_id=merchant_profile_id,
+                package_id=pkg.id,
+                status=UserSubscriptionStatus.ACTIVE,
+                amount_paid=paid,
+                currency=pkg.currency,
+                payment_reference=payload.payment_reference,
+                started_at=now,
+                expires_at=expires_at,
+            )
+            db.add(sub)
+            db.commit()
+            db.refresh(sub)
 
         if paid and paid > 0:
             try:
@@ -1147,6 +1240,17 @@ class SubscriptionService:
         else:
             merchant_profile_id = None
 
+        is_renew = bool(getattr(payload, "renew", False))
+        if not is_renew and not is_mandatory_reg:
+            existing_sub = SubscriptionService._find_active_duplicate_sub(
+                db, user.id, pkg, merchant_profile_id
+            )
+            if existing_sub is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="You are already subscribed to this plan while it is active.",
+                )
+
         amount = SubscriptionService._money(pkg.price)
         if amount <= 0:
             raise HTTPException(
@@ -1235,6 +1339,7 @@ class SubscriptionService:
             merchant_profile_id=getattr(payload, "merchant_profile_id", None)
             or (order_row.merchant_profile_id if order_row else None),
             payment_reference=payment_id or order_id,
+            renew=bool(getattr(payload, "renew", False)),
         )
         return SubscriptionService.subscribe(db=db, user=user, payload=sub_req)
 
@@ -1243,28 +1348,53 @@ class SubscriptionService:
         db: Session,
         email: Optional[str] = None,
         business_name: Optional[str] = None,
+        package_id: Optional[int] = None,
+        package_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         import uuid
         from app.services.razorpay_service import RazorpayService
 
         SubscriptionService.ensure_default_packages(db)
-        pkg = (
-            db.query(SubscriptionPackage)
-            .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
-            .first()
-        )
-        amount = SubscriptionService._money(pkg.price if pkg and pkg.price else Decimal("1000"))
-        if amount <= 0:
-            amount = Decimal("1000.00")
-        amount_paise = RazorpayService.inr_to_paise(amount)
+        pkg = None
+        if package_id or package_code:
+            pkg = SubscriptionService._resolve_package(
+                db, SubscribeRequest(package_id=package_id, package_code=package_code)
+            )
+            if not pkg.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected subscription package is not available.",
+                )
+            if SubscriptionService._audience_value(pkg) != "MERCHANT":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Please select a Merchant subscription plan for registration.",
+                )
+            amount = SubscriptionService._money(pkg.price or Decimal("0"))
+        else:
+            pkg = (
+                db.query(SubscriptionPackage)
+                .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
+                .first()
+            )
+            amount = SubscriptionService._money(pkg.price if pkg and pkg.price else Decimal("1000"))
+            if amount <= 0:
+                amount = Decimal("1000.00")
+
+        amount_paise = RazorpayService.inr_to_paise(amount) if amount > 0 else 0
         receipt = f"MREG-{uuid.uuid4().hex[:12].upper()}"
+        chosen_code = str(pkg.code) if pkg else "MERCHANT_REGISTER_1000"
+        chosen_name = str(pkg.name) if pkg else "Merchant Registration"
         notes = {
             "purpose": "merchant_registration",
-            "package_code": "MERCHANT_REGISTER_1000",
+            "package_id": str(pkg.id) if pkg else "",
+            "package_code": chosen_code,
             "email": str(email or ""),
             "business_name": str(business_name or ""),
         }
-        if RazorpayService.is_configured():
+        if amount <= 0:
+            order_id = f"order_free_mreg_{uuid.uuid4().hex[:12]}"
+        elif RazorpayService.is_configured():
             rp_order = RazorpayService.create_order(
                 amount_paise=amount_paise,
                 receipt=receipt,
@@ -1274,14 +1404,15 @@ class SubscriptionService:
         else:
             order_id = f"order_dev_mreg_{uuid.uuid4().hex[:12]}"
         return {
-            "message": "Razorpay ₹1000 merchant registration order created",
+            "message": f"Razorpay order created for {chosen_name}",
             "razorpay_key_id": RazorpayService.get_public_key(),
             "razorpay_order_id": order_id,
             "amount": float(amount),
             "amount_paise": amount_paise,
             "currency": "INR",
-            "package_code": "MERCHANT_REGISTER_1000",
-            "package_name": pkg.name if pkg else "Merchant Registration ₹1000",
+            "package_id": pkg.id if pkg else None,
+            "package_code": chosen_code,
+            "package_name": chosen_name,
         }
 
     @staticmethod
@@ -1289,16 +1420,37 @@ class SubscriptionService:
         razorpay_order_id: Optional[str],
         razorpay_payment_id: Optional[str],
         razorpay_signature: Optional[str],
+        db: Optional[Session] = None,
+        package_id: Optional[int] = None,
+        package_code: Optional[str] = None,
     ) -> Tuple[str, str]:
         from app.services.razorpay_service import RazorpayService
 
         order_id = str(razorpay_order_id or "").strip()
         payment_id = str(razorpay_payment_id or "").strip()
         signature = str(razorpay_signature or "").strip()
+
+        if (package_id or package_code) and db is not None:
+            pkg = SubscriptionService._resolve_package(
+                db, SubscribeRequest(package_id=package_id, package_code=package_code)
+            )
+            if not pkg.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected subscription package is not available.",
+                )
+            if SubscriptionService._audience_value(pkg) != "MERCHANT":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Please select a Merchant subscription plan for registration.",
+                )
+            if SubscriptionService._money(pkg.price or Decimal("0")) <= 0:
+                return (order_id or f"FREE_REG_{pkg.id}"), (payment_id or f"FREE_REG_{pkg.code}")
+
         if not order_id or not payment_id:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail="₹1,000 Merchant Registration Subscription payment via Razorpay is required to register as a Merchant.",
+                detail="Please select a Merchant Subscription Plan and complete payment via Razorpay to register.",
             )
         if not order_id.startswith("order_dev_mreg_") and not order_id.startswith("order_dev_"):
             RazorpayService.verify_payment_signature(order_id, payment_id, signature)
@@ -1310,13 +1462,21 @@ class SubscriptionService:
         user: User,
         merchant: MerchantProfile,
         payment_reference: str,
+        package_id: Optional[int] = None,
+        package_code: Optional[str] = None,
     ) -> Optional[UserSubscription]:
         SubscriptionService.ensure_default_packages(db)
-        pkg = (
-            db.query(SubscriptionPackage)
-            .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
-            .first()
-        )
+        pkg = None
+        if package_id or package_code:
+            pkg = SubscriptionService._resolve_package(
+                db, SubscribeRequest(package_id=package_id, package_code=package_code)
+            )
+        else:
+            pkg = (
+                db.query(SubscriptionPackage)
+                .filter(SubscriptionPackage.code == "MERCHANT_REGISTER_1000")
+                .first()
+            )
         if not pkg:
             return None
         return SubscriptionService.subscribe(
@@ -1328,5 +1488,7 @@ class SubscriptionService:
                 payment_reference=payment_reference,
             ),
             admin_override=True,
-            amount_paid=SubscriptionService._money(pkg.price or Decimal("1000")),
+            keep_pending=True,
+            allow_duplicate=True,
+            amount_paid=SubscriptionService._money(pkg.price if pkg.price is not None else Decimal("0")),
         )

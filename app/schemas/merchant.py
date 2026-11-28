@@ -39,6 +39,8 @@ class MerchantRegisterRequest(BaseModel):
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
     razorpay_signature: Optional[str] = None
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
 
     @field_validator("email")
     @classmethod
@@ -85,6 +87,23 @@ class MerchantLinkedUser(BaseModel):
     city: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MerchantSubscriptionSummary(BaseModel):
+    id: Optional[int] = None
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
+    package_name: str
+    price: float = 0.0
+    amount_paid: float = 0.0
+    duration_days: Optional[int] = None
+    status: str = "ACTIVE"
+    payment_reference: Optional[str] = None
+    started_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    days_remaining: Optional[int] = None
+    features: List[str] = Field(default_factory=list)
+    merchant_grants: dict[str, bool] = Field(default_factory=dict)
 
 
 class MerchantProfileResponse(BaseModel):
@@ -151,6 +170,9 @@ class MerchantProfileResponse(BaseModel):
     total_deduction_percent: float = 5.0
     advertisements: List[AdvertisementResponse] = []
     merchant_grants: dict[str, bool] = Field(default_factory=dict)
+    active_subscriptions: List[MerchantSubscriptionSummary] = Field(default_factory=list)
+    subscription_plan_name: Optional[str] = None
+    subscription_amount_paid: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -222,6 +244,8 @@ class MerchantOnboardingRequest(BaseModel):
     razorpay_order_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
     razorpay_signature: Optional[str] = None
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
 
     # Social & Web links
     website: Optional[str] = Field(None, max_length=255, json_schema_extra={"example": "https://example.com"})
@@ -255,9 +279,6 @@ class MerchantOnboardingRequest(BaseModel):
     status: Optional[str] = Field("PENDING", max_length=50)
     services: Optional[List[str]] = Field(default_factory=list)
     service_timing: Optional[str] = Field("General Store Hours")
-    razorpay_order_id: Optional[str] = None
-    razorpay_payment_id: Optional[str] = None
-    razorpay_signature: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -371,7 +392,10 @@ class MerchantOnboardingResponse(BaseModel):
 
 class MerchantRegistrationOrderRequest(BaseModel):
     email: Optional[str] = None
+    phone_number: Optional[str] = None
     business_name: Optional[str] = None
+    package_id: Optional[int] = None
+    package_code: Optional[str] = None
 
 
 class MerchantRegistrationOrderResponse(BaseModel):
@@ -381,6 +405,7 @@ class MerchantRegistrationOrderResponse(BaseModel):
     amount: float
     amount_paise: int
     currency: str = "INR"
+    package_id: Optional[int] = None
     package_code: str = "MERCHANT_REGISTER_1000"
     package_name: str = "Merchant Registration ₹1000"
 

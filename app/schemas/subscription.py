@@ -124,6 +124,9 @@ class UserSubscriptionResponse(BaseModel):
     audience: Optional[SubscriptionAudience] = None
     status: UserSubscriptionStatus
     amount_paid: Decimal
+    price: Optional[Decimal] = None
+    duration_days: Optional[int] = None
+    days_remaining: Optional[int] = None
     currency: str
     payment_reference: Optional[str] = None
     started_at: datetime
@@ -147,6 +150,10 @@ class SubscribeRequest(BaseModel):
         None,
         max_length=255,
         description="Payment gateway reference (Razorpay order id, etc.)",
+    )
+    renew: bool = Field(
+        False,
+        description="When True, extends an active subscription instead of rejecting duplicate purchase.",
     )
 
     @model_validator(mode="before")
@@ -285,6 +292,7 @@ class SubscriptionRazorpayOrderRequest(BaseModel):
     package_id: Optional[int] = None
     package_code: Optional[str] = None
     merchant_profile_id: Optional[int] = None
+    renew: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -309,6 +317,7 @@ class SubscriptionRazorpayVerifyRequest(BaseModel):
     package_id: Optional[int] = None
     package_code: Optional[str] = None
     merchant_profile_id: Optional[int] = None
+    renew: bool = False
     razorpay_order_id: str = Field(..., min_length=4, max_length=64)
     razorpay_payment_id: str = Field(..., min_length=4, max_length=64)
     razorpay_signature: str = Field(..., min_length=8, max_length=128)

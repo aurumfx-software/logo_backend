@@ -14,6 +14,7 @@ from app.schemas.merchant import (
     MerchantOnboardingRequest,
     MerchantProfileResponse,
     MerchantRegisterRequest,
+    MerchantSubscriptionSummary,
     MerchantUpdateRequest,
 )
 from app.schemas.auth import TokenResponse, UserLoginRequest
@@ -215,23 +216,104 @@ class MerchantService:
         return resp
 
     @staticmethod
+    def _build_merchant_sub_summaries(
+        subs: Optional[list],
+    ) -> List[MerchantSubscriptionSummary]:
+        from datetime import datetime, timezone
+        from app.services.subscription_service import SubscriptionService, _as_utc
+
+        if not subs:
+            return []
+        now = datetime.now(timezone.utc)
+        summaries: List[MerchantSubscriptionSummary] = []
+        for sub in subs:
+            pkg = getattr(sub, "package", None)
+            code = str(getattr(pkg, "code", "") or "").strip().upper() if pkg else ""
+            if code == "MERCHANT_REGISTER_1000":
+                continue
+            exp = _as_utc(getattr(sub, "expires_at", None))
+            if exp is not None and exp < now:
+                continue
+            pkg_grants = SubscriptionService.package_merchant_grants(
+                getattr(pkg, "grants", None) if pkg else {}
+            )
+            features = list(getattr(pkg, "features", None) or []) if pkg else []
+            summaries.append(
+                MerchantSubscriptionSummary(
+                    id=sub.id,
+                    package_id=sub.package_id,
+                    package_code=code or None,
+                    package_name=(pkg.name if pkg else None) or code or "Merchant Plan",
+                    price=float(pkg.price if pkg and pkg.price is not None else (sub.amount_paid or 0)),
+                    amount_paid=float(sub.amount_paid or 0),
+                    duration_days=pkg.duration_days if pkg else None,
+                    status=str(getattr(sub.status, "value", sub.status) or "ACTIVE"),
+                    payment_reference=sub.payment_reference,
+                    started_at=sub.started_at,
+                    expires_at=sub.expires_at,
+                    days_remaining=SubscriptionService._days_remaining(sub.expires_at),
+                    features=features,
+                    merchant_grants=pkg_grants,
+                )
+            )
+        return summaries
+
+    @staticmethod
+    def _load_active_merchant_subs_map(db: Session, merchant_ids: set) -> dict:
+        from app.db.models.subscription import (
+            SubscriptionAudience,
+            SubscriptionPackage,
+            UserSubscription,
+            UserSubscriptionStatus,
+        )
+
+        if not merchant_ids:
+            return {}
+        rows = (
+            db.query(UserSubscription)
+            .join(SubscriptionPackage)
+            .options(joinedload(UserSubscription.package))
+            .filter(
+                UserSubscription.merchant_profile_id.in_(list(merchant_ids)),
+                UserSubscription.status == UserSubscriptionStatus.ACTIVE,
+                SubscriptionPackage.audience == SubscriptionAudience.MERCHANT,
+            )
+            .order_by(UserSubscription.id.desc())
+            .all()
+        )
+        by_merchant: dict = {}
+        for row in rows:
+            by_merchant.setdefault(row.merchant_profile_id, []).append(row)
+        return by_merchant
+
+    @staticmethod
     def build_merchant_list_responses(
         db: Session,
         merchants: List[MerchantProfile],
         merge_users: bool = True,
         include_creator: bool = False,
+        include_grants: bool = False,
     ) -> List[MerchantProfileResponse]:
         linked_map = {}
         if merge_users and merchants:
             linked_map = MerchantService.load_linked_users(
                 db, {m.user_id for m in merchants if m.user_id}
             )
+        subs_map = (
+            MerchantService._load_active_merchant_subs_map(
+                db, {m.id for m in merchants if getattr(m, "id", None)}
+            )
+            if merchants
+            else {}
+        )
         results: List[MerchantProfileResponse] = []
         for merchant in merchants:
             try:
                 resp = MerchantService.build_merchant_response(
                     merchant,
                     include_creator=include_creator,
+                    include_grants=include_grants,
+                    active_subs=subs_map.get(merchant.id, []),
                 )
                 if merge_users:
                     resp = MerchantService.merge_linked_user(
@@ -250,6 +332,7 @@ class MerchantService:
         advertisements: Optional[list] = None,
         merchant_grants: Optional[dict] = None,
         include_grants: bool = False,
+        active_subs: Optional[list] = None,
     ) -> MerchantProfileResponse:
         merchant.categories = MerchantService._coerce_str_list(merchant.categories)
         merchant.services = MerchantService._coerce_str_list(merchant.services)
@@ -340,6 +423,24 @@ class MerchantService:
                     )
             except Exception:
                 pass
+        try:
+            subs_list = active_subs
+            if subs_list is None:
+                sess = object_session(merchant)
+                if sess is not None and getattr(merchant, "id", None):
+                    subs_map = MerchantService._load_active_merchant_subs_map(
+                        sess, {merchant.id}
+                    )
+                    subs_list = subs_map.get(merchant.id, [])
+            summaries = MerchantService._build_merchant_sub_summaries(subs_list)
+            resp.active_subscriptions = summaries
+            if summaries:
+                resp.subscription_plan_name = ", ".join(s.package_name for s in summaries)
+                resp.subscription_amount_paid = float(
+                    sum((s.amount_paid or s.price or 0.0) for s in summaries)
+                )
+        except Exception:
+            pass
         return resp
 
     @staticmethod
@@ -716,6 +817,14 @@ class MerchantService:
         db.commit()
         db.refresh(merchant)
 
+        try:
+            from app.services.subscription_service import SubscriptionService
+
+            SubscriptionService._apply_merchant_entitlements(db, merchant.id)
+            db.refresh(merchant)
+        except Exception:
+            pass
+
         # Notify merchant
         NotificationService.create_notification(
             db=db,
@@ -756,6 +865,14 @@ class MerchantService:
 
         db.commit()
         db.refresh(merchant)
+
+        try:
+            from app.services.subscription_service import SubscriptionService
+
+            SubscriptionService._apply_merchant_entitlements(db, merchant.id)
+            db.refresh(merchant)
+        except Exception:
+            pass
 
         # Notify merchant
         NotificationService.create_notification(

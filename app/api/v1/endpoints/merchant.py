@@ -158,7 +158,7 @@ def _assert_merchant_media_permissions(
     "/register/razorpay-order",
     response_model=MerchantRegistrationOrderResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create ₹1000 Razorpay order for new merchant registration",
+    summary="Create Razorpay order for new merchant registration subscription plan",
 )
 def create_merchant_registration_razorpay_order(
     payload: Optional[MerchantRegistrationOrderRequest] = None,
@@ -170,6 +170,8 @@ def create_merchant_registration_razorpay_order(
         db=db,
         email=payload.email if payload else None,
         business_name=payload.business_name if payload else None,
+        package_id=payload.package_id if payload else None,
+        package_code=payload.package_code if payload else None,
     )
     return MerchantRegistrationOrderResponse(**res)
 
@@ -180,8 +182,8 @@ def create_merchant_registration_razorpay_order(
     status_code=status.HTTP_201_CREATED,
     summary="Register a new merchant",
     description=(
-        "Creates a merchant owner in users (role MERCHANT) and a business profile in merchant_profiles. "
-        "Requires verified ₹1,000 Merchant Registration Subscription payment via Razorpay."
+        "Creates a merchant owner in users (role MERCHANT) and a pending business profile in merchant_profiles. "
+        "Requires selecting an active Merchant Subscription Plan and completing Razorpay payment."
     ),
 )
 def register_merchant(
@@ -194,6 +196,9 @@ def register_merchant(
         merchant_data.razorpay_order_id,
         merchant_data.razorpay_payment_id,
         merchant_data.razorpay_signature,
+        db=db,
+        package_id=merchant_data.package_id,
+        package_code=merchant_data.package_code,
     )
     user, merchant = MerchantService.register_merchant(db=db, data=merchant_data)
     SubscriptionService.record_merchant_registration_subscription(
@@ -201,6 +206,8 @@ def register_merchant(
         user=user,
         merchant=merchant,
         payment_reference=payment_id or order_id,
+        package_id=merchant_data.package_id,
+        package_code=merchant_data.package_code,
     )
     db.refresh(merchant)
     grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=user.id)
@@ -230,7 +237,7 @@ def register_merchant(
     status_code=status.HTTP_201_CREATED,
     summary="Field Staff Merchant Onboarding",
     description=(
-        "Registers a new merchant via the Field Staff Onboarding Form or Self-Registration (₹1,000 subscription required for self-registration)."
+        "Registers a new merchant via the Field Staff Onboarding Form or Self-Registration (Subscription plan payment required for self-registration)."
     ),
 )
 @router.post(
@@ -258,18 +265,23 @@ def onboard_merchant(
             data.razorpay_order_id,
             data.razorpay_payment_id,
             data.razorpay_signature,
+            db=db,
+            package_id=data.package_id,
+            package_code=data.package_code,
         )
         payment_ref = payment_id or order_id
 
     user, merchant = MerchantService.onboard_merchant(
         db=db, data=data, onboarded_by=current_user
     )
-    if payment_ref:
+    if payment_ref or data.package_id or data.package_code:
         SubscriptionService.record_merchant_registration_subscription(
             db=db,
             user=user,
             merchant=merchant,
-            payment_reference=payment_ref,
+            payment_reference=payment_ref or f"PKG_{data.package_id or data.package_code}",
+            package_id=data.package_id,
+            package_code=data.package_code,
         )
         db.refresh(merchant)
     grants = SubscriptionService.get_merchant_grants(db, merchant.id, user_id=user.id)
@@ -545,7 +557,7 @@ def approve_merchant(
         db=db, merchant_id=merchant_id, admin_user=current_admin
     )
     return success_response(
-        data=MerchantService.build_merchant_response(approved),
+        data=MerchantService.build_merchant_response(approved, include_grants=True),
         message=f"Merchant '{approved.business_name}' approved successfully",
     )
 
@@ -651,7 +663,9 @@ def list_merchant_registration_requests(
     )
     page = (skip // limit) + 1 if limit else 1
     return list_response(
-        data=[MerchantService.build_merchant_response(m) for m in results],
+        data=MerchantService.build_merchant_list_responses(
+            db, results, merge_users=True, include_creator=True, include_grants=True
+        ),
         total_items=total,
         page=page,
         page_size=limit,

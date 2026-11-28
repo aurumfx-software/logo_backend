@@ -587,3 +587,134 @@ def test_merchant_registration_succeeds_even_if_register_1000_deactivated(client
         },
     )
     assert reg_res.status_code == 201, reg_res.text
+
+
+def test_merchant_register_with_chosen_plan_pending_then_unlocks_on_approve(client: TestClient, db_session: Session):
+    from app.core.security import hash_password
+    from app.db.models.user import User, UserRole
+    from app.services.auth_service import AuthService
+
+    admin = User(
+        name="Sub Admin",
+        email="subplan.admin@example.com",
+        password_hash=hash_password("AdminPass123!"),
+        role=UserRole.ADMIN,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(admin)
+    db_session.commit()
+    admin_token = AuthService.generate_token_pair(admin).access_token
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Admin creates a custom merchant plan (only Store Profile Photos + Hero Ad, no Video)
+    pkg_res = client.post(
+        "/api/v1/subscriptions/admin/packages",
+        headers=admin_headers,
+        json={
+            "code": "REG_CUSTOM_HERO",
+            "name": "Starter Hero & Photo Plan",
+            "description": "Custom registration subscription",
+            "audience": "MERCHANT",
+            "price": 1499,
+            "billing_period": "MONTHLY",
+            "duration_days": 30,
+            "grants": {
+                "_granular": True,
+                "merchant_profile_photos": True,
+                "merchant_profile_video": False,
+                "ad_home_top": True,
+            },
+        },
+    )
+    assert pkg_res.status_code == 201, pkg_res.text
+    chosen_pkg = pkg_res.json()["data"]
+
+    # Step 1: Create Razorpay order specifically for chosen plan
+    order_res = client.post(
+        "/api/v1/merchants/register/razorpay-order",
+        json={
+            "email": "chosenplan.shop@example.com",
+            "business_name": "Chosen Plan Store",
+            "package_id": chosen_pkg["id"],
+            "package_code": chosen_pkg["code"],
+        },
+    )
+    assert order_res.status_code == 201, order_res.text
+    order_data = order_res.json()
+    assert order_data["amount"] == 1499.0
+    assert order_data["package_code"] == "REG_CUSTOM_HERO"
+
+    # Step 2: Register/onboard without photos, passing chosen package_id + Razorpay proof
+    onboard_res = client.post(
+        "/api/v1/merchants/onboard",
+        json={
+            "business_name": "Chosen Plan Store",
+            "owner_name": "Plan Owner",
+            "category": "Retail",
+            "phone_number": "9876501234",
+            "email": "chosenplan.shop@example.com",
+            "password": "MerchantPassword123",
+            "address": "MG Road, Kochi",
+            "package_id": chosen_pkg["id"],
+            "package_code": chosen_pkg["code"],
+            "razorpay_order_id": order_data["razorpay_order_id"],
+            "razorpay_payment_id": "pay_dev_chosen_1499",
+            "razorpay_signature": "dev_signature_ok",
+        },
+    )
+    assert onboard_res.status_code == 201, onboard_res.text
+    created_merchant = onboard_res.json()["merchant"]
+    # Must stay PENDING until Admin approves, and features remain locked until approval
+    assert created_merchant["approval_status"] == "PENDING"
+    assert created_merchant["merchant_grants"]["merchant_profile_photos"] is False
+    assert created_merchant["merchant_grants"]["ad_home_top"] is False
+    assert created_merchant["subscription_plan_name"] == "Starter Hero & Photo Plan"
+    assert created_merchant["subscription_amount_paid"] == 1499.0
+
+    # Admin checks registration requests -> sees chosen plan name & price!
+    reqs = client.get("/api/v1/admin/merchants/registration-requests?status=pending", headers=admin_headers)
+    assert reqs.status_code == 200
+    row = next(item for item in reqs.json()["data"] if item["id"] == created_merchant["id"])
+    assert row["subscription_plan_name"] == "Starter Hero & Photo Plan"
+    assert len(row["active_subscriptions"]) == 1
+    assert row["active_subscriptions"][0]["days_remaining"] == 30
+
+    # Step 3: Admin approves -> chosen plan's features unlock immediately!
+    approve_res = client.post(f"/api/v1/merchants/{created_merchant['id']}/approve", headers=admin_headers)
+    assert approve_res.status_code == 200, approve_res.text
+    approved_merchant = approve_res.json()["data"]
+    assert approved_merchant["approval_status"] == "APPROVED"
+    assert approved_merchant["merchant_grants"]["merchant_profile_photos"] is True
+    assert approved_merchant["merchant_grants"]["ad_home_top"] is True
+    assert approved_merchant["merchant_grants"]["merchant_profile_video"] is False
+
+    # Same active plan cannot be subscribed twice concurrently unless renew=True
+    m_token = AuthService.generate_token_pair(
+        db_session.query(User).filter(User.email == "chosenplan.shop@example.com").first()
+    ).access_token
+    m_headers = {"Authorization": f"Bearer {m_token}"}
+
+    dup_order = client.post(
+        "/api/v1/subscriptions/razorpay/order",
+        headers=m_headers,
+        json={"package_id": chosen_pkg["id"], "merchant_profile_id": created_merchant["id"]},
+    )
+    assert dup_order.status_code == 400
+    assert "already subscribed" in dup_order.json()["detail"].lower()
+
+    dup_sub = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=m_headers,
+        json={"package_id": chosen_pkg["id"], "merchant_profile_id": created_merchant["id"], "payment_reference": "DUP"},
+    )
+    assert dup_sub.status_code == 400
+
+    # Explicit renew extends remaining days instead of creating duplicate row
+    renew_sub = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=m_headers,
+        json={"package_id": chosen_pkg["id"], "merchant_profile_id": created_merchant["id"], "payment_reference": "RENEW", "renew": True},
+    )
+    assert renew_sub.status_code == 201, renew_sub.text
+    assert renew_sub.json()["data"]["days_remaining"] >= 59

@@ -356,7 +356,9 @@ def list_pending_merchants(
     )
     page = (skip // limit) + 1 if limit else 1
     return list_response(
-        data=[MerchantService.build_merchant_response(m) for m in results],
+        data=MerchantService.build_merchant_list_responses(
+            db, results, merge_users=True, include_creator=True, include_grants=True
+        ),
         total_items=total,
         page=page,
         page_size=limit,
@@ -397,7 +399,9 @@ def list_all_merchants_admin(
     )
     page = (skip // limit) + 1
     return list_response(
-        data=[MerchantService.build_merchant_response(m) for m in results],
+        data=MerchantService.build_merchant_list_responses(
+            db, results, merge_users=True, include_creator=True, include_grants=True
+        ),
         total_items=total,
         page=page,
         page_size=limit,
@@ -420,7 +424,7 @@ def approve_merchant(
         db=db, merchant_id=merchant_id, admin_user=current_admin
     )
     return success_response(
-        data=MerchantService.build_merchant_response(approved),
+        data=MerchantService.build_merchant_response(approved, include_grants=True),
         message=f"Merchant '{approved.business_name}' approved successfully",
     )
 
