@@ -689,14 +689,12 @@ def list_merchants(
     limit: int = Query(50, ge=1, le=2000),
     db: Session = Depends(get_db),
 ) -> List[MerchantProfileResponse]:
-    target_status = approval_status or status
-    if target_status and target_status.lower() in ("all", "any"):
-        target_status = None
-    elif target_status:
-        target_status = target_status.upper()
+    raw_status = (approval_status or status or "").strip()
+    is_all_requested = raw_status.lower() in ("all", "any")
+    target_status = None if is_all_requested else (raw_status.upper() if raw_status else None)
 
     try:
-        if target_status and target_status != "APPROVED":
+        if is_all_requested or (target_status and target_status != "APPROVED"):
             results, _ = MerchantService.search_merchants(
                 db=db,
                 category=category,

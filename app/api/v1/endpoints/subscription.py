@@ -365,3 +365,31 @@ def admin_stop_subscription(
         "message": f"Subscription #{subscription_id} stopped successfully",
         "data": AdminSubscriberItemResponse.model_validate(item).model_dump(mode="json"),
     }
+
+
+@router.post(
+    "/admin/subscriptions/{subscription_id}/unstop",
+    summary="Admin: un-stop / reactivate a stopped subscription",
+)
+@router.post(
+    "/admin/subscriptions/{subscription_id}/reactivate",
+    summary="Admin: reactivate a stopped subscription (alias)",
+)
+@router.post(
+    "/admin/subscribers/{subscription_id}/unstop",
+    summary="Admin: un-stop a stopped subscriber plan (alias)",
+)
+def admin_unstop_subscription(
+    subscription_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    item = SubscriptionService.admin_unstop_subscription(
+        db=db,
+        subscription_id=subscription_id,
+    )
+    return {
+        "success": True,
+        "message": f"Subscription #{subscription_id} reactivated successfully",
+        "data": AdminSubscriberItemResponse.model_validate(item).model_dump(mode="json"),
+    }

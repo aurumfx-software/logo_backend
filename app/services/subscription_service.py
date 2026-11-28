@@ -1695,3 +1695,48 @@ class SubscriptionService:
         return SubscriptionService._build_admin_subscriber_item(
             sub, user_obj=user_obj, merchant_obj=merch_obj
         )
+
+    @staticmethod
+    def admin_unstop_subscription(
+        db: Session,
+        subscription_id: int,
+    ) -> Dict[str, Any]:
+        sub = (
+            db.query(UserSubscription)
+            .options(joinedload(UserSubscription.package))
+            .filter(UserSubscription.id == subscription_id)
+            .first()
+        )
+        if not sub:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found."
+            )
+        now = datetime.now(timezone.utc)
+        sub.status = UserSubscriptionStatus.ACTIVE
+        sub.cancelled_at = None
+        if sub.expires_at is not None:
+            exp_dt = sub.expires_at
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            if exp_dt <= now:
+                days = int(getattr(sub.package, "duration_days", None) or 30)
+                sub.expires_at = now + timedelta(days=days)
+        db.commit()
+        db.refresh(sub)
+
+        if sub.package and SubscriptionService._audience_value(sub.package) == "USER":
+            SubscriptionService._apply_user_entitlements(db, sub.user_id)
+        elif sub.merchant_profile_id:
+            SubscriptionService._apply_merchant_entitlements(db, sub.merchant_profile_id)
+        else:
+            SubscriptionService._apply_user_entitlements(db, sub.user_id)
+
+        user_obj = db.query(User).filter(User.id == sub.user_id).first()
+        merch_obj = (
+            db.query(MerchantProfile).filter(MerchantProfile.id == sub.merchant_profile_id).first()
+            if sub.merchant_profile_id
+            else None
+        )
+        return SubscriptionService._build_admin_subscriber_item(
+            sub, user_obj=user_obj, merchant_obj=merch_obj
+        )

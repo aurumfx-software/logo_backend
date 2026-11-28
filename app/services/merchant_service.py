@@ -1006,7 +1006,14 @@ class MerchantService:
             )
         else:
             if approval_status:
-                q = q.filter(MerchantProfile.approval_status == approval_status.upper())
+                ap_upper = approval_status.upper()
+                if ap_upper in ("SUSPENDED", "INACTIVE", "REJECTED"):
+                    q = q.filter(
+                        (MerchantProfile.approval_status == ap_upper)
+                        | (MerchantProfile.status == ap_upper)
+                    )
+                else:
+                    q = q.filter(MerchantProfile.approval_status == ap_upper)
             if is_active is not None:
                 q = q.filter(MerchantProfile.is_active == is_active)
 
