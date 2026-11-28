@@ -379,8 +379,11 @@ class MerchantService:
                 role=role_str,
             )
         resp = MerchantProfileResponse.model_validate(merchant)
-        if (merchant.approval_status or "").upper() == "APPROVED":
+        actual_status = (merchant.status or "").upper()
+        if (merchant.approval_status or "").upper() == "APPROVED" and actual_status not in ("SUSPENDED", "INACTIVE", "REJECTED"):
             resp.status = "APPROVED"
+        elif actual_status in ("SUSPENDED", "INACTIVE", "REJECTED"):
+            resp.status = actual_status
         resp.cashback_percent = float(merchant.cashback_percent if merchant.cashback_percent is not None else 3)
         resp.company_fee_percent = float(
             merchant.company_fee_percent if merchant.company_fee_percent is not None else 2
