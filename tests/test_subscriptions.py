@@ -548,3 +548,101 @@ def test_granular_merchant_subscription_permissions_and_duplication(client: Test
             "merchant_id": shop.id,
         },
     ).status_code == 201
+
+
+def test_admin_subscribers_list_stop_and_merchant_moving_text_moderation(client: TestClient, db_session: Session):
+    from app.db.models.merchant import MerchantProfile
+
+    admin = _create_user(db_session, "subs.admin@example.com", UserRole.ADMIN)
+    admin_headers = _auth_headers(client, admin.email)
+
+    cust = _create_user(db_session, "subs.cust@example.com", UserRole.FIELD_STAFF)
+    cust_headers = _auth_headers(client, cust.email)
+
+    merch_user = _create_user(db_session, "subs.merch@example.com", UserRole.MERCHANT)
+    shop = MerchantProfile(
+        user_id=merch_user.id,
+        business_name="Admin Sub Hub Shop",
+        city="Kochi",
+        district="Ernakulam",
+        approval_status="APPROVED",
+        status="APPROVED",
+        is_active=True,
+    )
+    db_session.add(shop)
+    db_session.commit()
+    db_session.refresh(shop)
+    merch_headers = _auth_headers(client, merch_user.email)
+
+    # Subscribe customer to Seller 500
+    u_pkgs = client.get("/api/v1/subscriptions/packages?audience=USER").json()["data"]
+    seller_pkg = next(p for p in u_pkgs if p["code"] == "USER_SELLER_500")
+    c_sub = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=cust_headers,
+        json={"package_id": seller_pkg["id"], "payment_reference": "CUST-500"},
+    )
+    assert c_sub.status_code == 201
+
+    # Subscribe merchant to Landing 4999 (unlocks Moving Text + Special Deals + Top Banners)
+    m_pkgs = client.get("/api/v1/subscriptions/packages?audience=MERCHANT").json()["data"]
+    land_pkg = next(p for p in m_pkgs if p["code"] == "MERCHANT_LANDING_4999")
+    m_sub = client.post(
+        "/api/v1/subscriptions/subscribe",
+        headers=merch_headers,
+        json={"package_id": land_pkg["id"], "merchant_profile_id": shop.id, "payment_reference": "MERCH-4999"},
+    )
+    assert m_sub.status_code == 201
+
+    # Merchant submits a Moving Text announcement -> stays pending for admin moderation
+    mt_res = client.post(
+        "/api/v1/promotions",
+        headers=merch_headers,
+        json={
+            "title": "Flash Onam Sale 50% OFF!",
+            "placement": "Moving Text",
+            "media_type": "text",
+            "type": "Text Carousel",
+            "merchant_id": shop.id,
+            "status": "pending",
+        },
+    )
+    assert mt_res.status_code == 201, mt_res.text
+    mt_promo = mt_res.json()["data"]
+    assert mt_promo["status"] == "pending"
+
+    # Admin edits title & approves -> goes live
+    edit_res = client.put(
+        f"/api/v1/promotions/{mt_promo['id']}",
+        headers=admin_headers,
+        json={"title": "Flash Onam Mega Sale 55% OFF!"},
+    )
+    assert edit_res.status_code == 200
+    assert client.post(f"/api/v1/promotions/{mt_promo['id']}/approve", headers=admin_headers).status_code == 200
+
+    public_active = client.get("/api/v1/promotions/active").json()["data"]
+    assert any(p["id"] == mt_promo["id"] and p["title"] == "Flash Onam Mega Sale 55% OFF!" for p in public_active)
+
+    # Admin subscribers list (Merchants & Customers sections)
+    m_list = client.get("/api/v1/subscriptions/admin/subscribers?audience=MERCHANT", headers=admin_headers)
+    assert m_list.status_code == 200, m_list.text
+    m_data = m_list.json()
+    assert any(i["merchant_business_name"] == "Admin Sub Hub Shop" and i["status"] == "ACTIVE" for i in m_data["data"])
+
+    c_list = client.get("/api/v1/subscriptions/admin/subscribers?audience=USER", headers=admin_headers)
+    assert c_list.status_code == 200
+    assert any(i["user_email"] == "subs.cust@example.com" and i["status"] == "ACTIVE" for i in c_list.json()["data"])
+
+    # Admin stops merchant's active subscription -> entitlements immediately revoked!
+    sub_id = m_sub.json()["data"]["id"]
+    stop_res = client.post(
+        f"/api/v1/subscriptions/admin/subscriptions/{sub_id}/stop",
+        headers=admin_headers,
+        json={"reason": "Policy review"},
+    )
+    assert stop_res.status_code == 200, stop_res.text
+    assert stop_res.json()["data"]["status"] == "CANCELLED"
+
+    after_stop = client.get("/api/v1/subscriptions/me/active", headers=merch_headers).json()["data"]
+    assert after_stop["merchant_grants"]["ad_home_top"] is False
+    assert after_stop["merchant_grants"]["ad_special_deals"] is False

@@ -326,3 +326,39 @@ class SubscriptionRazorpayVerifyRequest(BaseModel):
     @classmethod
     def accept_aliases(cls, data):
         return SubscribeRequest.accept_client_aliases(data)
+
+
+class AdminSubscriberItemResponse(BaseModel):
+    subscription_id: int
+    subscription_code: str
+    audience: str
+    status: str
+    package_id: int
+    package_code: Optional[str] = None
+    package_name: str
+    package_price: Decimal = Decimal("0.00")
+    amount_paid: Decimal = Decimal("0.00")
+    currency: str = "INR"
+    duration_days: Optional[int] = None
+    days_remaining: Optional[int] = None
+    payment_reference: Optional[str] = None
+    started_at: datetime
+    expires_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    features: List[str] = Field(default_factory=list)
+    grants: Dict[str, Any] = Field(default_factory=dict)
+    user_id: int
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
+    login_id: Optional[str] = None
+    user_code: Optional[str] = None
+    merchant_profile_id: Optional[int] = None
+    merchant_business_name: Optional[str] = None
+    merchant_city: Optional[str] = None
+    merchant_district: Optional[str] = None
+    merchant_approval_status: Optional[str] = None
+
+
+class AdminStopSubscriptionRequest(BaseModel):
+    reason: Optional[str] = None

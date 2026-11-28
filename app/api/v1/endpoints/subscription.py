@@ -11,6 +11,8 @@ from app.schemas.response import StandardListResponse, StandardResponse, list_re
 from app.schemas.subscription import (
     ActiveSubscriptionSummary,
     AdminAssignSubscriptionRequest,
+    AdminStopSubscriptionRequest,
+    AdminSubscriberItemResponse,
     SubscribeRequest,
     SubscriptionPackageCreateRequest,
     SubscriptionPackageResponse,
@@ -310,3 +312,56 @@ def admin_assign_subscription(
         data=SubscriptionService._subscription_to_response(sub),
         message="Subscription assigned successfully",
     )
+
+
+@router.get(
+    "/admin/subscribers",
+    summary="Admin: list all merchant & customer subscribers with timestamps and active status",
+)
+def admin_list_subscribers(
+    audience: Optional[str] = Query(None, description="MERCHANT, USER, or CUSTOMER"),
+    status: Optional[str] = Query(None, description="ACTIVE, CANCELLED, EXPIRED, or ALL"),
+    search: Optional[str] = Query(None, description="Search subscriber name, store, login ID, phone, plan"),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    result = SubscriptionService.admin_list_subscribers(
+        db=db, audience=audience, status_filter=status, search=search
+    )
+    items = [
+        AdminSubscriberItemResponse.model_validate(item).model_dump(mode="json")
+        for item in result["items"]
+    ]
+    return {
+        "success": True,
+        "message": f"Retrieved {len(items)} subscriber record(s)",
+        "data": items,
+        "summary": result["summary"],
+        "total_items": len(items),
+    }
+
+
+@router.post(
+    "/admin/subscriptions/{subscription_id}/stop",
+    summary="Admin: stop an active subscription",
+)
+@router.post(
+    "/admin/subscribers/{subscription_id}/stop",
+    summary="Admin: stop an active subscriber plan (alias)",
+)
+def admin_stop_subscription(
+    subscription_id: int,
+    payload: Optional[AdminStopSubscriptionRequest] = None,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    item = SubscriptionService.admin_stop_subscription(
+        db=db,
+        subscription_id=subscription_id,
+        reason=payload.reason if payload else None,
+    )
+    return {
+        "success": True,
+        "message": f"Subscription #{subscription_id} stopped successfully",
+        "data": AdminSubscriberItemResponse.model_validate(item).model_dump(mode="json"),
+    }

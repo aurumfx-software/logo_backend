@@ -1492,3 +1492,206 @@ class SubscriptionService:
             allow_duplicate=True,
             amount_paid=SubscriptionService._money(pkg.price if pkg.price is not None else Decimal("0")),
         )
+
+    @staticmethod
+    def _build_admin_subscriber_item(
+        sub: UserSubscription,
+        user_obj: Optional[User] = None,
+        merchant_obj: Optional[MerchantProfile] = None,
+    ) -> Dict[str, Any]:
+        pkg = sub.package
+        aud_raw = getattr(pkg.audience, "value", pkg.audience) if pkg else ("MERCHANT" if sub.merchant_profile_id else "USER")
+        aud_str = str(aud_raw or "USER").upper()
+        st_raw = getattr(sub.status, "value", sub.status)
+        st_str = str(st_raw or "ACTIVE").upper()
+        now = datetime.now(timezone.utc)
+        if st_str == "ACTIVE" and sub.expires_at is not None:
+            exp = _as_utc(sub.expires_at)
+            if exp and exp < now:
+                st_str = "EXPIRED"
+        days_rem = (
+            SubscriptionService._days_remaining(sub.expires_at)
+            if st_str == "ACTIVE"
+            else 0
+        )
+        return {
+            "subscription_id": sub.id,
+            "subscription_code": sub.subscription_code,
+            "audience": aud_str,
+            "status": st_str,
+            "package_id": sub.package_id,
+            "package_code": pkg.code if pkg else None,
+            "package_name": (pkg.name if pkg else None) or "Subscription Plan",
+            "package_price": float(pkg.price if pkg and pkg.price is not None else (sub.amount_paid or 0)),
+            "amount_paid": float(sub.amount_paid or 0),
+            "currency": sub.currency or "INR",
+            "duration_days": pkg.duration_days if pkg else None,
+            "days_remaining": days_rem,
+            "payment_reference": sub.payment_reference,
+            "started_at": sub.started_at,
+            "expires_at": sub.expires_at,
+            "cancelled_at": sub.cancelled_at,
+            "features": list(pkg.features or []) if pkg else [],
+            "grants": dict(pkg.grants or {}) if pkg else {},
+            "user_id": sub.user_id,
+            "user_name": user_obj.name if user_obj else None,
+            "user_email": user_obj.email if user_obj else None,
+            "user_phone": user_obj.phone if user_obj else None,
+            "login_id": getattr(user_obj, "login_id", None) if user_obj else None,
+            "user_code": getattr(user_obj, "user_code", None) if user_obj else None,
+            "merchant_profile_id": sub.merchant_profile_id,
+            "merchant_business_name": merchant_obj.business_name if merchant_obj else None,
+            "merchant_city": merchant_obj.city if merchant_obj else None,
+            "merchant_district": merchant_obj.district if merchant_obj else None,
+            "merchant_approval_status": merchant_obj.approval_status if merchant_obj else None,
+        }
+
+    @staticmethod
+    def admin_list_subscribers(
+        db: Session,
+        *,
+        audience: Optional[str] = None,
+        status_filter: Optional[str] = None,
+        search: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        SubscriptionService._expire_due_subscriptions(db)
+        rows = (
+            db.query(UserSubscription)
+            .join(SubscriptionPackage)
+            .options(joinedload(UserSubscription.package))
+            .filter(func.upper(SubscriptionPackage.code) != "MERCHANT_REGISTER_1000")
+            .order_by(UserSubscription.id.desc())
+            .all()
+        )
+        user_ids = {r.user_id for r in rows if r.user_id}
+        merch_ids = {r.merchant_profile_id for r in rows if r.merchant_profile_id}
+
+        user_map = (
+            {u.id: u for u in db.query(User).filter(User.id.in_(list(user_ids))).all()}
+            if user_ids
+            else {}
+        )
+        merch_map = (
+            {
+                m.id: m
+                for m in db.query(MerchantProfile)
+                .filter(MerchantProfile.id.in_(list(merch_ids)))
+                .all()
+            }
+            if merch_ids
+            else {}
+        )
+
+        all_items = [
+            SubscriptionService._build_admin_subscriber_item(
+                row,
+                user_obj=user_map.get(row.user_id),
+                merchant_obj=merch_map.get(row.merchant_profile_id),
+            )
+            for row in rows
+        ]
+
+        summary = {
+            "total": len(all_items),
+            "active_merchants": sum(
+                1 for i in all_items if i["audience"] == "MERCHANT" and i["status"] == "ACTIVE"
+            ),
+            "active_customers": sum(
+                1 for i in all_items if i["audience"] == "USER" and i["status"] == "ACTIVE"
+            ),
+            "stopped_or_expired": sum(
+                1 for i in all_items if i["status"] in ("CANCELLED", "EXPIRED")
+            ),
+            "total_revenue": float(sum(i["amount_paid"] or 0 for i in all_items)),
+        }
+
+        filtered = all_items
+        if audience:
+            aud_norm = audience.strip().upper()
+            if aud_norm in ("CUSTOMER", "CUSTOMERS"):
+                aud_norm = "USER"
+            if aud_norm in ("MERCHANT", "MERCHANTS"):
+                aud_norm = "MERCHANT"
+            if aud_norm in ("MERCHANT", "USER"):
+                filtered = [i for i in filtered if i["audience"] == aud_norm]
+
+        if status_filter and status_filter.strip().upper() != "ALL":
+            st_norm = status_filter.strip().upper()
+            if st_norm == "STOPPED":
+                st_norm = "CANCELLED"
+            filtered = [i for i in filtered if i["status"] == st_norm]
+
+        if search and search.strip():
+            q = search.strip().lower()
+            filtered = [
+                i
+                for i in filtered
+                if q in str(i.get("user_name") or "").lower()
+                or q in str(i.get("user_email") or "").lower()
+                or q in str(i.get("user_phone") or "").lower()
+                or q in str(i.get("login_id") or "").lower()
+                or q in str(i.get("user_code") or "").lower()
+                or q in str(i.get("merchant_business_name") or "").lower()
+                or q in str(i.get("package_name") or "").lower()
+                or q in str(i.get("package_code") or "").lower()
+                or q in str(i.get("subscription_code") or "").lower()
+            ]
+
+        return {"items": filtered, "summary": summary}
+
+    @staticmethod
+    def admin_stop_subscription(
+        db: Session,
+        subscription_id: int,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        sub = (
+            db.query(UserSubscription)
+            .options(joinedload(UserSubscription.package))
+            .filter(UserSubscription.id == subscription_id)
+            .first()
+        )
+        if not sub:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Subscription not found."
+            )
+        if sub.status != UserSubscriptionStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subscription is already stopped or expired.",
+            )
+        sub.status = UserSubscriptionStatus.CANCELLED
+        sub.cancelled_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(sub)
+
+        if sub.package and SubscriptionService._audience_value(sub.package) == "USER":
+            SubscriptionService._apply_user_entitlements(db, sub.user_id)
+        elif sub.merchant_profile_id:
+            SubscriptionService._apply_merchant_entitlements(db, sub.merchant_profile_id)
+        else:
+            SubscriptionService._apply_user_entitlements(db, sub.user_id)
+
+        user_obj = db.query(User).filter(User.id == sub.user_id).first()
+        merch_obj = (
+            db.query(MerchantProfile).filter(MerchantProfile.id == sub.merchant_profile_id).first()
+            if sub.merchant_profile_id
+            else None
+        )
+        try:
+            from app.services.notification_service import NotificationService
+
+            pkg_title = sub.package.name if sub.package else "Subscription Plan"
+            NotificationService.create_notification(
+                db=db,
+                user_id=sub.user_id,
+                title="Subscription Stopped by Admin",
+                message=f"Your '{pkg_title}' subscription was stopped by administration.{f' Reason: {reason}' if reason else ''}",
+                type="SUBSCRIPTION_STOPPED",
+                data={"subscription_id": sub.id, "package_id": sub.package_id},
+            )
+        except Exception:
+            pass
+        return SubscriptionService._build_admin_subscriber_item(
+            sub, user_obj=user_obj, merchant_obj=merch_obj
+        )
